@@ -1,0 +1,192 @@
+// =============================================
+// GestBudget — Prisma Schema
+// Base : Neon PostgreSQL (gestbudget)
+// =============================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+// ─── ENUM ────────────────────────────────────
+
+enum TypeCategorie {
+  revenu
+  epargne_precaution
+  epargne_investissement
+  epargne_autre
+  depense_fixe
+  depense_variable
+  depense_occasionnelle
+  remboursement_dette
+}
+
+// ─── AUTHENTIFICATION ────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String
+  nom           String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  annees        Annee[]
+  categories    Categorie[]
+  comptesFonds  CompteFonds[]
+  decaissements Decaissement[]
+  banques       Banque[]
+  parametres    Parametres?
+  resetTokens   PasswordResetToken[]
+
+  @@map("users")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
+}
+
+// ─── BUDGET ──────────────────────────────────
+
+model Annee {
+  id                   String   @id @default(cuid())
+  userId               String
+  annee                Int
+  fondsUrgenceObjectif BigInt   @default(3720000)
+  notes                String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  budgetMensuel BudgetMensuel[]
+  decaissements Decaissement[]
+  banques       Banque[]
+
+  @@unique([userId, annee])
+  @@map("annees")
+}
+
+model Categorie {
+  id        String        @id @default(cuid())
+  userId    String
+  nom       String
+  type      TypeCategorie
+  sousType  String?
+  ordre     Int           @default(0)
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  budgetMensuel BudgetMensuel[]
+
+  @@map("categories")
+}
+
+model BudgetMensuel {
+  id              String   @id @default(cuid())
+  userId          String
+  anneeId         String
+  categorieId     String
+  mois            Int
+  montantAnticipe BigInt   @default(0)
+  montantReel     BigInt   @default(0)
+  notes           String?
+  updatedAt       DateTime @updatedAt
+
+  annee     Annee     @relation(fields: [anneeId], references: [id], onDelete: Cascade)
+  categorie Categorie @relation(fields: [categorieId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, anneeId, categorieId, mois])
+  @@map("budget_mensuel")
+}
+
+model CompteFonds {
+  id          String   @id @default(cuid())
+  userId      String
+  nom         String
+  soldeActuel BigInt   @default(0)
+  isActive    Boolean  @default(true)
+  ordre       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repartitions DecaissementCompte[]
+
+  @@map("comptes_fonds")
+}
+
+model Decaissement {
+  id            String   @id @default(cuid())
+  userId        String
+  anneeId       String?
+  description   String
+  dateOperation DateTime
+  montantTotal  BigInt   @default(0)
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  annee        Annee?               @relation(fields: [anneeId], references: [id], onDelete: SetNull)
+  repartitions DecaissementCompte[]
+
+  @@map("decaissements")
+}
+
+model DecaissementCompte {
+  id             String @id @default(cuid())
+  decaissementId String
+  compteId       String
+  montant        BigInt @default(0)
+
+  decaissement Decaissement @relation(fields: [decaissementId], references: [id], onDelete: Cascade)
+  compte       CompteFonds  @relation(fields: [compteId], references: [id], onDelete: Cascade)
+
+  @@map("decaissement_comptes")
+}
+
+model Banque {
+  id         String   @id @default(cuid())
+  userId     String
+  anneeId    String?
+  mois       Int?
+  nomBanque  String
+  typeCompte String?
+  solde      BigInt   @default(0)
+  updatedAt  DateTime @updatedAt
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  annee Annee? @relation(fields: [anneeId], references: [id], onDelete: SetNull)
+
+  @@map("banques")
+}
+
+model Parametres {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  devise        String   @default("FCFA")
+  themeCouleur  String   @default("blue")
+  anneeCourante Int      @default(2026)
+  moisCourant   Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("parametres")
+}
