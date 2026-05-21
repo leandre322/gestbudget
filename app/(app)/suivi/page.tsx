@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Copy, Save, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
-import CollapsibleGroup from '@/components/CollapsibleGroup';
+import CollapsibleGroup, { useCollapseAll } from '@/components/CollapsibleGroup';
 import { useMois } from '../layout';
 import { formatFCFA, MOIS_LABELS, ORDRE_TYPES, TYPE_LABELS, TYPE_COLORS } from '@/types';
 import { clsx } from 'clsx';
@@ -19,8 +19,11 @@ export default function SuiviPage() {
   const [saving,  setSaving]  = useState(false);
   const [saved,   setSaved]   = useState(false);
   const [copying, setCopying] = useState(false);
-  const [allOpen, setAllOpen] = useState(false);
   const timerRef = useRef<NodeJS.Timeout>();
+
+  // Groupes pliables
+  const groupIds = ORDRE_TYPES.map(t => `suivi-${t}`);
+  const { expandAll, collapseAll } = useCollapseAll(groupIds);
 
   const charger = useCallback(async () => {
     setLoading(true);
@@ -91,33 +94,30 @@ export default function SuiviPage() {
     setCopying(false);
   };
 
-  // Tout plier / déplier (prop. B)
-  const toggleAll = (open: boolean) => {
-    setAllOpen(open);
-    ORDRE_TYPES.forEach(t => localStorage.setItem(`group-suivi-${t}`, String(open)));
-    // Forcer le re-render des CollapsibleGroup
-    window.dispatchEvent(new StorageEvent('storage', { key: 'group-refresh' }));
-  };
+  if (loading) return (
+    <div className="flex items-center justify-center h-64">
+      <div className="spinner scale-150" />
+    </div>
+  );
 
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="spinner scale-150" /></div>;
-
-  const cats = data?.categories ?? [];
+  const cats    = data?.categories ?? [];
   const grouped = ORDRE_TYPES.map(type => ({
     type, items: cats.filter((c: any) => c.type === type),
   })).filter(g => g.items.length > 0);
 
-  const totalAnt = cats.reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
-  const totalReel= cats.reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel) || 0), 0);
+  const totalAnt  = cats.reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
+  const totalReel = cats.reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
 
   const revReel  = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel) || 0), 0);
   const epReel   = cats.filter((c: any) => c.type?.startsWith('epargne')).reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel) || 0), 0);
   const depReel  = cats.filter((c: any) => c.type?.startsWith('depense') || c.type === 'remboursement_dette').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel) || 0), 0);
   const solde    = revReel - epReel - depReel;
   const tauxExec = totalAnt > 0 ? (totalReel / totalAnt) * 100 : 0;
-  const tauxEp   = revReel > 0 ? (epReel / revReel) * 100 : 0;
+  const tauxEp   = revReel > 0  ? (epReel    / revReel)  * 100 : 0;
 
   return (
     <div className="space-y-5 animate-fadeIn">
+
       {/* En-tête */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -125,12 +125,11 @@ export default function SuiviPage() {
           <p className="text-[var(--text-muted)] text-sm">{MOIS_LABELS[mois]} {annee}</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          {/* Tout plier / déplier (prop. B) */}
-          <button onClick={() => toggleAll(false)}
+          <button onClick={collapseAll}
             className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--surface)] hover:bg-slate-50 dark:hover:bg-dark-card text-[var(--text-muted)] rounded-xl px-3 py-2 text-xs font-medium transition-all">
             <ChevronsUpDown size={13} />Tout plier
           </button>
-          <button onClick={() => toggleAll(true)}
+          <button onClick={expandAll}
             className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--surface)] hover:bg-slate-50 dark:hover:bg-dark-card text-[var(--text-muted)] rounded-xl px-3 py-2 text-xs font-medium transition-all">
             <ChevronsDownUp size={13} />Tout déplier
           </button>
@@ -148,9 +147,9 @@ export default function SuiviPage() {
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Revenus',  val: revReel, cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400'   },
+          { label: 'Revenus',  val: revReel, cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
           { label: 'Épargne',  val: epReel,  cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
-          { label: 'Dépenses', val: depReel, cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'       },
+          { label: 'Dépenses', val: depReel, cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
           { label: 'Solde',    val: solde,   cls: solde >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400' },
         ].map(k => (
           <div key={k.label} className={clsx('rounded-2xl border p-3.5 transition-colors', k.cls)}>
@@ -187,7 +186,7 @@ export default function SuiviPage() {
 
       {/* Tableau avec groupes pliables */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
-        {/* En-tête fixe */}
+        {/* En-tête */}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -205,12 +204,10 @@ export default function SuiviPage() {
         {/* Groupes pliables */}
         {grouped.map(({ type, items }) => {
           const gAnt  = items.reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
-          const gReel = items.reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel) || 0), 0);
+          const gReel = items.reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
           const gEcar = gReel - gAnt;
           const gPct  = gAnt > 0 ? (gReel / gAnt) * 100 : 0;
           const isRevenu = type === 'revenu';
-
-          // Sous-total badge (prop. C)
           const badge = `${formatFCFA(gReel)} réel`;
           const badgeColor = gEcar > 0 && !isRevenu ? 'text-red-500' : 'text-green-600 dark:text-green-400';
 
@@ -228,14 +225,16 @@ export default function SuiviPage() {
                   <tbody>
                     {items.map((cat: any) => {
                       const ant  = parseInt(lignes[cat.id]?.anticipe) || 0;
-                      const reel = parseInt(lignes[cat.id]?.reel) || 0;
+                      const reel = parseInt(lignes[cat.id]?.reel)     || 0;
                       const ecar = reel - ant;
                       const pct  = ant > 0 ? (reel / ant) * 100 : 0;
                       const over = !isRevenu && ant > 0 && reel > ant;
                       return (
                         <tr key={cat.id}
-                          className={clsx('border-t border-[var(--border)] hover:bg-slate-50/60 dark:hover:bg-dark-card/60 transition-colors',
-                            over && 'bg-red-50/30 dark:bg-red-900/10')}>
+                          className={clsx(
+                            'border-t border-[var(--border)] hover:bg-slate-50/60 dark:hover:bg-dark-card/60 transition-colors',
+                            over && 'bg-red-50/30 dark:bg-red-900/10'
+                          )}>
                           <td className="px-4 py-2.5 w-56 text-[var(--text)]">
                             <span className="flex items-center gap-1.5">
                               {over && <span className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0" />}
@@ -243,13 +242,15 @@ export default function SuiviPage() {
                             </span>
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <input type="number" value={lignes[cat.id]?.anticipe ?? ''}
+                            <input type="number"
+                              value={lignes[cat.id]?.anticipe ?? ''}
                               onChange={e => handleChange(cat.id, 'anticipe', e.target.value)}
                               placeholder="0"
                               className="w-32 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary focus:ring-1 focus:ring-blue-200 outline-none transition-all" />
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <input type="number" value={lignes[cat.id]?.reel ?? ''}
+                            <input type="number"
+                              value={lignes[cat.id]?.reel ?? ''}
                               onChange={e => handleChange(cat.id, 'reel', e.target.value)}
                               placeholder="0"
                               className="w-32 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary focus:ring-1 focus:ring-blue-200 outline-none transition-all" />
