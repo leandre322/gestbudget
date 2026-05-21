@@ -43,6 +43,7 @@ export default function SuiviPage() {
     if (!resBudget.ok) { setLoading(false); return; }
     const d = await resBudget.json();
     setData(d);
+
     const init: Lignes = {};
     for (const cat of d.categories) {
       const b = d.budget.find((b: any) => b.categorieId === cat.id);
@@ -52,6 +53,7 @@ export default function SuiviPage() {
       };
     }
     setLignes(init);
+
     if (resBanques.ok) {
       const db  = await resBanques.json();
       const bqs = db.banques ?? [];
@@ -62,8 +64,8 @@ export default function SuiviPage() {
         if (sv) {
           setLignesBanque(JSON.parse(sv));
         } else {
-          const catsPrecaution  = d.categories.filter((c: any) => c.type === 'epargne_precaution');
-          const totalAnticipe   = catsPrecaution.reduce((s: number, c: any) => {
+          const catsPrecaution = d.categories.filter((c: any) => c.type === 'epargne_precaution');
+          const totalAnticipe  = catsPrecaution.reduce((s: number, c: any) => {
             const b = d.budget.find((b: any) => b.categorieId === c.id);
             return s + (b?.montantAnticipe ?? 0);
           }, 0);
@@ -103,11 +105,39 @@ export default function SuiviPage() {
     if (!data?.anneeId) return;
     setSaving(true);
     (window as any).__setSaveStatus?.('saving');
+
+    // ── 1. Sauvegarder les lignes standard ──
     const res = await fetch('/api/budget', {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes }),
     });
+
+    // ── 2. Répercuter les réels banques → catégories epargne_precaution en DB ──
+    const cats           = data?.categories ?? [];
+    const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
+    if (catsPrecaution.length > 0 && lignesBanque.length > 0) {
+      const lignesAvecReel = lignesBanque.filter(lb => parseInt(lb.reel) > 0);
+      if (lignesAvecReel.length > 0) {
+        const newLignesPrecaution = { ...lignes };
+        catsPrecaution.forEach((cat: any, idx: number) => {
+          const lb = lignesBanque[idx];
+          if (lb) {
+            newLignesPrecaution[cat.id] = {
+              anticipe: lignes[cat.id]?.anticipe ?? '0',
+              reel:     lb.reel || '0',
+            };
+          }
+        });
+        await fetch('/api/budget', {
+          method:  'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes: newLignesPrecaution }),
+        });
+      }
+    }
+
+    // ── 3. Incrémenter les soldes des banques ──
     for (const lb of lignesBanque) {
       const reelVal = parseInt(lb.reel) || 0;
       if (lb.banqueId && reelVal > 0) {
@@ -124,6 +154,7 @@ export default function SuiviPage() {
         }
       }
     }
+
     setSaving(false);
     if (res.ok) {
       setSaved(true);
@@ -264,13 +295,13 @@ export default function SuiviPage() {
         </div>
       </div>
 
-      {/* KPIs — bouton fixe ✏️ */}
+      {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Revenus',  val: revReel,               type: 'revenu',        cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
-          { label: 'Épargne',  val: epReel,                type: 'epargne_precaution', cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
-          { label: 'Dépenses', val: sortiesReel - epReel,  type: 'depense_fixe',  cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
-          { label: 'Solde',    val: soldeReel,             type: '',              cls: soldeReel >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400' },
+          { label: 'Revenus',  val: revReel,              type: 'revenu',        cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
+          { label: 'Épargne',  val: epReel,               type: 'epargne_precaution', cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
+          { label: 'Dépenses', val: sortiesReel - epReel, type: 'depense_fixe',  cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
+          { label: 'Solde',    val: soldeReel,            type: '',              cls: soldeReel >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400' },
         ].map(k => (
           <div key={k.label} className={clsx('rounded-2xl border p-3.5 transition-colors', k.cls)}>
             <div className="flex items-start justify-between">

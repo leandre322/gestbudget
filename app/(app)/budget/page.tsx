@@ -3,20 +3,25 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Save, Copy, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import CollapsibleGroup, { useCollapseAll } from '@/components/CollapsibleGroup';
-import { formatFCFA, ORDRE_TYPES, TYPE_LABELS } from '@/types';
+import BandeauMoisAnterieur from '@/components/BandeauMoisAnterieur';
+import { formatFCFA, ORDRE_TYPES, TYPE_LABELS, MOIS_LABELS, LABEL_PREVISION } from '@/types';
 import { clsx } from 'clsx';
 import { useMois } from '../layout';
 
 const TYPES_OUVERTS = ['revenu', 'epargne_precaution'];
+const MOIS_NOMS = ['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 
 export default function BudgetPage() {
-  const { mois, annee } = useMois();
+  const { mois, annee, setMois, setAnnee } = useMois();
   const [data,    setData]    = useState<any>(null);
   const [lignes,  setLignes]  = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving,  setSaving]  = useState(false);
   const [saved,   setSaved]   = useState(false);
   const [nextM,   setNextM]   = useState(false);
+
+  const moisCourantReel     = new Date().getMonth() + 1;
+  const anneeCouranteReelle = new Date().getFullYear();
 
   const groupIds = ORDRE_TYPES.map(t => `budget-${t}`);
   const { expandAll, collapseAll } = useCollapseAll(groupIds);
@@ -58,12 +63,18 @@ export default function BudgetPage() {
   };
 
   const copierVersProchainMois = async () => {
-    const nm = mois === 12 ? 1 : mois + 1;
-    const na = mois === 12 ? annee + 1 : annee;
+    const nm    = mois === 12 ? 1        : mois + 1;
+    const na    = mois === 12 ? annee + 1 : annee;
+    const ok = window.confirm(
+      `Copier le budget vers ${MOIS_NOMS[nm]} ${na} ?\nCela remplacera les prévisions existantes de ce mois.`
+    );
+    if (!ok) return;
+
     const resNext = await fetch(`/api/budget?annee=${na}&mois=${nm}`);
     if (!resNext.ok) return;
     const dNext = await resNext.json();
     if (!dNext.anneeId) return;
+
     const lignesNext: Record<string, { anticipe: string; reel: string }> = {};
     for (const [catId, val] of Object.entries(lignes)) {
       lignesNext[catId] = { anticipe: val, reel: '0' };
@@ -88,21 +99,26 @@ export default function BudgetPage() {
     type, items: cats.filter((c: any) => c.type === type),
   })).filter(g => g.items.length > 0);
 
-  // ── Calculs totaux — Demande 2 ──
-  const revAnt    = cats.filter((c: any) => c.type === 'revenu')
+  const revAnt     = cats.filter((c: any) => c.type === 'revenu')
     .reduce((s: number, c: any) => s + (parseInt(lignes[c.id]) || 0), 0);
   const sortiesAnt = cats.filter((c: any) => c.type !== 'revenu')
     .reduce((s: number, c: any) => s + (parseInt(lignes[c.id]) || 0), 0);
-  const soldeAnt  = revAnt - sortiesAnt;
+  const soldeAnt   = revAnt - sortiesAnt;
 
   return (
     <div className="space-y-5 animate-fadeIn">
+
+      {/* Bandeau mois antérieur */}
+      <BandeauMoisAnterieur
+        mois={mois} annee={annee}
+        onMoisCourant={() => { setMois(moisCourantReel); setAnnee(anneeCouranteReelle); }}
+      />
 
       {/* En-tête */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-[var(--text)]">Budget mensuel de référence</h1>
-          <p className="text-[var(--text-muted)] text-sm">Montants anticipés — base de planification</p>
+          <p className="text-[var(--text-muted)] text-sm">{MOIS_LABELS[mois]} {annee} — Montants prévisionnels</p>
         </div>
         <div className="flex gap-2 flex-wrap">
           <button onClick={collapseAll}
@@ -124,17 +140,17 @@ export default function BudgetPage() {
         </div>
       </div>
 
-      {/* Tableau — centré max-width (Demande 6) */}
+      {/* Tableau centré */}
       <div className="max-w-3xl mx-auto w-full">
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
 
-          {/* En-tête fixe */}
+          {/* En-tête */}
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50 dark:bg-dark-card border-b border-[var(--border)]">
                   <th className="text-left px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Catégorie</th>
-                  <th className="text-right px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Montant anticipé (FCFA)</th>
+                  <th className="text-right px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">{LABEL_PREVISION} (FCFA)</th>
                 </tr>
               </thead>
             </table>
@@ -178,7 +194,7 @@ export default function BudgetPage() {
             );
           })}
 
-          {/* ── Totaux — Demande 2 ── */}
+          {/* Totaux */}
           <div className="border-t-2 border-primary/30 bg-primary/5 dark:bg-primary/10">
             <div className="px-4 py-2.5 flex items-center justify-between border-b border-primary/10">
               <span className="font-semibold text-[var(--text)] text-sm">Total sorties (épargne + dépenses)</span>
