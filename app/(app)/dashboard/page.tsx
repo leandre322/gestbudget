@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid, LineChart, Line, PieChart, Pie, Cell } from 'recharts';
-import { TrendingUp, TrendingDown, PiggyBank, Wallet, Star, AlertTriangle, Shield, ChevronDown } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
+         CartesianGrid, LineChart, Line, PieChart, Pie, Cell } from 'recharts';
+import { TrendingUp, TrendingDown, PiggyBank, Wallet, Star, AlertTriangle,
+         Shield, ChevronDown, ChevronRight, Building2 } from 'lucide-react';
 import { useMois } from '../layout';
 import { formatFCFA, MOIS_COURTS, TYPE_LABELS, calculerScore, couleurScore, ORDRE_TYPES } from '@/types';
 import { clsx } from 'clsx';
@@ -10,23 +12,60 @@ import { clsx } from 'clsx';
 const COLORS = ['#1E40AF','#10B981','#F59E0B','#EF4444','#8B5CF6','#06B6D4','#F97316','#84CC16'];
 
 // ── Onglet Global ────────────────────────────
-function OngletGlobal() {
-  const [data, setData] = useState<any>(null);
+function OngletGlobal({ moisCourant, anneeCourante }: { moisCourant: number; anneeCourante: number }) {
+  const [data,    setData]    = useState<any>(null);
+  const [banques, setBanques] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/dashboard/global').then(r => r.json()).then(d => { setData(d); setLoading(false); });
-  }, []);
+    Promise.all([
+      fetch('/api/dashboard/global').then(r => r.json()),
+      fetch(`/api/budget?annee=${anneeCourante}&mois=${moisCourant}`).then(r => r.ok ? r.json() : null),
+    ]).then(([global, moisData]) => {
+      setData({ ...global, moisData });
+      setBanques(global.banques ?? []);
+      setLoading(false);
+    });
+  }, [moisCourant, anneeCourante]);
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="spinner scale-150" /></div>;
   if (!data) return null;
 
-  const { totalRevenus, totalDepenses, totalEpargne, solde, evolutionAnnuelle, fondsRoulement, comptes, totalFonds } = data;
+  const { totalRevenus, totalDepenses, totalEpargne, solde,
+          evolutionAnnuelle, fondsRoulement, totalFonds,
+          revenuReference, moisData } = data;
+
+  // Score global
+  const budgetMois = moisData?.budget ?? [];
+  const totM = (type: string, f: 'montantAnticipe'|'montantReel') =>
+    budgetMois.filter((b: any) =>
+      type==='epargne'?b.categorie?.type?.startsWith('epargne'):
+      type==='depense'?(b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette'):
+      b.categorie?.type===type
+    ).reduce((s: number, b: any) => s + b[f], 0);
+  const fondsUrgence  = budgetMois.filter((b: any) => b.categorie?.type === 'epargne_precaution').reduce((s: number, b: any) => s + b.montantReel, 0);
+  const fondsObjectif = revenuReference ? revenuReference * 6 : Number(moisData?.anneeData?.fondsUrgenceObjectif ?? 3720000);
+  const { score } = calculerScore({
+    totalDepenses: totM('depense','montantReel'), totalDepAnt: totM('depense','montantAnticipe'),
+    totalEpargne: totM('epargne','montantReel'),  totalRevenus: totM('revenu','montantReel'),
+    solde: totM('revenu','montantReel') - totM('epargne','montantReel') - totM('depense','montantReel'),
+    fondsUrgence, fondsObjectif,
+  });
+
+  // Fonds urgence couleur
+  const pctFonds = fondsObjectif > 0 ? (fondsUrgence / fondsObjectif) * 100 : 0;
+  const barColor  = pctFonds < 50 ? 'bg-red-500' : pctFonds < 80 ? 'bg-orange-400' : 'bg-green-500';
+  const textColor = pctFonds < 50 ? 'text-red-500' : pctFonds < 80 ? 'text-orange-500' : 'text-green-600';
+
+  // Épargne précaution banques
+  const banquesPrecaution = banques.filter((b: any) => b.type_compte === 'epargne_precaution' || !b.type_compte);
+  const totalPrecaution   = banquesPrecaution.reduce((s: number, b: any) => s + (b.solde ?? 0), 0);
 
   return (
     <div className="space-y-5">
-      {/* KPIs cumulés */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+
+      {/* ── KPIs cumulés + Score global ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         {[
           { label: 'Revenus cumulés',   val: totalRevenus,  bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',   text: 'text-blue-700 dark:text-blue-400',   icon: TrendingUp },
           { label: 'Dépenses cumulées', val: totalDepenses, bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',       text: 'text-red-600 dark:text-red-400',     icon: TrendingDown },
@@ -41,12 +80,18 @@ function OngletGlobal() {
             <p className={clsx('text-xl font-bold', k.text)}>{formatFCFA(k.val)}</p>
           </div>
         ))}
+        {/* Score global */}
+        <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 transition-colors">
+          <p className="text-xs font-medium text-purple-500 dark:text-purple-400 mb-1">Score financier</p>
+          <p className={clsx('text-2xl font-bold', couleurScore(score))}>{score}<span className="text-sm text-[var(--text-muted)] font-normal">/20</span></p>
+          <p className="text-xs text-[var(--text-muted)] mt-1">Mois courant</p>
+        </div>
       </div>
 
-      {/* Fonds de roulement */}
+      {/* ── Épargne de Fonctionnement (cumul) ── */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-[var(--text)]">Fonds de roulement (épargnes cumulées)</h3>
+          <h3 className="font-semibold text-[var(--text)]">Épargne de Fonctionnement (cumul)</h3>
           <span className="text-sm font-bold text-primary">{formatFCFA(totalFonds)}</span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -58,15 +103,81 @@ function OngletGlobal() {
             </div>
           ))}
         </div>
-        {/* Total */}
         <div className="mt-3 pt-3 border-t border-[var(--border)] flex justify-between">
-          <span className="text-sm font-semibold text-[var(--text-muted)]">Total fonds de roulement</span>
+          <span className="text-sm font-semibold text-[var(--text-muted)]">Total Épargne de Fonctionnement</span>
           <span className="text-sm font-bold text-primary">{formatFCFA(totalFonds)}</span>
         </div>
       </div>
 
-      {/* Évolution annuelle */}
-      {evolutionAnnuelle.length > 0 && (
+      {/* ── Épargne Précaution (Banques) ── */}
+      <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Building2 size={17} className="text-primary" />
+            <h3 className="font-semibold text-[var(--text)]">Épargne Précaution</h3>
+          </div>
+          <span className="text-sm font-bold text-primary">{formatFCFA(totalPrecaution)}</span>
+        </div>
+
+        {/* Banques individuelles */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
+          {[
+            { nom: 'BOA — Yvan',      key: 'BOA Yvan' },
+            { nom: 'BOA — Naëlle',    key: 'BOA Naelle' },
+            { nom: 'Atlantique Bank', key: 'Atlantique' },
+            { nom: 'NSIA Bank',       key: 'NSIA' },
+            { nom: 'BGFI Bank',       key: 'BGFI' },
+          ].map(bq => {
+            const found = banques.find((b: any) =>
+              b.nom_banque?.toLowerCase().includes(bq.key.toLowerCase().split(' ')[0].toLowerCase())
+            );
+            const soldeB = found?.solde ?? 0;
+            return (
+              <div key={bq.key} className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3">
+                <p className="text-xs text-[var(--text-muted)] font-medium">{bq.nom}</p>
+                <p className="text-base font-bold text-primary mt-1">{formatFCFA(soldeB)}</p>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Total global */}
+        <div className="pt-3 border-t border-[var(--border)] flex justify-between">
+          <span className="text-sm font-semibold text-[var(--text-muted)]">Épargne Précaution Global</span>
+          <span className="text-sm font-bold text-primary">{formatFCFA(totalPrecaution)}</span>
+        </div>
+      </div>
+
+      {/* ── Fonds d'urgence (coloré) ── */}
+      <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Shield size={17} className="text-primary" />
+            <h3 className="font-semibold text-[var(--text)]">Fonds d'urgence</h3>
+          </div>
+          <span className={clsx('text-sm font-bold', textColor)}>{pctFonds.toFixed(1)}%</span>
+        </div>
+        <div className="flex justify-between text-sm mb-2">
+          <span className="font-medium text-[var(--text)]">{formatFCFA(fondsUrgence)}</span>
+          <span className="text-[var(--text-muted)]">
+            Objectif : {formatFCFA(fondsObjectif)}
+            {revenuReference > 0 && <span className="text-xs ml-1">(6 × {formatFCFA(revenuReference)})</span>}
+          </span>
+        </div>
+        <div className="h-3 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
+          <div className={clsx('h-full rounded-full transition-all', barColor)}
+               style={{ width: `${Math.min(100, pctFonds)}%` }} />
+        </div>
+        <div className="flex justify-between mt-2 text-xs text-[var(--text-muted)]">
+          <span className={clsx('font-medium', pctFonds < 50 ? 'text-red-500' : pctFonds < 80 ? 'text-orange-500' : 'text-green-600')}>
+            {pctFonds < 50 ? '🔴 En dessous de 50%' : pctFonds < 80 ? '🟠 En bonne voie' : '🟢 Objectif atteint'}
+          </span>
+          <span>Reste : {formatFCFA(Math.max(0, fondsObjectif - fondsUrgence))}</span>
+        </div>
+      </div>
+
+      {/* ── Évolution annuelle (après Fonds d'urgence) ── */}
+      {evolutionAnnuelle?.length > 0 && (
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
           <h3 className="font-semibold text-[var(--text)] mb-4">Évolution annuelle</h3>
           <ResponsiveContainer width="100%" height={260}>
@@ -88,15 +199,54 @@ function OngletGlobal() {
 }
 
 // ── Onglet Récap année ───────────────────────
-function OngletRecap() {
+function OngletRecap({ moisCourant }: { moisCourant: number }) {
   const anneeActuelle = new Date().getFullYear();
   const [anneeSelect, setAnneeSelect] = useState(anneeActuelle);
-  const { mois } = useMois();
   const [data,     setData]     = useState<any>(null);
-  const [dataComp, setDataComp] = useState<any>(null);
+  const [hist,     setHist]     = useState<any[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [exporting, setExporting] = useState<'excel'|'pdf'|null>(null);
   const [anneesDispos, setAnneesDispos] = useState<number[]>([anneeActuelle]);
+  const [groupsOpen, setGroupsOpen] = useState<Record<string, boolean>>({});
+
+  // Charger état pliable depuis localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('recap-groups');
+      if (saved) setGroupsOpen(JSON.parse(saved));
+      else {
+        const defaultOpen: Record<string,boolean> = {};
+        ORDRE_TYPES.forEach(t => { defaultOpen[t] = true; });
+        setGroupsOpen(defaultOpen);
+      }
+    } catch {
+      const defaultOpen: Record<string,boolean> = {};
+      ORDRE_TYPES.forEach(t => { defaultOpen[t] = true; });
+      setGroupsOpen(defaultOpen);
+    }
+  }, []);
+
+  const toggleGroup = (type: string) => {
+    setGroupsOpen(prev => {
+      const next = { ...prev, [type]: !prev[type] };
+      try { localStorage.setItem('recap-groups', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  const toutDeployer = () => {
+    const next: Record<string,boolean> = {};
+    ORDRE_TYPES.forEach(t => { next[t] = true; });
+    setGroupsOpen(next);
+    try { localStorage.setItem('recap-groups', JSON.stringify(next)); } catch {}
+  };
+
+  const toutPlier = () => {
+    const next: Record<string,boolean> = {};
+    ORDRE_TYPES.forEach(t => { next[t] = false; });
+    setGroupsOpen(next);
+    try { localStorage.setItem('recap-groups', JSON.stringify(next)); } catch {}
+  };
 
   useEffect(() => {
     fetch('/api/dashboard/global').then(r => r.json()).then(d => {
@@ -104,16 +254,51 @@ function OngletRecap() {
     });
   }, []);
 
+  // Charger cumul 12 mois pour l'année sélectionnée
   const charger = useCallback(async () => {
     setLoading(true);
-    const [r, rc] = await Promise.all([
-      fetch(`/api/budget?annee=${anneeSelect}&mois=${mois}`),
-      fetch(`/api/budget?annee=${anneeSelect - 1}&mois=${mois}`),
-    ]);
-    if (r.ok)  setData(await r.json());
-    if (rc.ok) setDataComp(await rc.json());
+    try {
+      // Fetch 12 mois en parallèle
+      const promises = Array.from({ length: 12 }, (_, i) =>
+        fetch(`/api/budget?annee=${anneeSelect}&mois=${i+1}`).then(r => r.ok ? r.json() : null)
+      );
+      const results = await Promise.all(promises);
+
+      // Agréger les données
+      const cats: any[] = results.find(r => r?.categories?.length)?.categories ?? [];
+      const budgetCumul: any[] = [];
+
+      results.forEach(r => {
+        if (!r?.budget) return;
+        r.budget.forEach((b: any) => {
+          const existing = budgetCumul.find(ab => ab.categorieId === b.categorieId);
+          if (existing) {
+            existing.montantAnticipe += b.montantAnticipe ?? 0;
+            existing.montantReel     += b.montantReel     ?? 0;
+          } else {
+            budgetCumul.push({ ...b, montantAnticipe: b.montantAnticipe ?? 0, montantReel: b.montantReel ?? 0 });
+          }
+        });
+      });
+
+      // Historique 6 derniers mois pour graphique
+      const histData = [];
+      for (let i = 5; i >= 0; i--) {
+        let m = moisCourant - i, a = anneeSelect;
+        if (m <= 0) { m += 12; a--; }
+        const hr = results[m - 1];
+        histData.push({
+          mois: MOIS_COURTS[m],
+          ant:  hr?.budget?.filter((b: any) => b.categorie?.type?.startsWith('depense')).reduce((s: number, b: any) => s + b.montantAnticipe, 0) ?? 0,
+          reel: hr?.budget?.filter((b: any) => b.categorie?.type?.startsWith('depense')).reduce((s: number, b: any) => s + b.montantReel,     0) ?? 0,
+        });
+      }
+
+      setData({ budget: budgetCumul, categories: cats });
+      setHist(histData);
+    } catch (e) { console.error(e); }
     setLoading(false);
-  }, [anneeSelect, mois]);
+  }, [anneeSelect, moisCourant]);
 
   useEffect(() => { charger(); }, [charger]);
 
@@ -130,11 +315,11 @@ function OngletRecap() {
 
   const exportPDF = async () => {
     setExporting('pdf');
-    const res = await fetch(`/api/export/pdf?annee=${anneeSelect}&mois=${mois}`);
+    const res = await fetch(`/api/export/pdf?annee=${anneeSelect}&mois=${moisCourant}`);
     if (res.ok) {
       const blob = await res.blob();
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-      a.download = `GestBudget-${anneeSelect}-${String(mois).padStart(2,'0')}.pdf`; a.click();
+      a.download = `GestBudget-${anneeSelect}-${String(moisCourant).padStart(2,'0')}.pdf`; a.click();
     }
     setExporting(null);
   };
@@ -143,33 +328,34 @@ function OngletRecap() {
 
   const budget = data?.budget ?? [];
   const cats   = data?.categories ?? [];
-  const budgetComp = dataComp?.budget ?? [];
 
   const totType = (type: string, field: 'montantAnticipe'|'montantReel') =>
     budget.filter((b: any) =>
-      type === 'epargne' ? b.categorie?.type?.startsWith('epargne') :
-      type === 'depense' ? (b.categorie?.type?.startsWith('depense') || b.categorie?.type === 'remboursement_dette') :
+      type==='epargne' ? b.categorie?.type?.startsWith('epargne') :
+      type==='depense' ? (b.categorie?.type?.startsWith('depense') || b.categorie?.type==='remboursement_dette') :
       b.categorie?.type === type
     ).reduce((s: number, b: any) => s + b[field], 0);
 
-  const revReel  = totType('revenu','montantReel');
-  const depReel  = totType('depense','montantReel');
-  const epReel   = totType('epargne','montantReel');
-  const solde    = revReel - depReel - epReel;
+  const revReel = totType('revenu','montantReel');
+  const depReel = totType('depense','montantReel');
+  const epReel  = totType('epargne','montantReel');
+  const solde   = revReel - depReel - epReel;
 
-  // Fonds de roulement (catégories epargne_autre)
   const fondsCategories = cats.filter((c: any) => c.type === 'epargne_autre');
   const totalFonds = fondsCategories.reduce((s: number, cat: any) => {
     const b = budget.find((b: any) => b.categorieId === cat.id);
     return s + (b?.montantReel ?? 0);
   }, 0);
 
-  // Comparaison
-  const chartData = ORDRE_TYPES.slice(4).map(type => {
-    const curr = budget.filter((b: any) => b.categorie?.type === type).reduce((s: number, b: any) => s + b.montantReel, 0);
-    const prev = budgetComp.filter((b: any) => b.categorie?.type === type).reduce((s: number, b: any) => s + b.montantReel, 0);
-    return { name: TYPE_LABELS[type].replace('Dépenses ', '').replace(' Dettes',''), [anneeSelect]: curr, [anneeSelect-1]: prev };
-  }).filter((d: any) => d[anneeSelect] > 0 || d[anneeSelect-1] > 0);
+  // Donut dépenses
+  const donut = Object.entries(
+    budget.filter((b: any) => b.categorie?.type?.startsWith('depense') && b.montantReel > 0)
+          .reduce((acc: any, b: any) => {
+            const k = b.categorie?.sousType ?? 'Autre';
+            acc[k] = (acc[k] ?? 0) + b.montantReel;
+            return acc;
+          }, {})
+  ).map(([name, value]) => ({ name, value }));
 
   return (
     <div className="space-y-5">
@@ -199,13 +385,13 @@ function OngletRecap() {
         </div>
       </div>
 
-      {/* KPIs */}
+      {/* KPIs annuels */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Revenus réels',   val: revReel, cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
-          { label: 'Dépenses réelles',val: depReel, cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
-          { label: 'Épargne réelle',  val: epReel,  cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
-          { label: 'Solde',           val: solde,   cls: solde >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
+          { label: `Revenus ${anneeSelect}`,   val: revReel, cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
+          { label: `Dépenses ${anneeSelect}`,  val: depReel, cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
+          { label: `Épargne ${anneeSelect}`,   val: epReel,  cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
+          { label: 'Solde annuel',             val: solde,   cls: solde >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
         ].map(k => (
           <div key={k.label} className={clsx('rounded-2xl border p-3.5 transition-colors', k.cls)}>
             <p className="text-xs font-medium opacity-60">{k.label}</p>
@@ -214,11 +400,11 @@ function OngletRecap() {
         ))}
       </div>
 
-      {/* Fonds de roulement */}
+      {/* Épargne de Fonctionnement */}
       {fondsCategories.length > 0 && (
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-[var(--text)]">Fonds de fonctionnement {anneeSelect}</h3>
+            <h3 className="font-semibold text-[var(--text)]">Épargne de Fonctionnement {anneeSelect}</h3>
             <span className="text-sm font-bold text-primary">{formatFCFA(totalFonds)}</span>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -236,28 +422,50 @@ function OngletRecap() {
         </div>
       )}
 
-      {/* Graphique comparaison */}
-      {chartData.length > 0 && (
+      {/* Graphiques (déplacés depuis Global) */}
+      <div className="grid lg:grid-cols-2 gap-5">
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-          <h3 className="font-semibold text-[var(--text)] mb-3">{anneeSelect - 1} vs {anneeSelect}</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={chartData} barGap={3}>
+          <h3 className="font-semibold text-[var(--text)] mb-3">Répartition dépenses</h3>
+          {donut.length > 0 ? (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={donut} cx="50%" cy="50%" innerRadius={60} outerRadius={90} dataKey="value" paddingAngle={2}>
+                  {donut.map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                </Pie>
+                <Tooltip formatter={(v: number) => formatFCFA(v)} />
+                <Legend iconType="circle" iconSize={8} />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : <div className="h-40 flex items-center justify-center text-[var(--text-muted)] text-sm">Aucune dépense cette année</div>}
+        </div>
+        <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
+          <h3 className="font-semibold text-[var(--text)] mb-3">Dépenses — 6 derniers mois</h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={hist} barGap={3}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} />
+              <XAxis dataKey="mois" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
               <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => (v/1000).toFixed(0)+'k'} />
               <Tooltip formatter={(v: number) => formatFCFA(v)} />
               <Legend />
-              <Bar dataKey={anneeSelect-1} name={String(anneeSelect-1)} fill="#CBD5E1" radius={[3,3,0,0]} />
-              <Bar dataKey={anneeSelect}   name={String(anneeSelect)}   fill="#1E40AF" radius={[3,3,0,0]} />
+              <Bar dataKey="ant"  name="Anticipé" fill="#DBEAFE" radius={[3,3,0,0]} />
+              <Bar dataKey="reel" name="Réel"     fill="#1E40AF" radius={[3,3,0,0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
-      )}
+      </div>
 
-      {/* Tableau détail */}
+      {/* Tableau détail pliable */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
-        <div className="px-5 py-3 border-b border-[var(--border)] bg-slate-50 dark:bg-dark-card">
-          <h3 className="font-semibold text-[var(--text)]">Détail par catégorie — {anneeSelect}</h3>
+        <div className="px-5 py-3 border-b border-[var(--border)] bg-slate-50 dark:bg-dark-card flex items-center justify-between">
+          <h3 className="font-semibold text-[var(--text)]">Détail par catégorie — {anneeSelect} (cumul annuel)</h3>
+          <div className="flex gap-2">
+            <button onClick={toutDeployer} className="text-xs px-2.5 py-1 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-100 dark:hover:bg-dark-card transition">
+              Tout déplier
+            </button>
+            <button onClick={toutPlier} className="text-xs px-2.5 py-1 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-100 dark:hover:bg-dark-card transition">
+              Tout plier
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -275,20 +483,36 @@ function OngletRecap() {
                 if (!catsDuType.length) return null;
                 const gAnt  = catsDuType.reduce((s: number, c: any) => { const b = budget.find((b: any) => b.categorieId === c.id); return s + (b?.montantAnticipe ?? 0); }, 0);
                 const gReel = catsDuType.reduce((s: number, c: any) => { const b = budget.find((b: any) => b.categorieId === c.id); return s + (b?.montantReel ?? 0); }, 0);
+                const isOpen = groupsOpen[type] !== false;
                 return (
-                  <>
-                    <tr key={`h-${type}`} className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)]">
-                      <td colSpan={4} className="px-4 py-2 text-xs font-bold text-[var(--text-muted)] uppercase tracking-wide">{TYPE_LABELS[type]}</td>
+                  <tbody key={type}>
+                    {/* En-tête de groupe — cliquable */}
+                    <tr className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)] cursor-pointer hover:bg-slate-100 dark:hover:bg-dark-card/80 transition-colors"
+                        onClick={() => toggleGroup(type)}>
+                      <td className="px-4 py-2.5 text-xs font-bold text-[var(--text-muted)] uppercase tracking-wide">
+                        <div className="flex items-center gap-2">
+                          {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          {TYPE_LABELS[type]}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(gAnt)}</td>
+                      <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(gReel)}</td>
+                      <td className={clsx('px-4 py-2.5 text-right text-xs font-bold',
+                        (gReel-gAnt) > 0 && type.startsWith('depense') ? 'text-red-500' : 'text-green-500')}>
+                        {(gReel-gAnt) !== 0 ? ((gReel-gAnt) > 0 ? '+' : '') + formatFCFA(gReel-gAnt) : '—'}
+                      </td>
                     </tr>
-                    {catsDuType.map((cat: any) => {
-                      const b = budget.find((b: any) => b.categorieId === cat.id);
+
+                    {/* Lignes détail */}
+                    {isOpen && catsDuType.map((cat: any) => {
+                      const b    = budget.find((b: any) => b.categorieId === cat.id);
                       const ant  = b?.montantAnticipe ?? 0;
-                      const reel = b?.montantReel ?? 0;
+                      const reel = b?.montantReel     ?? 0;
                       const ecar = reel - ant;
                       return (
                         <tr key={cat.id} className="border-t border-[var(--border)] hover:bg-slate-50/40 dark:hover:bg-dark-card/40 transition-colors">
-                          <td className="px-4 py-2.5 text-[var(--text)]">{cat.nom}</td>
-                          <td className="px-4 py-2.5 text-right text-[var(--text-muted)]">{ant > 0 ? formatFCFA(ant) : '—'}</td>
+                          <td className="px-4 py-2.5 pl-10 text-[var(--text)]">{cat.nom}</td>
+                          <td className="px-4 py-2.5 text-right text-[var(--text-muted)]">{ant  > 0 ? formatFCFA(ant)  : '—'}</td>
                           <td className="px-4 py-2.5 text-right font-medium text-[var(--text)]">{reel > 0 ? formatFCFA(reel) : '—'}</td>
                           <td className={clsx('px-4 py-2.5 text-right text-xs font-medium',
                             ecar > 0 && type.startsWith('depense') ? 'text-red-500' : ecar < 0 ? 'text-green-500' : 'text-[var(--text-muted)]')}>
@@ -297,15 +521,7 @@ function OngletRecap() {
                         </tr>
                       );
                     })}
-                    <tr key={`st-${type}`} className="border-t border-[var(--border)] bg-slate-50/60 dark:bg-dark-card/60">
-                      <td className="px-4 py-2 text-xs font-bold text-[var(--text-muted)]">Sous-total</td>
-                      <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(gAnt)}</td>
-                      <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(gReel)}</td>
-                      <td className={clsx('px-4 py-2 text-right text-xs font-bold', (gReel-gAnt) > 0 && type.startsWith('depense') ? 'text-red-500' : 'text-green-500')}>
-                        {(gReel-gAnt) !== 0 ? ((gReel-gAnt) > 0 ? '+' : '') + formatFCFA(gReel-gAnt) : '—'}
-                      </td>
-                    </tr>
-                  </>
+                  </tbody>
                 );
               })}
             </tbody>
@@ -318,60 +534,70 @@ function OngletRecap() {
 
 // ── Page principale Dashboard ────────────────
 export default function DashboardPage() {
-  const { mois, annee } = useMois();
+  const { mois, annee, setMois, setAnnee } = useMois();
   const [onglet, setOnglet] = useState<'global'|'recap'>('global');
   const [data,    setData]    = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [hist,    setHist]    = useState<any[]>([]);
+
+  const moisCourantReel = new Date().getMonth() + 1;
+  const anneeCouranteReelle = new Date().getFullYear();
+  const estMoisCourant = mois === moisCourantReel && annee === anneeCouranteReelle;
+
+  const revenirMoisCourant = () => {
+    setMois(moisCourantReel);
+    setAnnee(anneeCouranteReelle);
+  };
 
   const charger = useCallback(async () => {
     setLoading(true);
     const res = await fetch(`/api/budget?annee=${annee}&mois=${mois}`);
     if (!res.ok) { setLoading(false); return; }
-    const d = await res.json();
-    setData(d);
-    // Historique 6 mois
-    const histData = [];
-    for (let i = 5; i >= 0; i--) {
-      let m = mois - i, a = annee;
-      if (m <= 0) { m += 12; a--; }
-      const hr = await fetch(`/api/budget?annee=${a}&mois=${m}`);
-      if (!hr.ok) { histData.push({ mois: MOIS_COURTS[m], ant: 0, reel: 0 }); continue; }
-      const hd = await hr.json();
-      histData.push({
-        mois: MOIS_COURTS[m],
-        ant:  hd.budget.filter((b: any) => b.categorie?.type?.startsWith('depense')).reduce((s: number, b: any) => s + b.montantAnticipe, 0),
-        reel: hd.budget.filter((b: any) => b.categorie?.type?.startsWith('depense')).reduce((s: number, b: any) => s + b.montantReel, 0),
-      });
-    }
-    setHist(histData);
+    setData(await res.json());
     setLoading(false);
   }, [mois, annee]);
 
-  useEffect(() => { if (onglet === 'global') {} else charger(); }, [onglet, charger]);
   useEffect(() => { charger(); }, [charger]);
 
-  const budget     = data?.budget ?? [];
-  const anneeData  = data?.anneeData;
+  const budget    = data?.budget ?? [];
+  const anneeData = data?.anneeData;
 
   const tot = (type: string, f: 'montantAnticipe'|'montantReel') =>
-    budget.filter((b: any) => type==='epargne'?b.categorie?.type?.startsWith('epargne'):type==='depense'?(b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette'):b.categorie?.type===type).reduce((s: number, b: any) => s + b[f], 0);
+    budget.filter((b: any) =>
+      type==='epargne'?b.categorie?.type?.startsWith('epargne'):
+      type==='depense'?(b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette'):
+      b.categorie?.type===type
+    ).reduce((s: number, b: any) => s + b[f], 0);
 
   const revenus  = { reel: tot('revenu','montantReel'),  ant: tot('revenu','montantAnticipe')  };
   const epargne  = { reel: tot('epargne','montantReel'), ant: tot('epargne','montantAnticipe') };
   const depenses = { reel: tot('depense','montantReel'), ant: tot('depense','montantAnticipe') };
   const solde    = revenus.reel - epargne.reel - depenses.reel;
+
   const fondsUrgence  = budget.filter((b: any) => b.categorie?.type === 'epargne_precaution').reduce((s: number, b: any) => s + b.montantReel, 0);
   const fondsObjectif = Number(anneeData?.fondsUrgenceObjectif ?? 3720000);
   const { score, details } = calculerScore({ totalDepenses: depenses.reel, totalDepAnt: depenses.ant, totalEpargne: epargne.reel, totalRevenus: revenus.reel, solde, fondsUrgence, fondsObjectif });
   const alertes = budget.filter((b: any) => b.categorie?.type?.startsWith('depense') && b.montantAnticipe > 0 && b.montantReel > b.montantAnticipe).map((b: any) => b.categorie?.nom);
-  const donut = Object.entries(budget.filter((b: any) => b.categorie?.type?.startsWith('depense') && b.montantReel > 0).reduce((acc: any, b: any) => { const k = b.categorie?.sousType ?? 'Autre'; acc[k] = (acc[k] ?? 0) + b.montantReel; return acc; }, {})).map(([name, value]) => ({ name, value }));
 
   return (
     <div className="space-y-5 animate-fadeIn">
-      <div>
-        <h1 className="text-2xl font-bold text-[var(--text)]">Tableau de bord</h1>
-        <p className="text-[var(--text-muted)] text-sm">{new Date(annee, mois-1).toLocaleString('fr-FR',{month:'long',year:'numeric'})}</p>
+
+      {/* En-tête — sans "Mai 2026" en Global */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--text)]">Tableau de bord</h1>
+          {onglet === 'global'
+            ? <p className="text-[var(--text-muted)] text-sm">Vue globale — toutes années</p>
+            : <p className="text-[var(--text-muted)] text-sm">Récapitulatif annuel</p>
+          }
+        </div>
+
+        {/* Bouton Mois courant */}
+        {!estMoisCourant && (
+          <button onClick={revenirMoisCourant}
+            className="px-3.5 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary-dark transition-all flex items-center gap-1.5">
+            📅 Mois courant
+          </button>
+        )}
       </div>
 
       {/* Onglets */}
@@ -387,32 +613,28 @@ export default function DashboardPage() {
 
       {/* Contenu selon onglet */}
       {onglet === 'global' ? (
-        <OngletGlobal />
-      ) : (
-        <OngletRecap />
-      )}
+        <>
+          <OngletGlobal moisCourant={mois} anneeCourante={annee} />
 
-      {/* Section mois courant — toujours visible */}
-      {onglet === 'global' && (
-        <div className="space-y-5">
-          <div className="border-t border-[var(--border)] pt-5">
-            <h2 className="font-semibold text-[var(--text)] mb-3 text-sm text-[var(--text-muted)] uppercase tracking-wide">
-              Mois courant — {new Date(annee, mois-1).toLocaleString('fr-FR',{month:'long',year:'numeric'})}
-            </h2>
-          </div>
-
-          {alertes.length > 0 && (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-3.5 flex items-start gap-2.5">
-              <AlertTriangle size={17} className="text-red-500 mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="font-semibold text-red-600 dark:text-red-400 text-sm">Dépassements détectés</p>
-                <p className="text-red-500 dark:text-red-400 text-sm">{alertes.join(' · ')}</p>
-              </div>
+          {/* Section mois courant */}
+          <div className="space-y-5">
+            <div className="border-t border-[var(--border)] pt-5">
+              <h2 className="font-semibold text-sm text-[var(--text-muted)] uppercase tracking-wide mb-3">
+                Mois courant — {new Date(annee, mois-1).toLocaleString('fr-FR',{month:'long',year:'numeric'})}
+              </h2>
             </div>
-          )}
 
-          {loading ? <div className="flex items-center justify-center h-32"><div className="spinner" /></div> : (
-            <>
+            {alertes.length > 0 && (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-3.5 flex items-start gap-2.5">
+                <AlertTriangle size={17} className="text-red-500 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="font-semibold text-red-600 dark:text-red-400 text-sm">Dépassements détectés</p>
+                  <p className="text-red-500 dark:text-red-400 text-sm">{alertes.join(' · ')}</p>
+                </div>
+              </div>
+            )}
+
+            {loading ? <div className="flex items-center justify-center h-32"><div className="spinner" /></div> : (
               <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
                 {[
                   { titre: 'Revenus',  val: revenus.reel,  ant: revenus.ant,  bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',   text: 'text-blue-700 dark:text-blue-400',   icon: TrendingUp },
@@ -432,57 +654,18 @@ export default function DashboardPage() {
                   <div className="mt-2 space-y-1">
                     {details.map((d: any) => (
                       <div key={d.label} className="h-1 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
-                        <div className={clsx('h-full rounded-full', d.pts>=d.max?'bg-green-500':d.pts>=d.max/2?'bg-amber-400':'bg-red-400')} style={{width:`${(d.pts/d.max)*100}%`}} />
+                        <div className={clsx('h-full rounded-full', d.pts>=d.max?'bg-green-500':d.pts>=d.max/2?'bg-amber-400':'bg-red-400')}
+                             style={{ width: `${(d.pts/d.max)*100}%` }} />
                       </div>
                     ))}
                   </div>
                 </div>
               </div>
-
-              <div className="grid lg:grid-cols-2 gap-5">
-                <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-                  <h3 className="font-semibold text-[var(--text)] mb-3">Répartition dépenses</h3>
-                  {donut.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={220}>
-                      <PieChart><Pie data={donut} cx="50%" cy="50%" innerRadius={60} outerRadius={90} dataKey="value" paddingAngle={2}>
-                        {donut.map((_: any, i: number) => <Cell key={i} fill={COLORS[i%COLORS.length]} />)}
-                      </Pie><Tooltip formatter={(v: number) => formatFCFA(v)} /><Legend iconType="circle" iconSize={8} /></PieChart>
-                    </ResponsiveContainer>
-                  ) : <div className="h-40 flex items-center justify-center text-[var(--text-muted)] text-sm">Aucune dépense ce mois</div>}
-                </div>
-                <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-                  <h3 className="font-semibold text-[var(--text)] mb-3">Dépenses — 6 derniers mois</h3>
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={hist} barGap={3}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                      <XAxis dataKey="mois" tick={{fontSize:11,fill:'var(--text-muted)'}} />
-                      <YAxis tick={{fontSize:10,fill:'var(--text-muted)'}} tickFormatter={v=>(v/1000).toFixed(0)+'k'} />
-                      <Tooltip formatter={(v:number)=>formatFCFA(v)} />
-                      <Legend />
-                      <Bar dataKey="ant"  name="Anticipé" fill="#DBEAFE" radius={[3,3,0,0]} />
-                      <Bar dataKey="reel" name="Réel"     fill="#1E40AF" radius={[3,3,0,0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold text-[var(--text)]">Fonds d'urgence</h3>
-                  <Shield size={17} className="text-primary" />
-                </div>
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="font-medium text-[var(--text)]">{formatFCFA(fondsUrgence)}</span>
-                  <span className="text-[var(--text-muted)]">Objectif : {formatFCFA(fondsObjectif)}</span>
-                </div>
-                <div className="h-2.5 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
-                  <div className="h-full bg-primary rounded-full transition-all" style={{width:`${Math.min(100,(fondsUrgence/fondsObjectif)*100)}%`}} />
-                </div>
-                <p className="text-right text-xs text-[var(--text-muted)] mt-1">{((fondsUrgence/fondsObjectif)*100).toFixed(1)} %</p>
-              </div>
-            </>
-          )}
-        </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <OngletRecap moisCourant={mois} />
       )}
     </div>
   );

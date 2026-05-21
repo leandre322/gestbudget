@@ -1,16 +1,15 @@
 'use client';
-
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, CalendarDays, Wallet, BookOpen, Settings, X } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, Wallet, ArrowLeftRight, Settings, X } from 'lucide-react';
 import { clsx } from 'clsx';
 
 const NAV = [
-  { href: '/dashboard',     label: 'Tableau de bord', icon: LayoutDashboard },
-  { href: '/suivi',         label: 'Suivi mensuel',    icon: CalendarDays    },
-  { href: '/budget',        label: 'Budget mensuel',   icon: Wallet          },
-  { href: '/decaissements', label: 'Décaissements',    icon: BookOpen        },
-  { href: '/parametres',    label: 'Paramètres',       icon: Settings        },
+  { href: '/dashboard',     label: 'Tableau de bord',     icon: LayoutDashboard },
+  { href: '/suivi',         label: 'Suivi mensuel',        icon: CalendarDays    },
+  { href: '/budget',        label: 'Budget mensuel',       icon: Wallet          },
+  { href: '/decaissements', label: 'Ajout/Retrait Fonds',  icon: ArrowLeftRight  },
+  { href: '/parametres',    label: 'Paramètres',           icon: Settings        },
 ];
 
 export default function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
