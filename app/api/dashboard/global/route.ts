@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
         orderBy: { updatedAt: 'desc' },
       }),
       // Paramètres pour revenu référence
-      prisma.parametre.findUnique({
+      prisma.parametres.findUnique({
         where: { userId: session.user.id },
       }),
     ]);
