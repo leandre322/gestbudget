@@ -85,8 +85,50 @@ export async function GET(req: NextRequest) {
       return acc;
     }, []);
 
-    // ── Revenu de référence (depuis paramètres) ──
-    const revenuReference = n((parametres as any)?.revenuMensuelReference ?? 0);
+    /// ── Revenu de référence (depuis paramètres) ──
+      const revenuReference = n((parametres as any)?.revenuMensuelReference ?? 0);
+
+      // ── Score global — moyenne pondérée toutes années ──
+      const fondsUrgenceObjectif = revenuReference > 0 ? revenuReference * 6 : 3720000;
+      let totalScore = 0;
+      let nbMoisScore = 0;
+
+      for (const anneeRec of annees) {
+        for (let m = 1; m <= 12; m++) {
+          const budgetsMois = budgets.filter(b =>
+            b.anneeId === anneeRec.id && (b as any).mois === m
+          );
+          if (budgetsMois.length === 0) continue;
+
+          const totRev = budgetsMois.filter(b => b.categorie.type === 'revenu').reduce((s, b) => s + n(b.montantReel), 0);
+          if (totRev === 0) continue; // Mois sans données
+
+          const totDep    = budgetsMois.filter(b => b.categorie.type.startsWith('depense') || b.categorie.type === 'remboursement_dette').reduce((s, b) => s + n(b.montantReel), 0);
+          const totDepAnt = budgetsMois.filter(b => b.categorie.type.startsWith('depense') || b.categorie.type === 'remboursement_dette').reduce((s, b) => s + n(b.montantAnticipe), 0);
+          const totEp     = budgetsMois.filter(b => b.categorie.type.startsWith('epargne')).reduce((s, b) => s + n(b.montantReel), 0);
+          const totFU     = budgetsMois.filter(b => b.categorie.type === 'epargne_precaution').reduce((s, b) => s + n(b.montantReel), 0);
+          const soldeMois = totRev - totDep - totEp;
+
+          // Score simplifié par mois
+          let scoreMois = 0;
+          // Critère 1 : respect budget dépenses (5 pts)
+          if (totDepAnt > 0) scoreMois += Math.min(5, (totDepAnt / Math.max(totDep, 1)) * 5);
+          else scoreMois += 3;
+          // Critère 2 : taux épargne ≥ 30% (5 pts)
+          const tauxEp = totRev > 0 ? (totEp / totRev) : 0;
+          scoreMois += Math.min(5, (tauxEp / 0.30) * 5);
+          // Critère 3 : solde positif (5 pts)
+          scoreMois += soldeMois >= 0 ? 5 : Math.max(0, 5 + (soldeMois / totRev) * 5);
+          // Critère 4 : fonds urgence ≥ 50% objectif (5 pts)
+          const pctFU = fondsUrgenceObjectif > 0 ? (totFU / fondsUrgenceObjectif) : 0;
+          scoreMois += Math.min(5, (pctFU / 0.5) * 5);
+
+          totalScore += Math.round(scoreMois);
+          nbMoisScore++;
+        }
+      }
+
+    const scoreGlobal = nbMoisScore > 0 ? Math.round(totalScore / nbMoisScore) : 0;
 
     return NextResponse.json({
       totalRevenus, totalDepenses, totalEpargne, solde,
@@ -95,8 +137,10 @@ export async function GET(req: NextRequest) {
       comptes:      comptes.map(c => ({ ...c, soldeActuel: n(c.soldeActuel) })),
       totalFonds:   fondsRoulement.reduce((s, f) => s + f.totalAuto, 0),
       annees:       annees.map(a => a.annee),
-      banques:      banquesUniques,
+      banques:        banquesUniques,
       revenuReference,
+      scoreGlobal,
+      nbMoisScore,
     });
 
   } catch (e: any) {

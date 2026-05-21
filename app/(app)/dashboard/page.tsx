@@ -104,13 +104,15 @@ function OngletGlobal({
             <p className={clsx('text-xl font-bold', k.text)}>{formatFCFA(k.val)}</p>
           </div>
         ))}
-        {/* Score global */}
+        {/* Score global — moyenne pondérée toutes années */}
         <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 transition-colors">
-          <p className="text-xs font-medium text-purple-500 dark:text-purple-400 mb-1">Score financier</p>
-          <p className={clsx('text-2xl font-bold', couleurScore(score))}>
-            {score}<span className="text-sm text-[var(--text-muted)] font-normal">/20</span>
+          <p className="text-xs font-medium text-purple-500 dark:text-purple-400 mb-1">Score global</p>
+          <p className={clsx('text-2xl font-bold', couleurScore(data?.scoreGlobal ?? score))}>
+            {data?.scoreGlobal ?? score}<span className="text-sm text-[var(--text-muted)] font-normal">/20</span>
           </p>
-          <p className="text-xs text-[var(--text-muted)] mt-1">Mois courant</p>
+          <p className="text-xs text-[var(--text-muted)] mt-1">
+            {data?.nbMoisScore ? `Moy. ${data.nbMoisScore} mois` : 'Toutes années'}
+          </p>
         </div>
       </div>
 
