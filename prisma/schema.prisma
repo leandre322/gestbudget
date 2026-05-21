@@ -171,6 +171,8 @@ model Banque {
   nomBanque  String
   typeCompte String?
   solde      BigInt   @default(0)
+  isActive   Boolean  @default(true)
+  ordre      Int      @default(0)
   updatedAt  DateTime @updatedAt
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)

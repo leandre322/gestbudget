@@ -29,7 +29,12 @@ export default function ParametresPage() {
   const [showNewCompte, setShowNewCompte] = useState(false);
   const [importing,     setImporting]     = useState(false);
   const [importResult,  setImportResult]  = useState<any>(null);
-  const [activeTab,     setActiveTab]     = useState<'categories'|'comptes'|'import'>('categories');
+  // Ajouter après importResult state :
+  const [banques,       setBanques]       = useState<any[]>([]);
+  const [newBanque,     setNewBanque]     = useState({ nom: '', solde: '' });
+  const [showNewBanque, setShowNewBanque] = useState(false);
+  const [editBanque,    setEditBanque]    = useState<any>(null);
+  const [activeTab, setActiveTab]         = useState<'categories'|'comptes'|'banques'|'import'>('categories');
   const [tauxRef,       setTauxRef]       = useState<Record<GrandeCategorie, number>>({} as Record<GrandeCategorie, number>);
   const [revenuRef,     setRevenuRef]     = useState<number>(0);
   const [savingTaux,    setSavingTaux]    = useState(false);
@@ -37,11 +42,13 @@ export default function ParametresPage() {
 
   const charger = useCallback(async () => {
     setLoading(true);
-    const [rCats, rComptes, rParams] = await Promise.all([
+    const [rCats, rComptes, rParams, rBanques] = await Promise.all([
       fetch('/api/categories'),
       fetch('/api/comptes'),
       fetch('/api/parametres'),
+      fetch('/api/banques'),
     ]);
+    if (rBanques.ok) { const d = await rBanques.json(); setBanques(d.banques ?? []); }
     if (rCats.ok)    { const d = await rCats.json();    setCategories(d.categories ?? []); }
     if (rComptes.ok) { const d = await rComptes.json(); setComptes(d.comptes ?? []); }
     if (rParams.ok) {
@@ -169,13 +176,13 @@ export default function ParametresPage() {
 
       {/* Onglets */}
       <div className="flex gap-1 bg-slate-100 dark:bg-dark-card rounded-xl p-1 w-fit border border-[var(--border)]">
-        {(['categories', 'comptes', 'import'] as const).map(tab => (
+        {(['categories', 'comptes', 'banques', 'import'] as const).map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             className={clsx('px-4 py-2 rounded-lg text-sm font-medium transition-all',
               activeTab === tab
                 ? 'bg-[var(--surface)] text-primary shadow-sm'
                 : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>
-            {tab === 'categories' ? 'Catégories' : tab === 'comptes' ? 'Fonds' : 'Import Excel'}
+            {tab === 'categories' ? 'Catégories' : tab === 'comptes' ? 'Fonds' : tab === 'banques' ? 'Banques' : 'Import Excel'}
           </button>
         ))}
       </div>
@@ -494,6 +501,100 @@ export default function ParametresPage() {
                         </button>
                       </>
                     )}
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+    {/* ── ONGLET BANQUES ── */}
+      {activeTab === 'banques' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <p className="text-sm text-[var(--text-muted)]">{banques.length} banque(s) configurée(s)</p>
+            <button onClick={() => setShowNewBanque(!showNewBanque)}
+              className="flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white rounded-xl px-3.5 py-2 text-sm font-medium transition-all">
+              <Plus size={14} />Ajouter une banque
+            </button>
+          </div>
+
+          {showNewBanque && (
+            <div className="bg-[var(--surface)] border border-primary/30 rounded-2xl p-4 flex flex-wrap gap-3 items-end transition-colors">
+              <div className="flex-1 min-w-40">
+                <label className="text-xs text-[var(--text-muted)] mb-1 block">Nom de la banque *</label>
+                <input type="text" value={newBanque.nom}
+                  onChange={e => setNewBanque(n => ({ ...n, nom: e.target.value }))}
+                  placeholder="Ex: BOA — Yvan" className={inputCls} />
+              </div>
+              <div className="w-40">
+                <label className="text-xs text-[var(--text-muted)] mb-1 block">Solde initial (FCFA)</label>
+                <input type="number" value={newBanque.solde}
+                  onChange={e => setNewBanque(n => ({ ...n, solde: e.target.value }))}
+                  placeholder="0" className={inputCls} />
+              </div>
+              <div className="flex gap-2">
+                <button onClick={async () => {
+                  if (!newBanque.nom) return;
+                  await fetch('/api/banques', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ nomBanque: newBanque.nom, soldeInitial: parseInt(newBanque.solde) || 0 }),
+                  });
+                  setNewBanque({ nom: '', solde: '' });
+                  setShowNewBanque(false);
+                  charger();
+                }} className="bg-primary text-white rounded-xl px-4 py-2 text-sm"><Check size={14} /></button>
+                <button onClick={() => setShowNewBanque(false)}
+                  className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm"><X size={14} /></button>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] divide-y divide-[var(--border)] transition-colors">
+            {banques.length === 0 ? (
+              <div className="px-4 py-8 text-center text-[var(--text-muted)] text-sm">
+                Aucune banque configurée. Ajoutez vos comptes bancaires.
+              </div>
+            ) : banques.map((b: any) => (
+              <div key={b.id} className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors">
+                {editBanque?.id === b.id ? (
+                  <>
+                    <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm flex-shrink-0">
+                      🏦
+                    </div>
+                    <input type="text" value={editBanque.nomBanque}
+                      onChange={e => setEditBanque((p: any) => ({ ...p, nomBanque: e.target.value }))}
+                      className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none" />
+                    <button onClick={async () => {
+                      await fetch(`/api/banques?id=${editBanque.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ nomBanque: editBanque.nomBanque }),
+                      });
+                      setEditBanque(null);
+                      charger();
+                    }} className="text-green-500 hover:text-green-600"><Check size={15} /></button>
+                    <button onClick={() => setEditBanque(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={15} /></button>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm">
+                      🏦
+                    </div>
+                    <span className="flex-1 text-sm text-[var(--text)] font-medium">{b.nomBanque}</span>
+                    <span className="text-sm font-bold text-primary">{formatFCFA(b.solde)}</span>
+                    <button onClick={() => setEditBanque(b)} className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors">
+                      <Pencil size={13} />
+                    </button>
+                    <button onClick={async () => {
+                      if (!confirm('Supprimer cette banque ?')) return;
+                      await fetch(`/api/banques?id=${b.id}`, { method: 'DELETE' });
+                      charger();
+                    }} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors">
+                      <Trash2 size={14} />
+                    </button>
                   </>
                 )}
               </div>
