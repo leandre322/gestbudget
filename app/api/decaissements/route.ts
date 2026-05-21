@@ -35,13 +35,18 @@ export async function GET(req: NextRequest) {
     });
 
     const decaissements = await prisma.decaissement.findMany({
-      where: anneeRec ? { userId: session.user.id, anneeId: anneeRec.id }
-                      : { userId: session.user.id },
+      where: anneeRec
+        ? { userId: session.user.id, anneeId: anneeRec.id }
+        : { userId: session.user.id },
       include: { repartitions: { include: { compte: true } } },
       orderBy: { dateOperation: 'desc' },
     });
 
-    return NextResponse.json(serial({ comptes, decaissements, anneeId: anneeRec?.id ?? null }));
+    return NextResponse.json(serial({
+      comptes,
+      decaissements,
+      anneeId: anneeRec?.id ?? null,
+    }));
   } catch (e: any) {
     console.error('GET /api/decaissements:', e?.message);
     return NextResponse.json({ error: e?.message ?? 'Erreur interne' }, { status: 500 });
@@ -54,7 +59,11 @@ export async function POST(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
-    const { anneeId, description, dateOperation, montantTotal, repartitions, notes } = await req.json();
+    const {
+      anneeId, description, dateOperation,
+      montantTotal, repartitions, notes,
+      typeMouvement,
+    } = await req.json();
 
     if (!description || !dateOperation || !montantTotal) {
       return NextResponse.json({ error: 'Champs obligatoires manquants' }, { status: 400 });
@@ -62,12 +71,13 @@ export async function POST(req: NextRequest) {
 
     const dec = await prisma.decaissement.create({
       data: {
-        userId: session.user.id,
-        anneeId: anneeId ?? null,
+        userId:        session.user.id,
+        anneeId:       anneeId ?? null,
         description,
         dateOperation: new Date(dateOperation),
-        montantTotal: BigInt(montantTotal),
-        notes: notes ?? null,
+        montantTotal:  BigInt(montantTotal),
+        notes:         notes ?? null,
+        typeMouvement: typeMouvement ?? 'retrait',
       },
     });
 

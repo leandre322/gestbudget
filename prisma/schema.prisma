@@ -140,6 +140,7 @@ model Decaissement {
   dateOperation DateTime
   montantTotal  BigInt   @default(0)
   notes         String?
+  typeMouvement String   @default("retrait")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
