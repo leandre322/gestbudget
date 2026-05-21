@@ -90,7 +90,7 @@ export default function LoginPage() {
             <Link href="/register" className="text-primary font-medium hover:text-primary-light">Créer un compte</Link>
           </p>
         </div>
-        <p className="text-center text-blue-200 text-xs mt-6">© 2026 GestBudget</p>
+        <p className="text-center text-blue-200 text-xs mt-6">© 2026 LAWDIGITALS</p>
       </div>
     </div>
   );
