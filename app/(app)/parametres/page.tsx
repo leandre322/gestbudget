@@ -34,7 +34,13 @@ export default function ParametresPage() {
   const [newBanque,     setNewBanque]     = useState({ nom: '', solde: '' });
   const [showNewBanque, setShowNewBanque] = useState(false);
   const [editBanque,    setEditBanque]    = useState<any>(null);
-  const [activeTab, setActiveTab]         = useState<'categories'|'comptes'|'banques'|'import'>('categories');
+  const [anneesData,    setAnneesData]    = useState<any[]>([]);
+  const [suppAnnee,     setSuppAnnee]     = useState<number|null>(null);
+  const [suppMois,      setSuppMois]      = useState<number|null>(null);
+  const [confirmText,   setConfirmText]   = useState('');
+  const [suppLoading,   setSuppLoading]   = useState(false);
+  const [suppResult,    setSuppResult]    = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'categories'|'comptes'|'banques'|'import'|'donnees'>('categories');
   const [tauxRef,       setTauxRef]       = useState<Record<GrandeCategorie, number>>({} as Record<GrandeCategorie, number>);
   const [revenuRef,     setRevenuRef]     = useState<number>(0);
   const [savingTaux,    setSavingTaux]    = useState(false);
@@ -42,12 +48,14 @@ export default function ParametresPage() {
 
   const charger = useCallback(async () => {
     setLoading(true);
-    const [rCats, rComptes, rParams, rBanques] = await Promise.all([
+    const [rCats, rComptes, rParams, rBanques, rDonnees] = await Promise.all([
       fetch('/api/categories'),
       fetch('/api/comptes'),
       fetch('/api/parametres'),
       fetch('/api/banques'),
+      fetch('/api/donnees'),
     ]);
+    if (rDonnees.ok) { const d = await rDonnees.json(); setAnneesData(d.annees ?? []); }
     if (rBanques.ok) { const d = await rBanques.json(); setBanques(d.banques ?? []); }
     if (rCats.ok)    { const d = await rCats.json();    setCategories(d.categories ?? []); }
     if (rComptes.ok) { const d = await rComptes.json(); setComptes(d.comptes ?? []); }
@@ -176,13 +184,13 @@ export default function ParametresPage() {
 
       {/* Onglets */}
       <div className="flex gap-1 bg-slate-100 dark:bg-dark-card rounded-xl p-1 w-fit border border-[var(--border)]">
-        {(['categories', 'comptes', 'banques', 'import'] as const).map(tab => (
+        {(['categories', 'comptes', 'banques', 'import', 'donnees'] as const).map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             className={clsx('px-4 py-2 rounded-lg text-sm font-medium transition-all',
               activeTab === tab
                 ? 'bg-[var(--surface)] text-primary shadow-sm'
                 : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>
-            {tab === 'categories' ? 'Catégories' : tab === 'comptes' ? 'Fonds' : tab === 'banques' ? 'Banques' : 'Import Excel'}
+            {tab === 'categories' ? 'Catégories' : tab === 'comptes' ? 'Fonds' : tab === 'banques' ? 'Banques' : tab === 'donnees' ? '🗑️ Données' : 'Import Excel'}
           </button>
         ))}
       </div>
@@ -602,6 +610,112 @@ export default function ParametresPage() {
           </div>
         </div>
       )}
+
+      {/* ── ONGLET DONNÉES ── */}
+{activeTab === 'donnees' && (
+  <div className="space-y-4">
+    <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
+      <p className="font-semibold text-red-700 dark:text-red-400 text-sm mb-1">⚠️ Zone dangereuse</p>
+      <p className="text-xs text-red-600 dark:text-red-400">
+        La suppression de données est irréversible. Procédez avec précaution.
+      </p>
+    </div>
+
+    {anneesData.length === 0 ? (
+      <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-8 text-center text-[var(--text-muted)] text-sm">
+        Aucune donnée disponible
+      </div>
+    ) : anneesData.map((a: any) => (
+      <div key={a.id} className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-bold text-[var(--text)]">{a.annee}</h3>
+            <p className="text-xs text-[var(--text-muted)] mt-0.5">
+              {a.nbMois} mois avec données · {a.nbDecaissements} opération(s)
+            </p>
+          </div>
+          <button
+            onClick={() => { setSuppAnnee(a.annee); setSuppMois(null); setConfirmText(''); setSuppResult(''); }}
+            className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-xl text-xs font-semibold transition-all">
+            🗑️ Supprimer l'année {a.annee}
+          </button>
+        </div>
+
+        {/* Mois avec données */}
+        {a.moisAvecDonnees.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {a.moisAvecDonnees.map((m: number) => (
+              <button key={m}
+                onClick={() => { setSuppAnnee(a.annee); setSuppMois(m); setConfirmText(''); setSuppResult(''); }}
+                className="px-2.5 py-1 border border-[var(--border)] rounded-lg text-xs text-[var(--text-muted)] hover:border-red-400 hover:text-red-500 transition-all">
+                {['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'][m]} ×
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    ))}
+
+    {/* Modal confirmation suppression */}
+    {suppAnnee !== null && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="absolute inset-0 bg-black/50" onClick={() => setSuppAnnee(null)} />
+        <div className="relative bg-[var(--surface)] rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-4">
+          <h3 className="font-bold text-red-600 text-lg">
+            ⚠️ Confirmer la suppression
+          </h3>
+          <p className="text-sm text-[var(--text)]">
+            {suppMois
+              ? `Vous allez supprimer les données de ${['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'][suppMois]} ${suppAnnee}.`
+              : `Vous allez supprimer TOUTES les données de l'année ${suppAnnee}, y compris les décaissements.`
+            }
+          </p>
+          <p className="text-sm font-semibold text-[var(--text)]">
+            Pour confirmer, tapez <span className="text-red-500 font-bold">{suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}</span> ci-dessous :
+          </p>
+          <input
+            type="text"
+            value={confirmText}
+            onChange={e => setConfirmText(e.target.value)}
+            placeholder={suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}
+            className="w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-red-400 outline-none"
+          />
+          {suppResult && (
+            <p className="text-sm text-green-600 dark:text-green-400 font-medium">{suppResult}</p>
+          )}
+          <div className="flex gap-2 justify-end">
+            <button
+              onClick={() => { setSuppAnnee(null); setConfirmText(''); }}
+              className="px-4 py-2 rounded-xl text-sm border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-50 dark:hover:bg-dark-card transition-all">
+              Annuler
+            </button>
+            <button
+              disabled={
+                suppLoading ||
+                (suppMois ? confirmText !== `${suppAnnee}/${suppMois}` : confirmText !== String(suppAnnee))
+              }
+              onClick={async () => {
+                setSuppLoading(true);
+                const url = suppMois
+                  ? `/api/donnees?annee=${suppAnnee}&mois=${suppMois}`
+                  : `/api/donnees?annee=${suppAnnee}`;
+                const res = await fetch(url, { method: 'DELETE' });
+                const data = await res.json();
+                setSuppResult(data.message ?? 'Supprimé');
+                setSuppLoading(false);
+                setConfirmText('');
+                charger();
+                setTimeout(() => { setSuppAnnee(null); setSuppResult(''); }, 2000);
+              }}
+              className="px-4 py-2 rounded-xl text-sm bg-red-500 hover:bg-red-600 text-white font-semibold transition-all disabled:opacity-40">
+              {suppLoading ? 'Suppression...' : '🗑️ Confirmer'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
+)}
 
       {/* ── ONGLET IMPORT ── */}
       {activeTab === 'import' && (

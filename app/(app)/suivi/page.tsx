@@ -280,18 +280,20 @@ export default function SuiviPage() {
           { label: 'Dépenses', val: sortiesReel - epReel, type: 'depense_fixe', cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
           { label: 'Solde',    val: soldeReel, type: '',         cls: soldeReel >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400' },
         ].map(k => (
-          <div key={k.label} className={clsx('rounded-2xl border p-3.5 transition-colors relative group', k.cls)}>
-            <p className="text-xs font-medium opacity-60">{k.label}</p>
+          <div key={k.label} className={clsx('rounded-2xl border p-3.5 transition-colors', k.cls)}>
+            <div className="flex items-start justify-between">
+              <p className="text-xs font-medium opacity-60">{k.label}</p>
+              {k.type && (
+                <button
+                  onClick={() => { setModalType(k.type); setModalOpen(true); }}
+                  className="p-1 rounded-lg hover:bg-white/40 dark:hover:bg-black/20 transition-colors flex-shrink-0 -mt-0.5 -mr-0.5"
+                  title="Modifier">
+                  <Pencil size={11} className="opacity-50 hover:opacity-100" />
+                </button>
+              )}
+            </div>
             <p className="text-lg font-bold mt-0.5">{formatFCFA(k.val)}</p>
-            {k.type && (
-              <button
-                onClick={() => { setModalType(k.type); setModalOpen(true); }}
-                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg hover:bg-white/50 dark:hover:bg-black/20">
-                <Pencil size={12} />
-              </button>
-            )}
           </div>
-        ))}
       </div>
 
       {/* KPIs analytiques */}
