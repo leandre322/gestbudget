@@ -10,6 +10,7 @@ import { MOIS_LABELS } from '@/types';
 import { useTheme } from '@/lib/theme';
 import { InactivityWarning } from '@/lib/inactivity';
 import { clsx } from 'clsx';
+import { ToastProvider } from '@/components/Toast';
 
 interface MoisCtx { mois: number; annee: number; setMois: (m: number) => void; setAnnee: (a: number) => void; }
 export const MoisContext = createContext<MoisCtx>({ mois: 1, annee: 2026, setMois: () => {}, setAnnee: () => {} });
@@ -144,5 +145,11 @@ function InnerLayout({ children }: { children: React.ReactNode }) {
 }
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  return <SessionProvider><InnerLayout>{children}</InnerLayout></SessionProvider>;
+  return (
+    <SessionProvider>
+      <ToastProvider>
+        <InnerLayout>{children}</InnerLayout>
+      </ToastProvider>
+    </SessionProvider>
+  );
 }

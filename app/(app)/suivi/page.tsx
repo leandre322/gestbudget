@@ -2,9 +2,11 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Copy, Save, ChevronsDownUp, ChevronsUpDown, Plus, Trash2, Pencil } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from 'recharts';
 import CollapsibleGroup, { useCollapseAll } from '@/components/CollapsibleGroup';
 import BandeauMoisAnterieur from '@/components/BandeauMoisAnterieur';
 import ModalKPI from '@/components/ModalKPI';
+import { useToast } from '@/components/Toast';
 import { useMois } from '../layout';
 import { formatFCFA, MOIS_LABELS, ORDRE_TYPES, TYPE_LABELS, LABEL_PREVISION, LABEL_REEL, LABEL_ECART, LABEL_EXEC } from '@/types';
 import { clsx } from 'clsx';
@@ -13,26 +15,40 @@ type Lignes = Record<string, { anticipe: string; reel: string }>;
 type LigneBanque = { id: string; banqueId: string; anticipe: number; reel: string };
 
 const TYPES_OUVERTS_PAR_DEFAUT = ['revenu', 'epargne_precaution'];
+const MOIS_COURTS = ['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+const DONUT_COLORS = ['#1E40AF','#EF4444','#F59E0B','#10B981','#8B5CF6','#06B6D4','#F97316'];
 
 export default function SuiviPage() {
   const { mois, annee, setMois, setAnnee } = useMois();
+  const toast = useToast();
+
   const [data,         setData]         = useState<any>(null);
   const [lignes,       setLignes]       = useState<Lignes>({});
   const [banques,      setBanques]      = useState<any[]>([]);
   const [lignesBanque, setLignesBanque] = useState<LigneBanque[]>([]);
+  const [hist,         setHist]         = useState<any[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [saving,       setSaving]       = useState(false);
   const [saved,        setSaved]        = useState(false);
   const [copying,      setCopying]      = useState(false);
   const [modalOpen,    setModalOpen]    = useState(false);
   const [modalType,    setModalType]    = useState<string>('');
-  const timerRef = useRef<NodeJS.Timeout>();
+  const [showTotals,   setShowTotals]   = useState(() => {
+    try { return localStorage.getItem('suivi-show-totals') === 'true'; } catch { return false; }
+  });
 
+  const timerRef = useRef<NodeJS.Timeout>();
   const moisCourantReel     = new Date().getMonth() + 1;
   const anneeCouranteReelle = new Date().getFullYear();
 
   const groupIds = ORDRE_TYPES.map(t => `suivi-${t}`);
   const { expandAll, collapseAll } = useCollapseAll(groupIds);
+
+  const toggleTotals = () => {
+    const next = !showTotals;
+    setShowTotals(next);
+    try { localStorage.setItem('suivi-show-totals', String(next)); } catch {}
+  };
 
   const charger = useCallback(async () => {
     setLoading(true);
@@ -79,6 +95,26 @@ export default function SuiviPage() {
         setLignesBanque([{ id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: 0, reel: '' }]);
       }
     }
+
+    // ── Historique 6 mois ──
+    const histData = [];
+    for (let i = 5; i >= 0; i--) {
+      let m = mois - i, a = annee;
+      if (m <= 0) { m += 12; a--; }
+      try {
+        const hr = await fetch(`/api/budget?annee=${a}&mois=${m}`);
+        if (!hr.ok) { histData.push({ mois: MOIS_COURTS[m], prev: 0, reel: 0 }); continue; }
+        const hd = await hr.json();
+        histData.push({
+          mois: MOIS_COURTS[m],
+          prev: hd.budget?.filter((b: any) => b.categorie?.type?.startsWith('depense')).reduce((s: number, b: any) => s + (b.montantAnticipe ?? 0), 0) ?? 0,
+          reel: hd.budget?.filter((b: any) => b.categorie?.type?.startsWith('depense')).reduce((s: number, b: any) => s + (b.montantReel ?? 0), 0) ?? 0,
+        });
+      } catch {
+        histData.push({ mois: MOIS_COURTS[m], prev: 0, reel: 0 });
+      }
+    }
+    setHist(histData);
     setLoading(false);
   }, [mois, annee]);
 
@@ -106,38 +142,34 @@ export default function SuiviPage() {
     setSaving(true);
     (window as any).__setSaveStatus?.('saving');
 
-    // ── 1. Sauvegarder les lignes standard ──
     const res = await fetch('/api/budget', {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes }),
     });
 
-    // ── 2. Répercuter les réels banques → catégories epargne_precaution en DB ──
+    // Répercuter banques → catégories epargne_precaution en DB
     const cats           = data?.categories ?? [];
     const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
-    if (catsPrecaution.length > 0 && lignesBanque.length > 0) {
-      const lignesAvecReel = lignesBanque.filter(lb => parseInt(lb.reel) > 0);
-      if (lignesAvecReel.length > 0) {
-        const newLignesPrecaution = { ...lignes };
-        catsPrecaution.forEach((cat: any, idx: number) => {
-          const lb = lignesBanque[idx];
-          if (lb) {
-            newLignesPrecaution[cat.id] = {
-              anticipe: lignes[cat.id]?.anticipe ?? '0',
-              reel:     lb.reel || '0',
-            };
-          }
-        });
-        await fetch('/api/budget', {
-          method:  'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes: newLignesPrecaution }),
-        });
-      }
+    if (catsPrecaution.length > 0 && lignesBanque.some(lb => parseInt(lb.reel) > 0)) {
+      const newLignesPrecaution = { ...lignes };
+      catsPrecaution.forEach((cat: any, idx: number) => {
+        const lb = lignesBanque[idx];
+        if (lb) {
+          newLignesPrecaution[cat.id] = {
+            anticipe: lignes[cat.id]?.anticipe ?? '0',
+            reel:     lb.reel || '0',
+          };
+        }
+      });
+      await fetch('/api/budget', {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes: newLignesPrecaution }),
+      });
     }
 
-    // ── 3. Incrémenter les soldes des banques ──
+    // Incrémenter soldes banques
     for (const lb of lignesBanque) {
       const reelVal = parseInt(lb.reel) || 0;
       if (lb.banqueId && reelVal > 0) {
@@ -158,21 +190,23 @@ export default function SuiviPage() {
     setSaving(false);
     if (res.ok) {
       setSaved(true);
+      toast.success('Suivi mensuel sauvegardé ✓');
       (window as any).__setSaveStatus?.('saved');
       setTimeout(() => { setSaved(false); (window as any).__setSaveStatus?.('idle'); }, 3000);
     } else {
+      toast.error('Erreur lors de la sauvegarde');
       (window as any).__setSaveStatus?.('error');
     }
   };
 
   const copierMoisPrecedent = async () => {
+    const pm    = mois === 1 ? 12 : mois - 1;
+    const pa    = mois === 1 ? annee - 1 : annee;
     const ok = window.confirm(
-      `Copier les prévisions de ${MOIS_LABELS[mois===1?12:mois-1]} ${mois===1?annee-1:annee} vers ce mois ?\nCela remplacera les prévisions actuelles.`
+      `Copier les prévisions de ${MOIS_LABELS[pm]} ${pa} vers ce mois ?\nCela remplacera les prévisions actuelles.`
     );
     if (!ok) return;
     setCopying(true);
-    const pm  = mois === 1 ? 12 : mois - 1;
-    const pa  = mois === 1 ? annee - 1 : annee;
     const res = await fetch(`/api/budget?annee=${pa}&mois=${pm}`);
     if (res.ok) {
       const prev = await res.json();
@@ -184,6 +218,9 @@ export default function SuiviPage() {
       }
       setLignes(newL);
       scheduleSave();
+      toast.info(`Prévisions de ${MOIS_LABELS[pm]} ${pa} copiées`);
+    } else {
+      toast.error('Erreur lors de la copie');
     }
     setCopying(false);
   };
@@ -200,6 +237,7 @@ export default function SuiviPage() {
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes: newLignes }),
     });
+    toast.success('Données mises à jour ✓');
     charger();
   };
 
@@ -249,6 +287,15 @@ export default function SuiviPage() {
 
   const modalCats = cats.filter((c: any) => c.type === modalType);
 
+  // Donut dépenses
+  const donutData = Object.entries(
+    cats.filter((c: any) => c.type?.startsWith('depense') && (parseInt(lignes[c.id]?.reel) || 0) > 0)
+        .reduce((acc: any, c: any) => {
+          acc[c.nom] = (acc[c.nom] ?? 0) + (parseInt(lignes[c.id]?.reel) || 0);
+          return acc;
+        }, {})
+  ).map(([name, value]) => ({ name, value }));
+
   return (
     <div className="space-y-5 animate-fadeIn">
 
@@ -284,6 +331,10 @@ export default function SuiviPage() {
             className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--surface)] hover:bg-slate-50 dark:hover:bg-dark-card text-[var(--text-muted)] rounded-xl px-3 py-2 text-xs font-medium transition-all">
             <ChevronsDownUp size={13} />Tout déplier
           </button>
+          <button onClick={toggleTotals}
+            className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--surface)] hover:bg-slate-50 dark:hover:bg-dark-card text-[var(--text-muted)] rounded-xl px-3 py-2 text-xs font-medium transition-all">
+            {showTotals ? '🙈 Masquer totaux' : '👁️ Afficher totaux'}
+          </button>
           <button onClick={copierMoisPrecedent} disabled={copying}
             className="flex items-center gap-2 border border-[var(--border)] bg-[var(--surface)] hover:bg-slate-50 dark:hover:bg-dark-card text-[var(--text-muted)] rounded-xl px-3.5 py-2 text-sm font-medium transition-all disabled:opacity-60">
             <Copy size={14} />{copying ? 'Copie...' : 'Mois précédent'}
@@ -298,10 +349,10 @@ export default function SuiviPage() {
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Revenus',  val: revReel,              type: 'revenu',        cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
+          { label: 'Revenus',  val: revReel,              type: 'revenu',             cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
           { label: 'Épargne',  val: epReel,               type: 'epargne_precaution', cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
-          { label: 'Dépenses', val: sortiesReel - epReel, type: 'depense_fixe',  cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
-          { label: 'Solde',    val: soldeReel,            type: '',              cls: soldeReel >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400' },
+          { label: 'Dépenses', val: sortiesReel - epReel, type: 'depense_fixe',       cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
+          { label: 'Solde',    val: soldeReel,            type: '',                   cls: soldeReel >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400' },
         ].map(k => (
           <div key={k.label} className={clsx('rounded-2xl border p-3.5 transition-colors', k.cls)}>
             <div className="flex items-start justify-between">
@@ -437,19 +488,21 @@ export default function SuiviPage() {
                               </button>
                             </td>
                           </tr>
-                          <tr className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)]">
-                            <td className="px-4 py-2 text-xs font-bold text-[var(--text-muted)] uppercase">Sous-total</td>
-                            <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(totalAnticipePrecaution)}</td>
-                            <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(totalReelBanques)}</td>
-                            <td className="px-4 py-2 text-right text-xs font-bold text-green-500">
-                              {(totalReelBanques - totalAnticipePrecaution) !== 0
-                                ? ((totalReelBanques - totalAnticipePrecaution) > 0 ? '+' : '') + formatFCFA(totalReelBanques - totalAnticipePrecaution)
-                                : '—'}
-                            </td>
-                            <td className="px-4 py-2 text-right text-xs text-[var(--text-muted)]">
-                              {totalAnticipePrecaution > 0 ? ((totalReelBanques / totalAnticipePrecaution) * 100).toFixed(0) + ' %' : '—'}
-                            </td>
-                          </tr>
+                          {showTotals && (
+                            <tr className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)]">
+                              <td className="px-4 py-2 text-xs font-bold text-[var(--text-muted)] uppercase">Sous-total</td>
+                              <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(totalAnticipePrecaution)}</td>
+                              <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(totalReelBanques)}</td>
+                              <td className="px-4 py-2 text-right text-xs font-bold text-green-500">
+                                {(totalReelBanques - totalAnticipePrecaution) !== 0
+                                  ? ((totalReelBanques - totalAnticipePrecaution) > 0 ? '+' : '') + formatFCFA(totalReelBanques - totalAnticipePrecaution)
+                                  : '—'}
+                              </td>
+                              <td className="px-4 py-2 text-right text-xs text-[var(--text-muted)]">
+                                {totalAnticipePrecaution > 0 ? ((totalReelBanques / totalAnticipePrecaution) * 100).toFixed(0) + ' %' : '—'}
+                              </td>
+                            </tr>
+                          )}
                         </>
                       ) : (
                         <>
@@ -497,17 +550,19 @@ export default function SuiviPage() {
                               </tr>
                             );
                           })}
-                          <tr className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)]">
-                            <td className="px-4 py-2 text-xs font-bold text-[var(--text-muted)] uppercase">Sous-total</td>
-                            <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(gAnt)}</td>
-                            <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(gReel)}</td>
-                            <td className={clsx('px-4 py-2 text-right text-xs font-bold', gEcar > 0 && !isRevenu ? 'text-red-500' : 'text-green-500')}>
-                              {gEcar !== 0 ? (gEcar > 0 ? '+' : '') + formatFCFA(gEcar) : '—'}
-                            </td>
-                            <td className="px-4 py-2 text-right text-xs text-[var(--text-muted)]">
-                              {gAnt > 0 ? gPct.toFixed(0) + ' %' : '—'}
-                            </td>
-                          </tr>
+                          {showTotals && (
+                            <tr className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)]">
+                              <td className="px-4 py-2 text-xs font-bold text-[var(--text-muted)] uppercase">Sous-total</td>
+                              <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(gAnt)}</td>
+                              <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(gReel)}</td>
+                              <td className={clsx('px-4 py-2 text-right text-xs font-bold', gEcar > 0 && !isRevenu ? 'text-red-500' : 'text-green-500')}>
+                                {gEcar !== 0 ? (gEcar > 0 ? '+' : '') + formatFCFA(gEcar) : '—'}
+                              </td>
+                              <td className="px-4 py-2 text-right text-xs text-[var(--text-muted)]">
+                                {gAnt > 0 ? gPct.toFixed(0) + ' %' : '—'}
+                              </td>
+                            </tr>
+                          )}
                         </>
                       )}
                     </tbody>
@@ -517,7 +572,7 @@ export default function SuiviPage() {
             );
           })}
 
-          {/* Totaux */}
+          {/* Totaux globaux */}
           <div className="border-t-2 border-primary/30 bg-primary/5 dark:bg-primary/10">
             <div className="px-4 py-2.5 flex items-center justify-between border-b border-primary/10">
               <span className="font-semibold text-[var(--text)] text-sm">Total sorties (épargne + dépenses)</span>
@@ -541,6 +596,44 @@ export default function SuiviPage() {
 
         </div>
       </div>
+
+      {/* ── Graphiques ── */}
+      <div className="grid lg:grid-cols-2 gap-5">
+        <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
+          <h3 className="font-semibold text-[var(--text)] mb-3 text-sm">📊 Dépenses — 6 derniers mois</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={hist} barGap={3}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="mois" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
+              <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
+                     tickFormatter={v => (v/1000).toFixed(0)+'k'} />
+              <Tooltip formatter={(v: number) => formatFCFA(v)} />
+              <Legend />
+              <Bar dataKey="prev" name="Prévision" fill="#DBEAFE" radius={[3,3,0,0]} />
+              <Bar dataKey="reel" name="Réel"      fill="#1E40AF" radius={[3,3,0,0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
+          <h3 className="font-semibold text-[var(--text)] mb-3 text-sm">🥧 Répartition dépenses ce mois</h3>
+          {donutData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie data={donutData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" paddingAngle={2}>
+                  {donutData.map((_: any, i: number) => <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />)}
+                </Pie>
+                <Tooltip formatter={(v: number) => formatFCFA(v)} />
+                <Legend iconType="circle" iconSize={8} />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-40 flex items-center justify-center text-[var(--text-muted)] text-sm">
+              Aucune dépense ce mois
+            </div>
+          )}
+        </div>
+      </div>
+
     </div>
   );
 }
