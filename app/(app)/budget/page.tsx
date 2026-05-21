@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { Save, Copy, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
-import CollapsibleGroup from '@/components/CollapsibleGroup';
+import CollapsibleGroup, { useCollapseAll } from '@/components/CollapsibleGroup';
 import { formatFCFA, ORDRE_TYPES, TYPE_LABELS } from '@/types';
 import { clsx } from 'clsx';
 import { useMois } from '../layout';
@@ -17,6 +17,10 @@ export default function BudgetPage() {
   const [saving,  setSaving]  = useState(false);
   const [saved,   setSaved]   = useState(false);
   const [nextM,   setNextM]   = useState(false);
+
+  // ✅ Groupes pliables
+  const groupIds = ORDRE_TYPES.map(t => `budget-${t}`);
+  const { expandAll, collapseAll } = useCollapseAll(groupIds);
 
   const charger = useCallback(async () => {
     setLoading(true);
@@ -49,12 +53,13 @@ export default function BudgetPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ anneeId: data.anneeId, mois, lignes: lignesFormatted }),
     });
-    setSaving(false); setSaved(true);
+    setSaving(false);
+    setSaved(true);
     setTimeout(() => setSaved(false), 3000);
   };
 
   const copierVersProchainMois = async () => {
-    const nm = mois === 12 ? 1 : mois + 1;
+    const nm = mois === 12 ? 1  : mois + 1;
     const na = mois === 12 ? annee + 1 : annee;
     const resNext = await fetch(`/api/budget?annee=${na}&mois=${nm}`);
     if (!resNext.ok) return;
@@ -73,14 +78,13 @@ export default function BudgetPage() {
     setTimeout(() => setNextM(false), 3000);
   };
 
-  const toggleAll = (open: boolean) => {
-    ORDRE_TYPES.forEach(t => localStorage.setItem(`group-budget-${t}`, String(open)));
-    window.dispatchEvent(new StorageEvent('storage', { key: 'group-refresh' }));
-  };
+  if (loading) return (
+    <div className="flex items-center justify-center h-64">
+      <div className="spinner scale-150" />
+    </div>
+  );
 
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="spinner scale-150" /></div>;
-
-  const cats = data?.categories ?? [];
+  const cats    = data?.categories ?? [];
   const grouped = ORDRE_TYPES.map(type => ({
     type, items: cats.filter((c: any) => c.type === type),
   })).filter(g => g.items.length > 0);
@@ -89,17 +93,19 @@ export default function BudgetPage() {
 
   return (
     <div className="space-y-5 animate-fadeIn">
+
+      {/* En-tête */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-[var(--text)]">Budget mensuel de référence</h1>
           <p className="text-[var(--text-muted)] text-sm">Montants anticipés — base de planification</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <button onClick={() => toggleAll(false)}
+          <button onClick={collapseAll}
             className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--surface)] hover:bg-slate-50 dark:hover:bg-dark-card text-[var(--text-muted)] rounded-xl px-3 py-2 text-xs font-medium transition-all">
             <ChevronsUpDown size={13} />Tout plier
           </button>
-          <button onClick={() => toggleAll(true)}
+          <button onClick={expandAll}
             className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--surface)] hover:bg-slate-50 dark:hover:bg-dark-card text-[var(--text-muted)] rounded-xl px-3 py-2 text-xs font-medium transition-all">
             <ChevronsDownUp size={13} />Tout déplier
           </button>
@@ -114,6 +120,7 @@ export default function BudgetPage() {
         </div>
       </div>
 
+      {/* Tableau */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -141,11 +148,13 @@ export default function BudgetPage() {
                 <table className="w-full text-sm">
                   <tbody>
                     {items.map((cat: any) => (
-                      <tr key={cat.id} className="border-t border-[var(--border)] hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors">
+                      <tr key={cat.id}
+                        className="border-t border-[var(--border)] hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors">
                         <td className="px-4 py-2.5 text-[var(--text)]">{cat.nom}</td>
                         <td className="px-3 py-2 text-right">
-                          <input type="number" value={lignes[cat.id] ?? ''}
-                            onChange={e => setLignes(l => ({...l, [cat.id]: e.target.value}))}
+                          <input type="number"
+                            value={lignes[cat.id] ?? ''}
+                            onChange={e => setLignes(l => ({ ...l, [cat.id]: e.target.value }))}
                             placeholder="0"
                             className="w-40 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none transition-all" />
                         </td>
@@ -162,6 +171,7 @@ export default function BudgetPage() {
           );
         })}
 
+        {/* Total général */}
         <div className="px-4 py-3 border-t-2 border-primary/30 bg-primary/5 dark:bg-primary/10 flex items-center justify-between">
           <span className="font-bold text-[var(--text)]">TOTAL GÉNÉRAL</span>
           <span className="font-bold text-primary">{formatFCFA(total)}</span>
