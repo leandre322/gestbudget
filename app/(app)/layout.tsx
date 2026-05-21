@@ -15,17 +15,30 @@ interface MoisCtx { mois: number; annee: number; setMois: (m: number) => void; s
 export const MoisContext = createContext<MoisCtx>({ mois: 1, annee: 2026, setMois: () => {}, setAnnee: () => {} });
 export const useMois = () => useContext(MoisContext);
 
-function Topbar({ onMenu, mois, annee, onPrev, onNext, saveStatus, isOffline }: any) {
+function Topbar({ onMenu, mois, annee, onPrev, onNext, saveStatus, isOffline, onMoisCourant, estMoisCourant }: any) {{
   const { data: session } = useSession();
   const { isDark, toggleTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   return (
     <header className="h-14 bg-[var(--surface)] border-b border-[var(--border)] flex items-center px-4 gap-3 sticky top-0 z-20 shadow-sm transition-colors">
       <button onClick={onMenu} className="lg:hidden text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"><Menu size={22} /></button>
-      <div className="flex items-center gap-1">
-        <button onClick={onPrev} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-dark-card text-slate-400 transition-all"><ChevronLeft size={17} /></button>
-        <span className="font-semibold text-[var(--text)] text-sm min-w-[130px] text-center select-none">{MOIS_LABELS[mois]} {annee}</span>
-        <button onClick={onNext} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-dark-card text-slate-400 transition-all"><ChevronRight size={17} /></button>
+      <div className="flex items-center gap-1.5">
+        <button onClick={onPrev} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-dark-card text-slate-400 transition-all">
+          <ChevronLeft size={17} />
+        </button>
+        <span className="font-semibold text-[var(--text)] text-sm min-w-[130px] text-center select-none">
+          {MOIS_LABELS[mois]} {annee}
+        </span>
+        <button onClick={onNext} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-dark-card text-slate-400 transition-all">
+          <ChevronRight size={17} />
+        </button>
+        {!estMoisCourant && (
+          <button onClick={onMoisCourant}
+            title="Revenir au mois courant"
+            className="ml-1 px-2.5 py-1 bg-primary text-white rounded-lg text-xs font-semibold hover:bg-primary-dark transition-all flex items-center gap-1">
+            📅 Aujourd'hui
+          </button>
+        )}
       </div>
       {saveStatus === 'saving' && <span className="text-xs text-amber-500 font-medium hidden sm:block">Sauvegarde...</span>}
       {saveStatus === 'saved'  && <span className="text-xs text-green-500 font-medium hidden sm:block">Sauvegardé ✓</span>}
@@ -100,13 +113,25 @@ function InnerLayout({ children }: { children: React.ReactNode }) {
 
   const prev = () => { if (mois===1){setMois(12);setAnnee(a=>a-1);}else setMois(m=>m-1); };
   const next = () => { if (mois===12){setMois(1);setAnnee(a=>a+1);}else setMois(m=>m+1); };
+  const moisCourantReel    = new Date().getMonth() + 1;
+  const anneeCouranteReelle = new Date().getFullYear();
+  const estMoisCourant     = mois === moisCourantReel && annee === anneeCouranteReelle;
+  const allerMoisCourant   = () => { setMois(moisCourantReel); setAnnee(anneeCouranteReelle); };
 
   return (
     <MoisContext.Provider value={{ mois, annee, setMois, setAnnee }}>
       <div className="flex h-screen overflow-hidden bg-[var(--bg)] transition-colors">
         <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
         <div className="flex-1 flex flex-col overflow-hidden">
-          <Topbar onMenu={() => setSidebarOpen(true)} mois={mois} annee={annee} onPrev={prev} onNext={next} saveStatus={saveStatus} isOffline={isOffline} />
+          <Topbar
+            onMenu={() => setSidebarOpen(true)}
+            mois={mois} annee={annee}
+            onPrev={prev} onNext={next}
+            saveStatus={saveStatus}
+            isOffline={isOffline}
+            onMoisCourant={allerMoisCourant}
+            estMoisCourant={estMoisCourant}
+          />
           <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-20 lg:pb-6 bg-[var(--bg)] transition-colors">
             {children}
           </main>

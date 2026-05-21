@@ -21,7 +21,7 @@ export const TYPE_LABELS: Record<TypeCategorie, string> = {
   revenu:                 'Revenus',
   epargne_precaution:     'Épargne Précaution',
   epargne_investissement: 'Épargne Investissement',
-  epargne_autre:          'Épargne Autres (Fonds de Roulement)',
+  epargne_autre:          'Épargne de Fonctionnement',
   depense_fixe:           'Dépenses Fixes',
   depense_variable:       'Dépenses Variables',
   depense_occasionnelle:  'Dépenses Occasionnelles',
@@ -48,6 +48,12 @@ export const MOIS_COURTS = [
   '', 'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun',
   'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc',
 ];
+
+// Label colonne "Anticipé" → "Prévision"
+export const LABEL_PREVISION = 'Prévision';
+export const LABEL_REEL      = 'Réel';
+export const LABEL_ECART     = 'Écart';
+export const LABEL_EXEC      = '% Exéc.';
 
 // Format FCFA : 150 000 FCFA
 export const formatFCFA = (montant: number | bigint): string => {
