@@ -55,8 +55,8 @@ export async function PUT(req: NextRequest) {
         const montant = (revenuMensuelReference ?? 0) > 0
           ? Math.round(((taux as number) / 100) * (revenuMensuelReference ?? 0))
           : 0;
-        await prisma.categorie.updateMany({
-          where: { userId: session.user.id, type },
+       await prisma.categorie.updateMany({
+  	where: { userId: session.user.id, type: type as any },
           data:  { tauxReference: taux as number, montantReference: BigInt(montant) },
         });
       }
