@@ -18,7 +18,6 @@ export default function BudgetPage() {
   const [saved,   setSaved]   = useState(false);
   const [nextM,   setNextM]   = useState(false);
 
-  // ✅ Groupes pliables
   const groupIds = ORDRE_TYPES.map(t => `budget-${t}`);
   const { expandAll, collapseAll } = useCollapseAll(groupIds);
 
@@ -59,7 +58,7 @@ export default function BudgetPage() {
   };
 
   const copierVersProchainMois = async () => {
-    const nm = mois === 12 ? 1  : mois + 1;
+    const nm = mois === 12 ? 1 : mois + 1;
     const na = mois === 12 ? annee + 1 : annee;
     const resNext = await fetch(`/api/budget?annee=${na}&mois=${nm}`);
     if (!resNext.ok) return;
@@ -89,7 +88,12 @@ export default function BudgetPage() {
     type, items: cats.filter((c: any) => c.type === type),
   })).filter(g => g.items.length > 0);
 
-  const total = cats.reduce((s: number, c: any) => s + (parseInt(lignes[c.id]) || 0), 0);
+  // ── Calculs totaux — Demande 2 ──
+  const revAnt    = cats.filter((c: any) => c.type === 'revenu')
+    .reduce((s: number, c: any) => s + (parseInt(lignes[c.id]) || 0), 0);
+  const sortiesAnt = cats.filter((c: any) => c.type !== 'revenu')
+    .reduce((s: number, c: any) => s + (parseInt(lignes[c.id]) || 0), 0);
+  const soldeAnt  = revAnt - sortiesAnt;
 
   return (
     <div className="space-y-5 animate-fadeIn">
@@ -120,61 +124,75 @@ export default function BudgetPage() {
         </div>
       </div>
 
-      {/* Tableau */}
-      <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-50 dark:bg-dark-card border-b border-[var(--border)]">
-                <th className="text-left px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Catégorie</th>
-                <th className="text-right px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Montant anticipé (FCFA)</th>
-              </tr>
-            </thead>
-          </table>
-        </div>
+      {/* Tableau — centré max-width (Demande 6) */}
+      <div className="max-w-3xl mx-auto w-full">
+        <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
 
-        {grouped.map(({ type, items }) => {
-          const sousTotal = items.reduce((s: number, c: any) => s + (parseInt(lignes[c.id]) || 0), 0);
-          return (
-            <CollapsibleGroup
-              key={type}
-              id={`budget-${type}`}
-              label={TYPE_LABELS[type as keyof typeof TYPE_LABELS]}
-              badge={formatFCFA(sousTotal)}
-              badgeColor="text-primary dark:text-blue-400"
-              defaultOpen={TYPES_OUVERTS.includes(type)}
-            >
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <tbody>
-                    {items.map((cat: any) => (
-                      <tr key={cat.id}
-                        className="border-t border-[var(--border)] hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors">
-                        <td className="px-4 py-2.5 text-[var(--text)]">{cat.nom}</td>
-                        <td className="px-3 py-2 text-right">
-                          <input type="number"
-                            value={lignes[cat.id] ?? ''}
-                            onChange={e => setLignes(l => ({ ...l, [cat.id]: e.target.value }))}
-                            placeholder="0"
-                            className="w-40 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none transition-all" />
-                        </td>
+          {/* En-tête fixe */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-dark-card border-b border-[var(--border)]">
+                  <th className="text-left px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Catégorie</th>
+                  <th className="text-right px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Montant anticipé (FCFA)</th>
+                </tr>
+              </thead>
+            </table>
+          </div>
+
+          {grouped.map(({ type, items }) => {
+            const sousTotal = items.reduce((s: number, c: any) => s + (parseInt(lignes[c.id]) || 0), 0);
+            return (
+              <CollapsibleGroup
+                key={type}
+                id={`budget-${type}`}
+                label={TYPE_LABELS[type as keyof typeof TYPE_LABELS]}
+                badge={formatFCFA(sousTotal)}
+                badgeColor="text-primary dark:text-blue-400"
+                defaultOpen={TYPES_OUVERTS.includes(type)}
+              >
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {items.map((cat: any) => (
+                        <tr key={cat.id}
+                          className="border-t border-[var(--border)] hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors">
+                          <td className="px-4 py-2.5 text-[var(--text)]">{cat.nom}</td>
+                          <td className="px-3 py-2 text-right">
+                            <input type="number"
+                              value={lignes[cat.id] ?? ''}
+                              onChange={e => setLignes(l => ({ ...l, [cat.id]: e.target.value }))}
+                              placeholder="0"
+                              className="w-40 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none transition-all" />
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)]">
+                        <td className="px-4 py-2 text-xs font-bold text-[var(--text-muted)] uppercase">Sous-total</td>
+                        <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(sousTotal)}</td>
                       </tr>
-                    ))}
-                    <tr className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)]">
-                      <td className="px-4 py-2 text-xs font-bold text-[var(--text-muted)] uppercase">Sous-total</td>
-                      <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(sousTotal)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </CollapsibleGroup>
-          );
-        })}
+                    </tbody>
+                  </table>
+                </div>
+              </CollapsibleGroup>
+            );
+          })}
 
-        {/* Total général */}
-        <div className="px-4 py-3 border-t-2 border-primary/30 bg-primary/5 dark:bg-primary/10 flex items-center justify-between">
-          <span className="font-bold text-[var(--text)]">TOTAL GÉNÉRAL</span>
-          <span className="font-bold text-primary">{formatFCFA(total)}</span>
+          {/* ── Totaux — Demande 2 ── */}
+          <div className="border-t-2 border-primary/30 bg-primary/5 dark:bg-primary/10">
+            <div className="px-4 py-2.5 flex items-center justify-between border-b border-primary/10">
+              <span className="font-semibold text-[var(--text)] text-sm">Total sorties (épargne + dépenses)</span>
+              <span className="font-semibold text-[var(--text)] text-sm">{formatFCFA(sortiesAnt)}</span>
+            </div>
+            <div className="px-4 py-3 flex items-center justify-between">
+              <span className="font-bold text-[var(--text)]">Solde disponible</span>
+              <span className={clsx('font-bold text-lg',
+                soldeAnt >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500')}>
+                {formatFCFA(soldeAnt)}
+              </span>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
