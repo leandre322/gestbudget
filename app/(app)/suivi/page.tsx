@@ -28,7 +28,7 @@ export default function SuiviPage() {
   const [modalType,    setModalType]    = useState<string>('');
   const timerRef = useRef<NodeJS.Timeout>();
 
-  const moisCourantReel    = new Date().getMonth() + 1;
+  const moisCourantReel     = new Date().getMonth() + 1;
   const anneeCouranteReelle = new Date().getFullYear();
 
   const groupIds = ORDRE_TYPES.map(t => `suivi-${t}`);
@@ -53,18 +53,17 @@ export default function SuiviPage() {
     }
     setLignes(init);
     if (resBanques.ok) {
-      const db = await resBanques.json();
+      const db  = await resBanques.json();
       const bqs = db.banques ?? [];
       setBanques(bqs);
       const key = `lignes-banque-${annee}-${mois}`;
       try {
-        const saved = localStorage.getItem(key);
-        if (saved) {
-          setLignesBanque(JSON.parse(saved));
+        const sv = localStorage.getItem(key);
+        if (sv) {
+          setLignesBanque(JSON.parse(sv));
         } else {
-          // Initialiser avec prévisions depuis budget
-          const catsPrecaution = d.categories.filter((c: any) => c.type === 'epargne_precaution');
-          const totalAnticipe  = catsPrecaution.reduce((s: number, c: any) => {
+          const catsPrecaution  = d.categories.filter((c: any) => c.type === 'epargne_precaution');
+          const totalAnticipe   = catsPrecaution.reduce((s: number, c: any) => {
             const b = d.budget.find((b: any) => b.categorieId === c.id);
             return s + (b?.montantAnticipe ?? 0);
           }, 0);
@@ -75,9 +74,7 @@ export default function SuiviPage() {
           ]);
         }
       } catch {
-        setLignesBanque([
-          { id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: 0, reel: '' },
-        ]);
+        setLignesBanque([{ id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: 0, reel: '' }]);
       }
     }
     setLoading(false);
@@ -107,22 +104,21 @@ export default function SuiviPage() {
     setSaving(true);
     (window as any).__setSaveStatus?.('saving');
     const res = await fetch('/api/budget', {
-      method: 'PUT',
+      method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ anneeId: data.anneeId, mois, lignes }),
+      body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes }),
     });
-    // Incrémenter les soldes des banques
     for (const lb of lignesBanque) {
       const reelVal = parseInt(lb.reel) || 0;
       if (lb.banqueId && reelVal > 0) {
         const oldKey = `lignes-banque-saved-${annee}-${mois}-${lb.id}`;
         const oldVal = parseInt(localStorage.getItem(oldKey) ?? '0');
-        const diff = reelVal - oldVal;
+        const diff   = reelVal - oldVal;
         if (diff !== 0) {
           await fetch(`/api/banques?id=${lb.banqueId}`, {
-            method: 'PUT',
+            method:  'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: diff > 0 ? 'increment' : 'decrement', montant: Math.abs(diff) }),
+            body:    JSON.stringify({ action: diff > 0 ? 'increment' : 'decrement', montant: Math.abs(diff) }),
           });
           localStorage.setItem(oldKey, String(reelVal));
         }
@@ -139,12 +135,13 @@ export default function SuiviPage() {
   };
 
   const copierMoisPrecedent = async () => {
-    // Confirmation
-    const ok = window.confirm(`Copier les prévisions de ${MOIS_LABELS[mois===1?12:mois-1]} ${mois===1?annee-1:annee} vers ce mois ?\nCela remplacera les prévisions actuelles.`);
+    const ok = window.confirm(
+      `Copier les prévisions de ${MOIS_LABELS[mois===1?12:mois-1]} ${mois===1?annee-1:annee} vers ce mois ?\nCela remplacera les prévisions actuelles.`
+    );
     if (!ok) return;
     setCopying(true);
-    const pm = mois === 1 ? 12 : mois - 1;
-    const pa = mois === 1 ? annee - 1 : annee;
+    const pm  = mois === 1 ? 12 : mois - 1;
+    const pa  = mois === 1 ? annee - 1 : annee;
     const res = await fetch(`/api/budget?annee=${pa}&mois=${pm}`);
     if (res.ok) {
       const prev = await res.json();
@@ -160,22 +157,17 @@ export default function SuiviPage() {
     setCopying(false);
   };
 
-  // Modal KPI — sauvegarder
   const handleModalSave = async (vals: Record<string, { prevision: string; reel: string }>) => {
     const newLignes = { ...lignes };
     for (const [catId, val] of Object.entries(vals)) {
       newLignes[catId] = { anticipe: val.prevision, reel: val.reel };
     }
     setLignes(newLignes);
-    await sauvegarderLignes(newLignes);
-  };
-
-  const sauvegarderLignes = async (l: Lignes) => {
     if (!data?.anneeId) return;
     await fetch('/api/budget', {
-      method: 'PUT',
+      method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ anneeId: data.anneeId, mois, lignes: l }),
+      body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes: newLignes }),
     });
     charger();
   };
@@ -202,6 +194,7 @@ export default function SuiviPage() {
   );
 
   const cats = data?.categories ?? [];
+
   const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
   const totalAnticipePrecaution = catsPrecaution.reduce((s: number, c: any) => {
     const b = data?.budget?.find((b: any) => b.categorieId === c.id);
@@ -214,16 +207,15 @@ export default function SuiviPage() {
   })).filter(g => g.items.length > 0);
 
   const revAnt      = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
-  const revReel     = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel) || 0), 0);
+  const revReel     = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
   const sortiesAnt  = cats.filter((c: any) => c.type !== 'revenu' && c.type !== 'epargne_precaution').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0) + totalAnticipePrecaution;
-  const sortiesReel = cats.filter((c: any) => c.type !== 'revenu' && c.type !== 'epargne_precaution').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel) || 0), 0) + totalReelBanques;
+  const sortiesReel = cats.filter((c: any) => c.type !== 'revenu' && c.type !== 'epargne_precaution').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0) + totalReelBanques;
   const soldeAnt    = revAnt  - sortiesAnt;
   const soldeReel   = revReel - sortiesReel;
-  const tauxExec    = revAnt  > 0 ? (revReel / revAnt) * 100 : 0;
+  const tauxExec    = revAnt  > 0 ? (revReel / revAnt)  * 100 : 0;
   const epReel      = cats.filter((c: any) => c.type?.startsWith('epargne') && c.type !== 'epargne_precaution').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel) || 0), 0) + totalReelBanques;
-  const tauxEp      = revReel > 0 ? (epReel / revReel) * 100 : 0;
+  const tauxEp      = revReel > 0 ? (epReel  / revReel) * 100 : 0;
 
-  // Catégories pour le modal KPI actif
   const modalCats = cats.filter((c: any) => c.type === modalType);
 
   return (
@@ -272,13 +264,13 @@ export default function SuiviPage() {
         </div>
       </div>
 
-      {/* KPIs */}
+      {/* KPIs — bouton fixe ✏️ */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Revenus',  val: revReel,   type: 'revenu',   cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
-          { label: 'Épargne',  val: epReel,    type: 'epargne_precaution', cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
-          { label: 'Dépenses', val: sortiesReel - epReel, type: 'depense_fixe', cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
-          { label: 'Solde',    val: soldeReel, type: '',         cls: soldeReel >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400' },
+          { label: 'Revenus',  val: revReel,               type: 'revenu',        cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
+          { label: 'Épargne',  val: epReel,                type: 'epargne_precaution', cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
+          { label: 'Dépenses', val: sortiesReel - epReel,  type: 'depense_fixe',  cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
+          { label: 'Solde',    val: soldeReel,             type: '',              cls: soldeReel >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400' },
         ].map(k => (
           <div key={k.label} className={clsx('rounded-2xl border p-3.5 transition-colors', k.cls)}>
             <div className="flex items-start justify-between">
@@ -288,12 +280,13 @@ export default function SuiviPage() {
                   onClick={() => { setModalType(k.type); setModalOpen(true); }}
                   className="p-1 rounded-lg hover:bg-white/40 dark:hover:bg-black/20 transition-colors flex-shrink-0 -mt-0.5 -mr-0.5"
                   title="Modifier">
-                  <Pencil size={11} className="opacity-50 hover:opacity-100" />
+                  <Pencil size={11} className="opacity-60" />
                 </button>
               )}
             </div>
             <p className="text-lg font-bold mt-0.5">{formatFCFA(k.val)}</p>
           </div>
+        ))}
       </div>
 
       {/* KPIs analytiques */}
@@ -340,8 +333,9 @@ export default function SuiviPage() {
             </table>
           </div>
 
+          {/* Groupes */}
           {grouped.map(({ type, items }) => {
-            const isRevenu = type === 'revenu';
+            const isRevenu       = type === 'revenu';
             const isEpPrecaution = type === 'epargne_precaution';
             let gAnt: number;
             let gReel: number;
@@ -352,9 +346,9 @@ export default function SuiviPage() {
               gAnt  = items.reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
               gReel = items.reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
             }
-            const gEcar = gReel - gAnt;
-            const gPct  = gAnt > 0 ? (gReel / gAnt) * 100 : 0;
-            const badge = `${formatFCFA(gReel)} réel`;
+            const gEcar      = gReel - gAnt;
+            const gPct       = gAnt > 0 ? (gReel / gAnt) * 100 : 0;
+            const badge      = `${formatFCFA(gReel)} réel`;
             const badgeColor = gEcar > 0 && !isRevenu ? 'text-red-500' : 'text-green-600 dark:text-green-400';
 
             return (
@@ -369,10 +363,9 @@ export default function SuiviPage() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <tbody>
-
                       {isEpPrecaution ? (
                         <>
-                          {lignesBanque.map((lb) => (
+                          {lignesBanque.map(lb => (
                             <tr key={lb.id} className="border-t border-[var(--border)] hover:bg-slate-50/60 dark:hover:bg-dark-card/60 transition-colors">
                               <td className="px-4 py-2.5">
                                 <select
@@ -385,7 +378,6 @@ export default function SuiviPage() {
                                   ))}
                                 </select>
                               </td>
-                              {/* Prévision depuis budget mensuel */}
                               <td className="px-4 py-2.5 text-right text-[var(--text-muted)] text-sm">
                                 {lb.anticipe > 0 ? formatFCFA(lb.anticipe) : '—'}
                               </td>
@@ -438,7 +430,7 @@ export default function SuiviPage() {
                             const over = !isRevenu && ant > 0 && reel > ant;
                             const ecarColor = isRevenu
                               ? reel > ant ? 'text-green-500' : reel < ant ? 'text-red-500' : 'text-[var(--text-muted)]'
-                              : ecar > 0 ? 'text-red-500' : ecar < 0 ? 'text-green-500' : 'text-[var(--text-muted)]';
+                              : ecar > 0   ? 'text-red-500'  : ecar < 0   ? 'text-green-500' : 'text-[var(--text-muted)]';
                             return (
                               <tr key={cat.id}
                                 className={clsx('border-t border-[var(--border)] hover:bg-slate-50/60 dark:hover:bg-dark-card/60 transition-colors', over && 'bg-red-50/30 dark:bg-red-900/10')}>
