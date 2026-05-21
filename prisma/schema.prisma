@@ -89,6 +89,8 @@ model Categorie {
   ordre     Int           @default(0)
   isActive  Boolean       @default(true)
   createdAt DateTime      @default(now())
+  tauxReference    Float   @default(0)
+  montantReference BigInt  @default(0)
 
   user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   budgetMensuel BudgetMensuel[]
@@ -185,6 +187,7 @@ model Parametres {
   moisCourant   Int      @default(1)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  revenuMensuelReference BigInt @default(0)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
