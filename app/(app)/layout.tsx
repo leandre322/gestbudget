@@ -15,7 +15,7 @@ interface MoisCtx { mois: number; annee: number; setMois: (m: number) => void; s
 export const MoisContext = createContext<MoisCtx>({ mois: 1, annee: 2026, setMois: () => {}, setAnnee: () => {} });
 export const useMois = () => useContext(MoisContext);
 
-function Topbar({ onMenu, mois, annee, onPrev, onNext, saveStatus, isOffline, onMoisCourant, estMoisCourant }: any) {{
+function Topbar({ onMenu, mois, annee, onPrev, onNext, saveStatus, isOffline, onMoisCourant, estMoisCourant }: any) {
   const { data: session } = useSession();
   const { isDark, toggleTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
