@@ -8,23 +8,28 @@ function n(v: any) { return typeof v === 'bigint' ? Number(v) : (Number(v) || 0)
 export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+    }
 
     const annees = await prisma.annee.findMany({
       where:   { userId: session.user.id },
       orderBy: { annee: 'asc' },
     });
 
-    if (annees.length === 0) return NextResponse.json({
-      totalRevenus: 0, totalDepenses: 0, totalEpargne: 0, solde: 0,
-      evolutionAnnuelle: [], fondsRoulement: [], comptes: [], totalFonds: 0,
-      annees: [], banques: [], revenuReference: 0, scoreGlobal: 0, nbMoisScore: 0,
-    });
+    if (annees.length === 0) {
+      return NextResponse.json({
+        totalRevenus: 0, totalDepenses: 0, totalEpargne: 0, solde: 0,
+        evolutionAnnuelle: [], fondsRoulement: [], comptes: [], totalFonds: 0,
+        annees: [], banques: [], revenuReference: 0, nMoisUrgence: 6,
+        scoreGlobal: 0, nbMoisScore: 0,
+      });
+    }
 
     const anneeIds = annees.map(a => a.id);
 
-    // ── Fix 1 : suppression catsFonds, fix prisma.parametres ──
-    const [budgets, comptes, banques, parametres] = await Promise.all([
+    // Requêtes principales — sans parametres
+    const [budgets, comptes, banques] = await Promise.all([
       prisma.budgetMensuel.findMany({
         where:   { userId: session.user.id, anneeId: { in: anneeIds } },
         include: { categorie: true },
@@ -37,21 +42,25 @@ export async function GET(req: NextRequest) {
         where:   { userId: session.user.id },
         orderBy: { updatedAt: 'desc' },
       }),
-      prisma.parametres.findUnique({
-        where: { userId: session.user.id },
-      }),
     ]);
 
-    // ── Totaux globaux ──
-    const totalRevenus  = budgets.filter(b => b.categorie.type === 'revenu')
-      .reduce((s, b) => s + n(b.montantReel), 0);
-    const totalDepenses = budgets.filter(b => b.categorie.type.startsWith('depense') || b.categorie.type === 'remboursement_dette')
-      .reduce((s, b) => s + n(b.montantReel), 0);
-    const totalEpargne  = budgets.filter(b => b.categorie.type.startsWith('epargne'))
-      .reduce((s, b) => s + n(b.montantReel), 0);
+    // Parametres isolés — ne plante jamais le reste
+    let parametres: any = null;
+    try {
+      parametres = await prisma.parametres.findUnique({
+        where: { userId: session.user.id },
+      });
+    } catch (paramErr) {
+      console.error('Parametres query error (migration pending?):', paramErr);
+    }
+
+    // Totaux globaux
+    const totalRevenus  = budgets.filter(b => b.categorie.type === 'revenu').reduce((s, b) => s + n(b.montantReel), 0);
+    const totalDepenses = budgets.filter(b => b.categorie.type.startsWith('depense') || b.categorie.type === 'remboursement_dette').reduce((s, b) => s + n(b.montantReel), 0);
+    const totalEpargne  = budgets.filter(b => b.categorie.type.startsWith('epargne')).reduce((s, b) => s + n(b.montantReel), 0);
     const solde = totalRevenus - totalDepenses - totalEpargne;
 
-    // ── Évolution annuelle ──
+    // Évolution annuelle
     const evolutionAnnuelle = annees.map(a => {
       const ab = budgets.filter(b => b.anneeId === a.id);
       return {
@@ -62,83 +71,59 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // ── Fix 2 : Fonds de roulement depuis soldeActuel des compteFonds ──
-    const fondsRoulement = comptes.map(c => ({
-      id:        c.id,
-      nom:       c.nom,
-      totalAuto: n(c.soldeActuel),
-    }));
+    // Fonds de roulement depuis soldeActuel
+    const fondsRoulement = comptes.map(c => ({ id: c.id, nom: c.nom, totalAuto: n(c.soldeActuel) }));
     const totalFonds = fondsRoulement.reduce((s, f) => s + f.totalAuto, 0);
 
-    // ── Fix 3 : Banques déduplication propre ──
+    // Banques déduplication
     const vus = new Set<string>();
     const banquesUniques = banques.reduce((acc: any[], b) => {
       if (!vus.has(b.nomBanque)) {
         vus.add(b.nomBanque);
-        acc.push({
-          id:         b.id,
-          nomBanque:  b.nomBanque,
-          typeCompte: b.typeCompte,
-          solde:      n(b.solde),
-        });
+        acc.push({ id: b.id, nomBanque: b.nomBanque, typeCompte: b.typeCompte, solde: n(b.solde) });
       }
       return acc;
     }, []);
 
-    // ── Revenu de référence ──
     const revenuReference = n(parametres?.revenuMensuelReference ?? 0);
     const nMoisUrgence    = (parametres as any)?.nMoisUrgence ?? 6;
 
-    // ── Fix 4 : Score global dans try/catch avec totalBanques ──
-    let totalScore  = 0;
-    let nbMoisScore = 0;
+    // Score global
+    let totalScore = 0, nbMoisScore = 0;
     try {
-      const totalBanques        = banquesUniques.reduce((s, b) => s + b.solde, 0);
+      const totalBanques         = banquesUniques.reduce((s, b) => s + b.solde, 0);
       const fondsUrgenceObjectif = revenuReference > 0 ? revenuReference * nMoisUrgence : 3720000;
       for (const anneeRec of annees) {
         for (let m = 1; m <= 12; m++) {
-          const budgetsMois = budgets.filter(b =>
-            b.anneeId === anneeRec.id && Number(b.mois) === m
-          );
-          if (budgetsMois.length === 0) continue;
-          const totRev = budgetsMois.filter(b => b.categorie.type === 'revenu').reduce((s, b) => s + n(b.montantReel), 0);
+          const bm = budgets.filter(b => b.anneeId === anneeRec.id && Number(b.mois) === m);
+          if (!bm.length) continue;
+          const totRev = bm.filter(b => b.categorie.type === 'revenu').reduce((s, b) => s + n(b.montantReel), 0);
           if (totRev === 0) continue;
-          const totDep    = budgetsMois.filter(b => b.categorie.type.startsWith('depense') || b.categorie.type === 'remboursement_dette').reduce((s, b) => s + n(b.montantReel), 0);
-          const totDepAnt = budgetsMois.filter(b => b.categorie.type.startsWith('depense') || b.categorie.type === 'remboursement_dette').reduce((s, b) => s + n(b.montantAnticipe), 0);
-          const totEp     = budgetsMois.filter(b => b.categorie.type.startsWith('epargne')).reduce((s, b) => s + n(b.montantReel), 0);
+          const totDep    = bm.filter(b => b.categorie.type.startsWith('depense') || b.categorie.type === 'remboursement_dette').reduce((s, b) => s + n(b.montantReel), 0);
+          const totDepAnt = bm.filter(b => b.categorie.type.startsWith('depense') || b.categorie.type === 'remboursement_dette').reduce((s, b) => s + n(b.montantAnticipe), 0);
+          const totEp     = bm.filter(b => b.categorie.type.startsWith('epargne')).reduce((s, b) => s + n(b.montantReel), 0);
           const soldeMois = totRev - totDep - totEp;
-          let scoreMois   = 0;
-          if (totDepAnt > 0) scoreMois += Math.min(5, (totDepAnt / Math.max(totDep, 1)) * 5);
-          else scoreMois += 3;
-          scoreMois += Math.min(5, ((totRev > 0 ? totEp / totRev : 0) / 0.30) * 5);
-          scoreMois += soldeMois >= 0 ? 5 : Math.max(0, 5 + (soldeMois / totRev) * 5);
-          scoreMois += Math.min(5, ((fondsUrgenceObjectif > 0 ? totalBanques / fondsUrgenceObjectif : 0) / 0.5) * 5);
-          totalScore  += Math.round(scoreMois);
+          let sc = 0;
+          sc += totDepAnt > 0 ? Math.min(5, (totDepAnt / Math.max(totDep, 1)) * 5) : 3;
+          sc += Math.min(5, ((totRev > 0 ? totEp / totRev : 0) / 0.30) * 5);
+          sc += soldeMois >= 0 ? 5 : Math.max(0, 5 + (soldeMois / totRev) * 5);
+          sc += Math.min(5, ((fondsUrgenceObjectif > 0 ? totalBanques / fondsUrgenceObjectif : 0) / 0.5) * 5);
+          totalScore += Math.round(sc);
           nbMoisScore++;
         }
       }
-    } catch (scoreErr) {
-      console.error('Score calculation error:', scoreErr);
-    }
+    } catch (e) { console.error('Score error:', e); }
     const scoreGlobal = nbMoisScore > 0 ? Math.round(totalScore / nbMoisScore) : 0;
 
     return NextResponse.json({
-      totalRevenus,
-      totalDepenses,
-      totalEpargne,
-      solde,
-      evolutionAnnuelle,
-      fondsRoulement,
+      totalRevenus, totalDepenses, totalEpargne, solde,
+      evolutionAnnuelle, fondsRoulement,
       comptes:     comptes.map(c => ({ id: c.id, nom: c.nom, soldeActuel: n(c.soldeActuel) })),
       totalFonds,
       annees:      annees.map(a => a.annee),
       banques:     banquesUniques,
-      revenuReference,
-      nMoisUrgence,
-      scoreGlobal,
-      nbMoisScore,
+      revenuReference, nMoisUrgence, scoreGlobal, nbMoisScore,
     });
-
   } catch (e: any) {
     console.error('API global error:', e?.message);
     return NextResponse.json({ error: e?.message }, { status: 500 });

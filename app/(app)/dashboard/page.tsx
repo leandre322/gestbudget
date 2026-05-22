@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Fragment } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
          CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import { TrendingUp, TrendingDown, PiggyBank, Wallet, AlertTriangle,
@@ -32,6 +32,7 @@ function DashboardModal({ isOpen, onClose, titre, children }: {
   );
 }
 
+// ── Onglet Global ─────────────────────────────
 function OngletGlobal({
   moisCourant, anneeCourante, budgetMois, loadingMois,
 }: {
@@ -55,7 +56,6 @@ function OngletGlobal({
       fetch('/api/dashboard/global').then(r => r.json()),
       fetch('/api/banques').then(r => r.json()),
     ]).then(([global, bqs]) => {
-      // ── Fix : sécuriser tous les tableaux pour éviter .map() sur undefined ──
       setData({
         ...global,
         evolutionAnnuelle: global.evolutionAnnuelle ?? [],
@@ -70,6 +70,7 @@ function OngletGlobal({
         scoreGlobal:       global.scoreGlobal       ?? 0,
         nbMoisScore:       global.nbMoisScore       ?? 0,
         revenuReference:   global.revenuReference   ?? 0,
+        nMoisUrgence:      global.nMoisUrgence      ?? 6,
       });
       setBanques(bqs.banques ?? []);
       setLoading(false);
@@ -92,16 +93,18 @@ function OngletGlobal({
   const epargne  = { reel: tot('epargne','montantReel'), ant: tot('epargne','montantAnticipe') };
   const depenses = { reel: tot('depense','montantReel'), ant: tot('depense','montantAnticipe') };
   const solde    = revenus.reel - epargne.reel - depenses.reel;
-  // Fonds urgence = somme des soldes bancaires (BOA Yvan, Naëlle, NSIA, Atlantique, BGFI)
-  const fondsUrgence = banques.reduce((s: number, b: any) => s + (b.solde ?? 0), 0);
+
+  const fondsUrgence    = banques.reduce((s: number, b: any) => s + (b.solde ?? 0), 0);
   const revenuReference = data?.revenuReference ?? 0;
-  const nMoisUrgence  = data?.nMoisUrgence ?? 6;
-  const fondsObjectif = revenuReference > 0 ? revenuReference * nMoisUrgence : 3720000;
+  const nMoisUrgence    = data?.nMoisUrgence ?? 6;
+  const fondsObjectif   = revenuReference > 0 ? revenuReference * nMoisUrgence : 3720000;
+
   const { score, details } = calculerScore({
     totalDepenses: depenses.reel, totalDepAnt: depenses.ant,
     totalEpargne: epargne.reel,   totalRevenus: revenus.reel,
     solde, fondsUrgence, fondsObjectif,
   });
+
   const alertes = budgetMois
     .filter((b: any) => b.categorie?.type?.startsWith('depense') && b.montantAnticipe > 0 && b.montantReel > b.montantAnticipe)
     .map((b: any) => b.categorie?.nom);
@@ -109,7 +112,8 @@ function OngletGlobal({
   const ouvrirModal = (type: string) => {
     const init: Record<string, string> = {};
     if (type === 'urgence') {
-      init['objectif'] = String(fondsObjectif);
+      init['revenu'] = String(revenuReference);
+      init['nMois']  = String(nMoisUrgence);
     } else if (type === 'banques') {
       banques.forEach(b => { init[b.id] = String(b.solde ?? 0); });
     } else {
@@ -157,7 +161,9 @@ function OngletGlobal({
           for (const b of d.budget) {
             lignes[b.categorieId] = {
               anticipe: String(b.montantAnticipe ?? 0),
-              reel: modalVals[b.categorieId] !== undefined ? modalVals[b.categorieId] : String(b.montantReel ?? 0),
+              reel: modalVals[b.categorieId] !== undefined
+                ? modalVals[b.categorieId]
+                : String(b.montantReel ?? 0),
             };
           }
           await fetch('/api/budget', {
@@ -224,7 +230,7 @@ function OngletGlobal({
               </div>
               <div>
                 <label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Nombre de mois de précaution</label>
-                <input type="number" value={modalVals['nMois'] ?? '6'}
+                <input type="number" value={modalVals['nMois'] ?? String(nMoisUrgence)}
                   min="1" max="24"
                   className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
                   onChange={e => setModalVals(p => ({ ...p, nMois: e.target.value }))}
@@ -236,7 +242,7 @@ function OngletGlobal({
                   {formatFCFA((parseInt(modalVals['revenu'] || '0') || 0) * (parseInt(modalVals['nMois'] || '6') || 6))}
                 </p>
                 <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                  = {formatFCFA(parseInt(modalVals['revenu'] || '0') || 0)} × {modalVals['nMois'] || 6} mois
+                  = {formatFCFA(parseInt(modalVals['revenu'] || '0') || 0)} × {modalVals['nMois'] || nMoisUrgence} mois
                 </p>
               </div>
             </div>
@@ -291,10 +297,13 @@ function OngletGlobal({
       {/* ── KPIs cumulés ── */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         {[
-          { label: 'Revenus cumulés',   val: totalRevenus,  bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',   text: 'text-blue-700 dark:text-blue-400',   icon: TrendingUp },
-          { label: 'Dépenses cumulées', val: totalDepenses, bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',       text: 'text-red-600 dark:text-red-400',     icon: TrendingDown },
-          { label: 'Épargne cumulée',   val: totalEpargne,  bg: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800', text: 'text-green-700 dark:text-green-400', icon: PiggyBank },
-          { label: 'Solde net cumulé',  val: soldeGlobal,   bg: soldeGlobal >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800', text: soldeGlobal >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400', icon: Wallet },
+          { label: 'Revenus cumulés',   val: totalRevenus,  bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',    text: 'text-blue-700 dark:text-blue-400',    icon: TrendingUp },
+          { label: 'Dépenses cumulées', val: totalDepenses, bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',        text: 'text-red-600 dark:text-red-400',      icon: TrendingDown },
+          { label: 'Épargne cumulée',   val: totalEpargne,  bg: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800', text: 'text-green-700 dark:text-green-400',  icon: PiggyBank },
+          { label: 'Solde net cumulé',  val: soldeGlobal,
+            bg: soldeGlobal >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
+            text: soldeGlobal >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400',
+            icon: Wallet },
         ].map(k => (
           <div key={k.label} className={clsx('rounded-2xl border p-4 transition-colors', k.bg)}>
             <div className="flex items-center justify-between mb-2">
@@ -315,7 +324,7 @@ function OngletGlobal({
         </div>
       </div>
 
-      {/* ── Séparateur Mois courant — texte à gauche ── */}
+      {/* ── Séparateur Mois courant ── */}
       <div className="flex items-center gap-3">
         <span className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">
           📅 {MOIS_NOMS[moisCourant]} {anneeCourante} — Mois courant
@@ -339,15 +348,15 @@ function OngletGlobal({
           )}
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
             {[
-              { titre: 'Revenus',  val: revenus.reel,  ant: revenus.ant,  type: 'revenus',  bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',   text: 'text-blue-700 dark:text-blue-400',   icon: TrendingUp },
-              { titre: 'Dépenses', val: depenses.reel, ant: depenses.ant, type: 'depenses', bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',       text: 'text-red-600 dark:text-red-400',     icon: TrendingDown },
+              { titre: 'Revenus',  val: revenus.reel,  ant: revenus.ant,  type: 'revenus',  bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',    text: 'text-blue-700 dark:text-blue-400',   icon: TrendingUp },
+              { titre: 'Dépenses', val: depenses.reel, ant: depenses.ant, type: 'depenses', bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',        text: 'text-red-600 dark:text-red-400',     icon: TrendingDown },
               { titre: 'Épargne',  val: epargne.reel,  ant: epargne.ant,  type: 'epargne',  bg: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800', text: 'text-green-700 dark:text-green-400', icon: PiggyBank },
               { titre: 'Solde',    val: solde,         ant: revenus.ant - epargne.ant - depenses.ant, type: '',
                 bg: solde >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
                 text: solde >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400',
                 icon: Wallet },
             ].map(k => (
-              <div key={k.titre} className={clsx('rounded-2xl border p-4 flex flex-col gap-2 transition-colors', k.bg)}>
+              <div key={k.titre} className={clsx('rounded-2xl border p-4 flex flex-col gap-1 transition-colors', k.bg)}>
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-medium opacity-60">{k.titre}</p>
                   <div className="flex items-center gap-1">
@@ -362,7 +371,7 @@ function OngletGlobal({
                   </div>
                 </div>
                 <p className={clsx('text-xl font-bold', k.text)}>{formatFCFA(k.val)}</p>
-                <p className="text-xs opacity-60">Prévision : {formatFCFA(k.ant)}</p>
+                <p className="text-xs opacity-55">Prévision : {formatFCFA(k.ant)}</p>
               </div>
             ))}
             <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 col-span-2 lg:col-span-1 transition-colors">
@@ -384,7 +393,7 @@ function OngletGlobal({
         </div>
       )}
 
-      {/* ── Séparateur Épargnes & Fonds — texte à gauche ── */}
+      {/* ── Séparateur Épargnes & Fonds ── */}
       <div className="flex items-center gap-3">
         <span className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">
           💰 Épargnes & Fonds
@@ -398,22 +407,29 @@ function OngletGlobal({
           <h3 className="font-semibold text-[var(--text)]">Épargne de Fonctionnement (cumul)</h3>
           <span className="text-sm font-bold text-primary">{formatFCFA(totalFonds)}</span>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {(fondsRoulement ?? []).map((f: any) => (
-            <div key={f.id} className="bg-slate-50 dark:bg-dark-card rounded-xl p-3 text-center">
-              <p className="text-xs text-[var(--text-muted)] font-medium truncate">{f.nom}</p>
-              <p className="text-base font-bold text-primary mt-1">{formatFCFA(f.totalAuto)}</p>
-              <p className="text-xs text-[var(--text-muted)] mt-0.5">cumul auto</p>
-            </div>
-          ))}
-        </div>
+        {(fondsRoulement ?? []).length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {(fondsRoulement ?? []).map((f: any) => (
+              <div key={f.id} className="bg-slate-50 dark:bg-dark-card rounded-xl p-3 text-center">
+                <p className="text-xs text-[var(--text-muted)] font-medium truncate">{f.nom}</p>
+                <p className="text-base font-bold text-primary mt-1">{formatFCFA(f.totalAuto)}</p>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">solde actuel</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-[var(--text-muted)] py-2">
+            Aucun fond configuré.{' '}
+            <a href="/parametres" className="text-primary underline">Ajouter dans Paramètres → Fonds</a>
+          </p>
+        )}
         <div className="mt-3 pt-3 border-t border-[var(--border)] flex justify-between">
           <span className="text-sm font-semibold text-[var(--text-muted)]">Total Épargne de Fonctionnement</span>
           <span className="text-sm font-bold text-primary">{formatFCFA(totalFonds)}</span>
         </div>
       </div>
 
-      {/* ── Épargne Précaution (Banques dynamiques) ── */}
+      {/* ── Épargne Précaution (Banques) ── */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -470,7 +486,9 @@ function OngletGlobal({
           <span className="font-medium text-[var(--text)]">{formatFCFA(fondsUrgence)}</span>
           <span className="text-[var(--text-muted)]">
             Objectif : {formatFCFA(fondsObjectif)}
-            {revenuReference > 0 && <span className="text-xs ml-1">(6 × {formatFCFA(revenuReference)})</span>}
+            {revenuReference > 0 && (
+              <span className="text-xs ml-1">({nMoisUrgence} × {formatFCFA(revenuReference)})</span>
+            )}
           </span>
         </div>
         <div className="h-3 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
@@ -507,7 +525,7 @@ function OngletGlobal({
   );
 }
 
-// ── Onglet Récap ─────────────────────────────
+// ── Onglet Récap ──────────────────────────────
 function OngletRecap({ moisCourant }: { moisCourant: number }) {
   const anneeActuelle = new Date().getFullYear();
   const [anneeSelect,  setAnneeSelect]  = useState(anneeActuelle);
@@ -518,20 +536,31 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
   const [anneesDispos, setAnneesDispos] = useState<number[]>([anneeActuelle]);
   const [groupsOpen,   setGroupsOpen]   = useState<Record<string, boolean>>({});
 
+  // Init état des groupes
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('recap-groups');
-      if (saved) setGroupsOpen(JSON.parse(saved));
-      else { const def: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { def[t] = true; }); setGroupsOpen(def); }
-    } catch { const def: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { def[t] = true; }); setGroupsOpen(def); }
+    const def: Record<string,boolean> = {};
+    ORDRE_TYPES.forEach(t => { def[t] = true; });
+    setGroupsOpen(def);
   }, []);
 
-  const toggleGroup  = (type: string) => { setGroupsOpen(prev => { const next = { ...prev, [type]: !prev[type] }; try { localStorage.setItem('recap-groups', JSON.stringify(next)); } catch {} return next; }); };
-  const toutDeployer = () => { const next: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { next[t] = true;  }); setGroupsOpen(next); try { localStorage.setItem('recap-groups', JSON.stringify(next)); } catch {} };
-  const toutPlier    = () => { const next: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { next[t] = false; }); setGroupsOpen(next); try { localStorage.setItem('recap-groups', JSON.stringify(next)); } catch {} };
+  const toggleGroup  = (type: string) => setGroupsOpen(prev => ({ ...prev, [type]: !prev[type] }));
+  const toutDeployer = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = true;  }); setGroupsOpen(n); };
+  const toutPlier    = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = false; }); setGroupsOpen(n); };
 
+  // ── Charger les années disponibles depuis /api/annees ─────────────────────
   useEffect(() => {
-    fetch('/api/dashboard/global').then(r => r.json()).then(d => { if (d.annees?.length) setAnneesDispos(d.annees); });
+    fetch('/api/annees')
+      .then(r => r.json())
+      .then(d => {
+        if (d.annees?.length) {
+          setAnneesDispos(d.annees);
+          // Si l'année courante n'est pas dans la liste, prendre la dernière
+          if (!d.annees.includes(anneeActuelle)) {
+            setAnneeSelect(d.annees[d.annees.length - 1]);
+          }
+        }
+      })
+      .catch(() => { /* silently keep default */ });
   }, []);
 
   const charger = useCallback(async () => {
@@ -547,8 +576,12 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         if (!r?.budget) return;
         r.budget.forEach((b: any) => {
           const existing = budgetCumul.find(ab => ab.categorieId === b.categorieId);
-          if (existing) { existing.montantAnticipe += b.montantAnticipe ?? 0; existing.montantReel += b.montantReel ?? 0; }
-          else budgetCumul.push({ ...b, montantAnticipe: b.montantAnticipe ?? 0, montantReel: b.montantReel ?? 0 });
+          if (existing) {
+            existing.montantAnticipe += b.montantAnticipe ?? 0;
+            existing.montantReel     += b.montantReel     ?? 0;
+          } else {
+            budgetCumul.push({ ...b, montantAnticipe: b.montantAnticipe ?? 0, montantReel: b.montantReel ?? 0 });
+          }
         });
       });
       const histData = [];
@@ -564,7 +597,9 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
       }
       setData({ budget: budgetCumul, categories: cats });
       setHist(histData);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error('OngletRecap charger error:', e);
+    }
     setLoading(false);
   }, [anneeSelect, moisCourant]);
 
@@ -577,7 +612,13 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
     if (!ok) return;
     setExporting('excel');
     const res = await fetch(`/api/export/excel?annee=${anneeSelect}`);
-    if (res.ok) { const blob = await res.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `GestBudget-${anneeSelect}.xlsx`; a.click(); }
+    if (res.ok) {
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `GestBudget-${anneeSelect}.xlsx`;
+      a.click();
+    }
     setExporting(null);
   };
 
@@ -589,7 +630,13 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
     if (!ok) return;
     setExporting('pdf');
     const res = await fetch(`/api/export/pdf?annee=${anneeSelect}&mois=${moisCourant}`);
-    if (res.ok) { const blob = await res.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `GestBudget-${anneeSelect}-${String(moisCourant).padStart(2,'0')}.pdf`; a.click(); }
+    if (res.ok) {
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `GestBudget-${anneeSelect}-${String(moisCourant).padStart(2,'0')}.pdf`;
+      a.click();
+    }
     setExporting(null);
   };
 
@@ -611,15 +658,24 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
   const solde   = revReel - depReel - epReel;
 
   const fondsCategories = cats.filter((c: any) => c.type === 'epargne_autre');
-  const totalFonds = fondsCategories.reduce((s: number, cat: any) => { const b = budget.find((b: any) => b.categorieId === cat.id); return s + (b?.montantReel ?? 0); }, 0);
+  const totalFonds = fondsCategories.reduce((s: number, cat: any) => {
+    const b = budget.find((b: any) => b.categorieId === cat.id);
+    return s + (b?.montantReel ?? 0);
+  }, 0);
 
   const donut = Object.entries(
-    budget.filter((b: any) => b.categorie?.type?.startsWith('depense') && b.montantReel > 0)
-          .reduce((acc: any, b: any) => { const k = b.categorie?.sousType ?? 'Autre'; acc[k] = (acc[k] ?? 0) + b.montantReel; return acc; }, {})
+    budget
+      .filter((b: any) => b.categorie?.type?.startsWith('depense') && b.montantReel > 0)
+      .reduce((acc: any, b: any) => {
+        const k = b.categorie?.sousType ?? 'Autre';
+        acc[k] = (acc[k] ?? 0) + b.montantReel;
+        return acc;
+      }, {})
   ).map(([name, value]) => ({ name, value }));
 
   return (
     <div className="space-y-5">
+      {/* ── Sélecteur d'année + export ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-[var(--text-muted)]">Année :</span>
@@ -627,7 +683,9 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
             {anneesDispos.map(a => (
               <button key={a} onClick={() => setAnneeSelect(a)}
                 className={clsx('px-3 py-1.5 rounded-xl text-sm font-semibold transition-all',
-                  anneeSelect === a ? 'bg-primary text-white' : 'border border-[var(--border)] text-[var(--text-muted)] hover:border-primary hover:text-primary')}>
+                  anneeSelect === a
+                    ? 'bg-primary text-white'
+                    : 'border border-[var(--border)] text-[var(--text-muted)] hover:border-primary hover:text-primary')}>
                 {a}
               </button>
             ))}
@@ -645,12 +703,16 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         </div>
       </div>
 
+      {/* ── KPIs annuels ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: `Revenus ${anneeSelect}`,  val: revReel, cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
           { label: `Dépenses ${anneeSelect}`, val: depReel, cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
           { label: `Épargne ${anneeSelect}`,  val: epReel,  cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
-          { label: 'Solde annuel', val: solde, cls: solde >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
+          { label: 'Solde annuel', val: solde,
+            cls: solde >= 0
+              ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400'
+              : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
         ].map(k => (
           <div key={k.label} className={clsx('rounded-2xl border p-3.5 transition-colors', k.cls)}>
             <p className="text-xs font-medium opacity-60">{k.label}</p>
@@ -659,6 +721,7 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         ))}
       </div>
 
+      {/* ── Épargne de Fonctionnement ── */}
       {fondsCategories.length > 0 && (
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
           <div className="flex items-center justify-between mb-3">
@@ -679,6 +742,7 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         </div>
       )}
 
+      {/* ── Graphiques ── */}
       <div className="grid lg:grid-cols-2 gap-5">
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
           <h3 className="font-semibold text-[var(--text)] mb-3">Répartition dépenses</h3>
@@ -711,6 +775,7 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         </div>
       </div>
 
+      {/* ── Tableau détail ── */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
         <div className="px-5 py-3 border-b border-[var(--border)] bg-slate-50 dark:bg-dark-card flex items-center justify-between">
           <h3 className="font-semibold text-[var(--text)]">Détail — {anneeSelect} (cumul annuel)</h3>
@@ -719,10 +784,18 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
             <button onClick={toutPlier}    className="text-xs px-2.5 py-1 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-100 dark:hover:bg-dark-card transition">Tout plier</button>
           </div>
         </div>
+
+        {/* ── Table avec colonnes fixes ── */}
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm min-w-[540px]" style={{ tableLayout: 'fixed' }}>
+            <colgroup>
+              <col />{/* Catégorie — prend l'espace restant */}
+              <col style={{ width: '150px' }} />{/* Prévision */}
+              <col style={{ width: '150px' }} />{/* Réel */}
+              <col style={{ width: '150px' }} />{/* Écart */}
+            </colgroup>
             <thead>
-              <tr className="border-b border-[var(--border)]">
+              <tr className="border-b border-[var(--border)] bg-slate-50 dark:bg-dark-card">
                 <th className="text-left px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Catégorie</th>
                 <th className="text-right px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Prévision</th>
                 <th className="text-right px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Réel</th>
@@ -735,40 +808,56 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
                 if (!catsDuType.length) return null;
                 const gAnt  = catsDuType.reduce((s: number, c: any) => { const b = budget.find((b: any) => b.categorieId === c.id); return s + (b?.montantAnticipe ?? 0); }, 0);
                 const gReel = catsDuType.reduce((s: number, c: any) => { const b = budget.find((b: any) => b.categorieId === c.id); return s + (b?.montantReel ?? 0); }, 0);
+                const gEcar = gReel - gAnt;
                 const isOpen = groupsOpen[type] !== false;
+
                 return (
-                  <tbody key={type}>
-                    <tr className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)] cursor-pointer hover:bg-slate-100 dark:hover:bg-dark-card/80 transition-colors"
-                        onClick={() => toggleGroup(type)}>
+                  <Fragment key={type}>
+                    {/* Ligne de groupe — toujours visible, cliquable */}
+                    <tr
+                      className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)] cursor-pointer hover:bg-slate-100 dark:hover:bg-dark-card/80 transition-colors"
+                      onClick={() => toggleGroup(type)}>
                       <td className="px-4 py-2.5 text-xs font-bold text-[var(--text-muted)] uppercase tracking-wide">
                         <div className="flex items-center gap-2">
                           {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                          {TYPE_LABELS[type]}
+                          {TYPE_LABELS[type as keyof typeof TYPE_LABELS]}
                         </div>
                       </td>
-                      <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(gAnt)}</td>
-                      <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(gReel)}</td>
-                      <td className={clsx('px-4 py-2.5 text-right text-xs font-bold', (gReel-gAnt) > 0 && type.startsWith('depense') ? 'text-red-500' : 'text-green-500')}>
-                        {(gReel-gAnt) !== 0 ? ((gReel-gAnt) > 0 ? '+' : '') + formatFCFA(gReel-gAnt) : '—'}
+                      <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">
+                        {gAnt > 0 ? formatFCFA(gAnt) : '—'}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">
+                        {gReel > 0 ? formatFCFA(gReel) : '—'}
+                      </td>
+                      <td className={clsx('px-4 py-2.5 text-right text-xs font-bold',
+                        gEcar > 0 && type.startsWith('depense') ? 'text-red-500' : gEcar < 0 ? 'text-green-500' : 'text-[var(--text-muted)]')}>
+                        {gEcar !== 0 ? (gEcar > 0 ? '+' : '') + formatFCFA(gEcar) : '—'}
                       </td>
                     </tr>
+
+                    {/* Lignes enfants — visibles seulement si le groupe est ouvert */}
                     {isOpen && catsDuType.map((cat: any) => {
-                      const b = budget.find((b: any) => b.categorieId === cat.id);
-                      const ant = b?.montantAnticipe ?? 0;
+                      const b    = budget.find((b: any) => b.categorieId === cat.id);
+                      const ant  = b?.montantAnticipe ?? 0;
                       const reel = b?.montantReel ?? 0;
                       const ecar = reel - ant;
                       return (
                         <tr key={cat.id} className="border-t border-[var(--border)] hover:bg-slate-50/40 dark:hover:bg-dark-card/40 transition-colors">
-                          <td className="px-4 py-2.5 pl-10 text-[var(--text)]">{cat.nom}</td>
-                          <td className="px-4 py-2.5 text-right text-[var(--text-muted)]">{ant  > 0 ? formatFCFA(ant)  : '—'}</td>
-                          <td className="px-4 py-2.5 text-right font-medium text-[var(--text)]">{reel > 0 ? formatFCFA(reel) : '—'}</td>
-                          <td className={clsx('px-4 py-2.5 text-right text-xs font-medium', ecar > 0 && type.startsWith('depense') ? 'text-red-500' : ecar < 0 ? 'text-green-500' : 'text-[var(--text-muted)]')}>
+                          <td className="px-4 py-2.5 pl-10 text-[var(--text)] truncate">{cat.nom}</td>
+                          <td className="px-4 py-2.5 text-right text-[var(--text-muted)]">
+                            {ant  > 0 ? formatFCFA(ant)  : '—'}
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-medium text-[var(--text)]">
+                            {reel > 0 ? formatFCFA(reel) : '—'}
+                          </td>
+                          <td className={clsx('px-4 py-2.5 text-right text-xs font-medium',
+                            ecar > 0 && type.startsWith('depense') ? 'text-red-500' : ecar < 0 ? 'text-green-500' : 'text-[var(--text-muted)]')}>
                             {ecar !== 0 ? (ecar > 0 ? '+' : '') + formatFCFA(ecar) : '—'}
                           </td>
                         </tr>
                       );
                     })}
-                  </tbody>
+                  </Fragment>
                 );
               })}
             </tbody>

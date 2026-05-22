@@ -29,7 +29,6 @@ export default function ParametresPage() {
   const [showNewCompte, setShowNewCompte] = useState(false);
   const [importing,     setImporting]     = useState(false);
   const [importResult,  setImportResult]  = useState<any>(null);
-  // Ajouter après importResult state :
   const [banques,       setBanques]       = useState<any[]>([]);
   const [newBanque,     setNewBanque]     = useState({ nom: '', solde: '' });
   const [showNewBanque, setShowNewBanque] = useState(false);
@@ -40,39 +39,46 @@ export default function ParametresPage() {
   const [confirmText,   setConfirmText]   = useState('');
   const [suppLoading,   setSuppLoading]   = useState(false);
   const [suppResult,    setSuppResult]    = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'categories'|'comptes'|'banques'|'import'|'donnees'>('categories');
+  const [activeTab,     setActiveTab]     = useState<'categories'|'comptes'|'banques'|'import'|'donnees'>('categories');
   const [tauxRef,       setTauxRef]       = useState<Record<GrandeCategorie, number>>({} as Record<GrandeCategorie, number>);
   const [revenuRef,     setRevenuRef]     = useState<number>(0);
   const [savingTaux,    setSavingTaux]    = useState(false);
   const [savedTaux,     setSavedTaux]     = useState(false);
 
+  // ── Chargement — avec try/finally pour éviter loading infini ─────────────
   const charger = useCallback(async () => {
     setLoading(true);
-    const [rCats, rComptes, rParams, rBanques, rDonnees] = await Promise.all([
-      fetch('/api/categories'),
-      fetch('/api/comptes'),
-      fetch('/api/parametres'),
-      fetch('/api/banques'),
-      fetch('/api/donnees'),
-    ]);
-    if (rDonnees.ok) { const d = await rDonnees.json(); setAnneesData(d.annees ?? []); }
-    if (rBanques.ok) { const d = await rBanques.json(); setBanques(d.banques ?? []); }
-    if (rCats.ok)    { const d = await rCats.json();    setCategories(d.categories ?? []); }
-    if (rComptes.ok) { const d = await rComptes.json(); setComptes(d.comptes ?? []); }
-    if (rParams.ok) {
-      const d = await rParams.json();
-      setRevenuRef(d.revenuMensuelReference ?? 0);
-      const taux = {} as Record<GrandeCategorie, number>;
-      GRANDES_CATEGORIES.forEach(type => {
-        const cat = (d.categories ?? []).find((c: any) => c.type === type);
-        taux[type] = cat?.tauxReference ?? 0;
-      });
-      setTauxRef(taux);
+    try {
+      const [rCats, rComptes, rParams, rBanques, rDonnees] = await Promise.all([
+        fetch('/api/categories'),
+        fetch('/api/comptes'),
+        fetch('/api/parametres'),
+        fetch('/api/banques'),
+        fetch('/api/donnees'),
+      ]);
+      if (rDonnees.ok) { const d = await rDonnees.json(); setAnneesData(d.annees ?? []); }
+      if (rBanques.ok) { const d = await rBanques.json(); setBanques(d.banques ?? []); }
+      if (rCats.ok)    { const d = await rCats.json();    setCategories(d.categories ?? []); }
+      if (rComptes.ok) { const d = await rComptes.json(); setComptes(d.comptes ?? []); }
+      if (rParams.ok) {
+        const d = await rParams.json();
+        setRevenuRef(d.revenuMensuelReference ?? 0);
+        const taux = {} as Record<GrandeCategorie, number>;
+        GRANDES_CATEGORIES.forEach(type => {
+          const cat = (d.categories ?? []).find((c: any) => c.type === type);
+          taux[type] = cat?.tauxReference ?? 0;
+        });
+        setTauxRef(taux);
+      }
+    } catch (e) {
+      console.error('Parametres charger error:', e);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
-  useEffect(() => { charger(); }, [charger]);
+  // ── Re-fetch à chaque changement d'onglet ────────────────────────────────
+  useEffect(() => { charger(); }, [charger, activeTab]);
 
   const montantPourTaux = (taux: number) =>
     revenuRef > 0 ? Math.round((taux / 100) * revenuRef) : 0;
@@ -182,15 +188,19 @@ export default function ParametresPage() {
         <p className="text-[var(--text-muted)] text-sm">Gérez vos catégories, comptes et données</p>
       </div>
 
-      {/* Onglets */}
-      <div className="flex gap-1 bg-slate-100 dark:bg-dark-card rounded-xl p-1 w-fit border border-[var(--border)]">
+      {/* ── Onglets ── */}
+      <div className="flex gap-1 bg-slate-100 dark:bg-dark-card rounded-xl p-1 w-fit border border-[var(--border)] flex-wrap">
         {(['categories', 'comptes', 'banques', 'import', 'donnees'] as const).map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             className={clsx('px-4 py-2 rounded-lg text-sm font-medium transition-all',
               activeTab === tab
                 ? 'bg-[var(--surface)] text-primary shadow-sm'
                 : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>
-            {tab === 'categories' ? 'Catégories' : tab === 'comptes' ? 'Fonds' : tab === 'banques' ? 'Banques' : tab === 'donnees' ? '🗑️ Données' : 'Import Excel'}
+            {tab === 'categories' ? 'Catégories'
+              : tab === 'comptes'  ? 'Fonds'
+              : tab === 'banques'  ? 'Banques'
+              : tab === 'donnees'  ? '🗑️ Données'
+              : 'Import Excel'}
           </button>
         ))}
       </div>
@@ -199,7 +209,7 @@ export default function ParametresPage() {
       {activeTab === 'categories' && (
         <div className="space-y-5">
 
-          {/* Bloc Taux de référence */}
+          {/* Budget de référence */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
             <div className="flex items-center justify-between mb-4">
               <div>
@@ -223,12 +233,10 @@ export default function ParametresPage() {
                     💰 Revenu mensuel de référence (FCFA)
                   </label>
                   <input
-                    type="number"
-                    value={revenuRef || ''}
+                    type="number" value={revenuRef || ''}
                     onChange={e => setRevenuRef(parseInt(e.target.value) || 0)}
                     placeholder="Ex: 500000"
-                    className="w-full border border-blue-300 dark:border-blue-700 rounded-xl px-3 py-2 text-sm bg-white dark:bg-dark-card text-[var(--text)] focus:border-primary outline-none"
-                  />
+                    className="w-full border border-blue-300 dark:border-blue-700 rounded-xl px-3 py-2 text-sm bg-white dark:bg-dark-card text-[var(--text)] focus:border-primary outline-none" />
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-blue-600 dark:text-blue-400">100%</p>
@@ -247,25 +255,15 @@ export default function ParametresPage() {
                 const montant = montantPourTaux(taux);
                 const isOver  = totalTaux > 100;
                 const label   = TYPE_LABELS[type as keyof typeof TYPE_LABELS];
-
                 return (
                   <div key={type} className="space-y-1.5">
                     <div className="flex items-center gap-3 flex-wrap">
-                      <span className="text-sm font-medium text-[var(--text)] w-52 flex-shrink-0">
-                        {label}
-                      </span>
+                      <span className="text-sm font-medium text-[var(--text)] w-52 flex-shrink-0">{label}</span>
                       <div className="flex items-center gap-1.5">
-                        <input
-                          type="number"
-                          min="0" max="100" step="0.5"
-                          value={taux || ''}
-                          onChange={e => setTauxRef(prev => ({
-                            ...prev,
-                            [type]: parseFloat(e.target.value) || 0,
-                          }))}
+                        <input type="number" min="0" max="100" step="0.5" value={taux || ''}
+                          onChange={e => setTauxRef(prev => ({ ...prev, [type]: parseFloat(e.target.value) || 0 }))}
                           placeholder="0"
-                          className="w-20 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
-                        />
+                          className="w-20 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" />
                         <span className="text-sm text-[var(--text-muted)]">%</span>
                       </div>
                       <span className="text-sm font-semibold text-primary w-36">
@@ -274,14 +272,9 @@ export default function ParametresPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 h-2 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
-                        <div
-                          className={clsx('h-full rounded-full transition-all',
-                            isOver       ? 'bg-red-500'   :
-                            taux > 30    ? 'bg-blue-500'  :
-                            taux > 15    ? 'bg-green-500' : 'bg-amber-400'
-                          )}
-                          style={{ width: `${Math.min(100, taux)}%` }}
-                        />
+                        <div className={clsx('h-full rounded-full transition-all',
+                          isOver ? 'bg-red-500' : taux > 30 ? 'bg-blue-500' : taux > 15 ? 'bg-green-500' : 'bg-amber-400')}
+                          style={{ width: `${Math.min(100, taux)}%` }} />
                       </div>
                       <span className="text-xs text-[var(--text-muted)] w-10 text-right">{taux}%</span>
                     </div>
@@ -290,12 +283,8 @@ export default function ParametresPage() {
               })}
 
               {/* Total taux */}
-              <div className={clsx(
-                'mt-4 pt-4 border-t border-[var(--border)] flex items-center justify-between rounded-xl px-3 py-2',
-                totalTaux > 100  ? 'bg-red-50 dark:bg-red-900/20'    :
-                totalTaux === 100 ? 'bg-green-50 dark:bg-green-900/20' :
-                'bg-amber-50 dark:bg-amber-900/20'
-              )}>
+              <div className={clsx('mt-4 pt-4 border-t border-[var(--border)] flex items-center justify-between rounded-xl px-3 py-2',
+                totalTaux > 100 ? 'bg-red-50 dark:bg-red-900/20' : totalTaux === 100 ? 'bg-green-50 dark:bg-green-900/20' : 'bg-amber-50 dark:bg-amber-900/20')}>
                 <span className="text-sm font-bold text-[var(--text)]">Total alloué</span>
                 <div className="flex items-center gap-3">
                   {revenuRef > 0 && (
@@ -306,14 +295,8 @@ export default function ParametresPage() {
                   <span className={clsx('text-sm font-bold px-3 py-1 rounded-lg',
                     totalTaux > 100  ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400' :
                     totalTaux === 100 ? 'bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400' :
-                    'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400'
-                  )}>
-                    {totalTaux > 100
-                      ? `⚠️ ${totalTaux}% (dépassement!)`
-                      : totalTaux === 100
-                        ? `✅ ${totalTaux}%`
-                        : `⚡ ${totalTaux}% (reste ${(100 - totalTaux).toFixed(1)}%)`
-                    }
+                    'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400')}>
+                    {totalTaux > 100 ? `⚠️ ${totalTaux}% (dépassement!)` : totalTaux === 100 ? `✅ ${totalTaux}%` : `⚡ ${totalTaux}% (reste ${(100 - totalTaux).toFixed(1)}%)`}
                   </span>
                 </div>
               </div>
@@ -351,9 +334,7 @@ export default function ParametresPage() {
                   onChange={e => setNewCat(n => ({ ...n, type: e.target.value }))}
                   className="border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none">
                   {ORDRE_TYPES.map(t => (
-                    <option key={t} value={t}>
-                      {TYPE_LABELS[t as keyof typeof TYPE_LABELS]}
-                    </option>
+                    <option key={t} value={t}>{TYPE_LABELS[t as keyof typeof TYPE_LABELS]}</option>
                   ))}
                 </select>
               </div>
@@ -393,35 +374,24 @@ export default function ParametresPage() {
               <div className="divide-y divide-[var(--border)]">
                 {cats.map((cat: any) => (
                   <div key={cat.id}
-                    className={clsx(
-                      'px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors',
-                      !cat.isActive && 'opacity-40'
-                    )}>
+                    className={clsx('px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors', !cat.isActive && 'opacity-40')}>
                     {editCat?.id === cat.id ? (
                       <>
                         <input type="text" value={editCat.nom}
                           onChange={e => setEditCat((c: any) => ({ ...c, nom: e.target.value }))}
                           className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none" />
-                        <button onClick={sauvegarderCat} className="text-green-500 hover:text-green-600">
-                          <Check size={15} />
-                        </button>
-                        <button onClick={() => setEditCat(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]">
-                          <X size={15} />
-                        </button>
+                        <button onClick={sauvegarderCat} className="text-green-500 hover:text-green-600"><Check size={15} /></button>
+                        <button onClick={() => setEditCat(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={15} /></button>
                       </>
                     ) : (
                       <>
                         <span className="flex-1 text-sm text-[var(--text)]">{cat.nom}</span>
-                        {cat.sousType && (
-                          <span className="text-xs text-[var(--text-muted)]">{cat.sousType}</span>
-                        )}
-                        <button onClick={() => setEditCat(cat)}
-                          className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors">
+                        {cat.sousType && <span className="text-xs text-[var(--text-muted)]">{cat.sousType}</span>}
+                        <button onClick={() => setEditCat(cat)} className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors">
                           <Pencil size={13} />
                         </button>
                         {cat.isActive && (
-                          <button onClick={() => supprimerCat(cat.id)}
-                            className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors">
+                          <button onClick={() => supprimerCat(cat.id)} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors">
                             <Trash2 size={13} />
                           </button>
                         )}
@@ -439,74 +409,42 @@ export default function ParametresPage() {
       {activeTab === 'comptes' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
-            <p className="text-sm text-[var(--text-muted)]">
-              {comptes.filter(c => c.isActive).length} fonds actifs
-            </p>
+            <p className="text-sm text-[var(--text-muted)]">{comptes.filter(c => c.isActive).length} fonds actifs</p>
             <button onClick={() => setShowNewCompte(!showNewCompte)}
               className="flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white rounded-xl px-3.5 py-2 text-sm font-medium transition-all">
               <Plus size={14} />Ajouter
             </button>
           </div>
-
           {showNewCompte && (
             <div className="bg-[var(--surface)] border border-primary/30 rounded-2xl p-4 flex gap-3 items-end transition-colors">
               <div className="flex-1">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Nom du fond *</label>
-                <input type="text" value={newCompte}
-                  onChange={e => setNewCompte(e.target.value)}
+                <input type="text" value={newCompte} onChange={e => setNewCompte(e.target.value)}
                   placeholder="Ex: Fond scolarité" className={inputCls} />
               </div>
-              <button onClick={ajouterCompte} className="bg-primary text-white rounded-xl px-4 py-2 text-sm">
-                <Check size={14} />
-              </button>
-              <button onClick={() => setShowNewCompte(false)}
-                className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm">
-                <X size={14} />
-              </button>
+              <button onClick={ajouterCompte} className="bg-primary text-white rounded-xl px-4 py-2 text-sm"><Check size={14} /></button>
+              <button onClick={() => setShowNewCompte(false)} className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm"><X size={14} /></button>
             </div>
           )}
-
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] divide-y divide-[var(--border)] transition-colors">
             {comptes.map((c: any) => (
-              <div key={c.id}
-                className={clsx(
-                  'px-4 py-3 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors',
-                  !c.isActive && 'opacity-40'
-                )}>
+              <div key={c.id} className={clsx('px-4 py-3 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors', !c.isActive && 'opacity-40')}>
                 {editCompte?.id === c.id ? (
                   <>
-                    <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-bold text-sm flex-shrink-0">
-                      {editCompte.nom.charAt(0)}
-                    </div>
-                    <input
-                      type="text"
-                      value={editCompte.nom}
-                      onChange={e => setEditCompte((p: any) => ({ ...p, nom: e.target.value }))}
-                      className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none"
-                    />
-                    <button onClick={sauvegarderCompte} className="text-green-500 hover:text-green-600">
-                      <Check size={15} />
-                    </button>
-                    <button onClick={() => setEditCompte(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]">
-                      <X size={15} />
-                    </button>
+                    <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-bold text-sm flex-shrink-0">{editCompte.nom.charAt(0)}</div>
+                    <input type="text" value={editCompte.nom} onChange={e => setEditCompte((p: any) => ({ ...p, nom: e.target.value }))}
+                      className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none" />
+                    <button onClick={sauvegarderCompte} className="text-green-500 hover:text-green-600"><Check size={15} /></button>
+                    <button onClick={() => setEditCompte(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={15} /></button>
                   </>
                 ) : (
                   <>
-                    <div className="w-8 h-8 rounded-xl bg-primary/10 dark:bg-primary/20 flex items-center justify-center text-primary font-bold text-sm">
-                      {c.nom.charAt(0)}
-                    </div>
+                    <div className="w-8 h-8 rounded-xl bg-primary/10 dark:bg-primary/20 flex items-center justify-center text-primary font-bold text-sm">{c.nom.charAt(0)}</div>
                     <span className="flex-1 text-sm text-[var(--text)] font-medium">{c.nom}</span>
                     {c.isActive && (
                       <>
-                        <button onClick={() => setEditCompte(c)}
-                          className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors">
-                          <Pencil size={13} />
-                        </button>
-                        <button onClick={() => supprimerCompte(c.id)}
-                          className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors">
-                          <Trash2 size={14} />
-                        </button>
+                        <button onClick={() => setEditCompte(c)} className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors"><Pencil size={13} /></button>
+                        <button onClick={() => supprimerCompte(c.id)} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
                       </>
                     )}
                   </>
@@ -517,7 +455,7 @@ export default function ParametresPage() {
         </div>
       )}
 
-    {/* ── ONGLET BANQUES ── */}
+      {/* ── ONGLET BANQUES ── */}
       {activeTab === 'banques' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
@@ -527,19 +465,16 @@ export default function ParametresPage() {
               <Plus size={14} />Ajouter une banque
             </button>
           </div>
-
           {showNewBanque && (
             <div className="bg-[var(--surface)] border border-primary/30 rounded-2xl p-4 flex flex-wrap gap-3 items-end transition-colors">
               <div className="flex-1 min-w-40">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Nom de la banque *</label>
-                <input type="text" value={newBanque.nom}
-                  onChange={e => setNewBanque(n => ({ ...n, nom: e.target.value }))}
+                <input type="text" value={newBanque.nom} onChange={e => setNewBanque(n => ({ ...n, nom: e.target.value }))}
                   placeholder="Ex: BOA — Yvan" className={inputCls} />
               </div>
               <div className="w-40">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Solde initial (FCFA)</label>
-                <input type="number" value={newBanque.solde}
-                  onChange={e => setNewBanque(n => ({ ...n, solde: e.target.value }))}
+                <input type="number" value={newBanque.solde} onChange={e => setNewBanque(n => ({ ...n, solde: e.target.value }))}
                   placeholder="0" className={inputCls} />
               </div>
               <div className="flex gap-2">
@@ -554,24 +489,18 @@ export default function ParametresPage() {
                   setShowNewBanque(false);
                   charger();
                 }} className="bg-primary text-white rounded-xl px-4 py-2 text-sm"><Check size={14} /></button>
-                <button onClick={() => setShowNewBanque(false)}
-                  className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm"><X size={14} /></button>
+                <button onClick={() => setShowNewBanque(false)} className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm"><X size={14} /></button>
               </div>
             </div>
           )}
-
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] divide-y divide-[var(--border)] transition-colors">
             {banques.length === 0 ? (
-              <div className="px-4 py-8 text-center text-[var(--text-muted)] text-sm">
-                Aucune banque configurée. Ajoutez vos comptes bancaires.
-              </div>
+              <div className="px-4 py-8 text-center text-[var(--text-muted)] text-sm">Aucune banque configurée.</div>
             ) : banques.map((b: any) => (
               <div key={b.id} className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors">
                 {editBanque?.id === b.id ? (
                   <>
-                    <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm flex-shrink-0">
-                      🏦
-                    </div>
+                    <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm flex-shrink-0">🏦</div>
                     <input type="text" value={editBanque.nomBanque}
                       onChange={e => setEditBanque((p: any) => ({ ...p, nomBanque: e.target.value }))}
                       className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none" />
@@ -581,28 +510,21 @@ export default function ParametresPage() {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ nomBanque: editBanque.nomBanque }),
                       });
-                      setEditBanque(null);
-                      charger();
+                      setEditBanque(null); charger();
                     }} className="text-green-500 hover:text-green-600"><Check size={15} /></button>
                     <button onClick={() => setEditBanque(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={15} /></button>
                   </>
                 ) : (
                   <>
-                    <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm">
-                      🏦
-                    </div>
+                    <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm">🏦</div>
                     <span className="flex-1 text-sm text-[var(--text)] font-medium">{b.nomBanque}</span>
                     <span className="text-sm font-bold text-primary">{formatFCFA(b.solde)}</span>
-                    <button onClick={() => setEditBanque(b)} className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors">
-                      <Pencil size={13} />
-                    </button>
+                    <button onClick={() => setEditBanque(b)} className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors"><Pencil size={13} /></button>
                     <button onClick={async () => {
                       if (!confirm('Supprimer cette banque ?')) return;
                       await fetch(`/api/banques?id=${b.id}`, { method: 'DELETE' });
                       charger();
-                    }} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors">
-                      <Trash2 size={14} />
-                    </button>
+                    }} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
                   </>
                 )}
               </div>
@@ -612,110 +534,83 @@ export default function ParametresPage() {
       )}
 
       {/* ── ONGLET DONNÉES ── */}
-{activeTab === 'donnees' && (
-  <div className="space-y-4">
-    <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
-      <p className="font-semibold text-red-700 dark:text-red-400 text-sm mb-1">⚠️ Zone dangereuse</p>
-      <p className="text-xs text-red-600 dark:text-red-400">
-        La suppression de données est irréversible. Procédez avec précaution.
-      </p>
-    </div>
-
-    {anneesData.length === 0 ? (
-      <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-8 text-center text-[var(--text-muted)] text-sm">
-        Aucune donnée disponible
-      </div>
-    ) : anneesData.map((a: any) => (
-      <div key={a.id} className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="font-bold text-[var(--text)]">{a.annee}</h3>
-            <p className="text-xs text-[var(--text-muted)] mt-0.5">
-              {a.nbMois} mois avec données · {a.nbDecaissements} opération(s)
-            </p>
+      {activeTab === 'donnees' && (
+        <div className="space-y-4">
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
+            <p className="font-semibold text-red-700 dark:text-red-400 text-sm mb-1">⚠️ Zone dangereuse</p>
+            <p className="text-xs text-red-600 dark:text-red-400">La suppression de données est irréversible. Procédez avec précaution.</p>
           </div>
-          <button
-            onClick={() => { setSuppAnnee(a.annee); setSuppMois(null); setConfirmText(''); setSuppResult(''); }}
-            className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-xl text-xs font-semibold transition-all">
-            🗑️ Supprimer l'année {a.annee}
-          </button>
-        </div>
-
-        {/* Mois avec données */}
-        {a.moisAvecDonnees.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {a.moisAvecDonnees.map((m: number) => (
-              <button key={m}
-                onClick={() => { setSuppAnnee(a.annee); setSuppMois(m); setConfirmText(''); setSuppResult(''); }}
-                className="px-2.5 py-1 border border-[var(--border)] rounded-lg text-xs text-[var(--text-muted)] hover:border-red-400 hover:text-red-500 transition-all">
-                {['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'][m]} ×
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    ))}
-
-    {/* Modal confirmation suppression */}
-    {suppAnnee !== null && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center">
-        <div className="absolute inset-0 bg-black/50" onClick={() => setSuppAnnee(null)} />
-        <div className="relative bg-[var(--surface)] rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-4">
-          <h3 className="font-bold text-red-600 text-lg">
-            ⚠️ Confirmer la suppression
-          </h3>
-          <p className="text-sm text-[var(--text)]">
-            {suppMois
-              ? `Vous allez supprimer les données de ${['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'][suppMois]} ${suppAnnee}.`
-              : `Vous allez supprimer TOUTES les données de l'année ${suppAnnee}, y compris les décaissements.`
-            }
-          </p>
-          <p className="text-sm font-semibold text-[var(--text)]">
-            Pour confirmer, tapez <span className="text-red-500 font-bold">{suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}</span> ci-dessous :
-          </p>
-          <input
-            type="text"
-            value={confirmText}
-            onChange={e => setConfirmText(e.target.value)}
-            placeholder={suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}
-            className="w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-red-400 outline-none"
-          />
-          {suppResult && (
-            <p className="text-sm text-green-600 dark:text-green-400 font-medium">{suppResult}</p>
+          {anneesData.length === 0 ? (
+            <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-8 text-center text-[var(--text-muted)] text-sm">Aucune donnée disponible</div>
+          ) : anneesData.map((a: any) => (
+            <div key={a.id} className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="font-bold text-[var(--text)]">{a.annee}</h3>
+                  <p className="text-xs text-[var(--text-muted)] mt-0.5">{a.nbMois} mois avec données · {a.nbDecaissements} opération(s)</p>
+                </div>
+                <button onClick={() => { setSuppAnnee(a.annee); setSuppMois(null); setConfirmText(''); setSuppResult(''); }}
+                  className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-xl text-xs font-semibold transition-all">
+                  🗑️ Supprimer l'année {a.annee}
+                </button>
+              </div>
+              {a.moisAvecDonnees.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {a.moisAvecDonnees.map((m: number) => (
+                    <button key={m}
+                      onClick={() => { setSuppAnnee(a.annee); setSuppMois(m); setConfirmText(''); setSuppResult(''); }}
+                      className="px-2.5 py-1 border border-[var(--border)] rounded-lg text-xs text-[var(--text-muted)] hover:border-red-400 hover:text-red-500 transition-all">
+                      {['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'][m]} ×
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          {suppAnnee !== null && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center">
+              <div className="absolute inset-0 bg-black/50" onClick={() => setSuppAnnee(null)} />
+              <div className="relative bg-[var(--surface)] rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-4">
+                <h3 className="font-bold text-red-600 text-lg">⚠️ Confirmer la suppression</h3>
+                <p className="text-sm text-[var(--text)]">
+                  {suppMois
+                    ? `Vous allez supprimer les données de ${['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'][suppMois]} ${suppAnnee}.`
+                    : `Vous allez supprimer TOUTES les données de l'année ${suppAnnee}.`}
+                </p>
+                <p className="text-sm font-semibold text-[var(--text)]">
+                  Pour confirmer, tapez <span className="text-red-500 font-bold">{suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}</span> :
+                </p>
+                <input type="text" value={confirmText} onChange={e => setConfirmText(e.target.value)}
+                  placeholder={suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}
+                  className="w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-red-400 outline-none" />
+                {suppResult && <p className="text-sm text-green-600 dark:text-green-400 font-medium">{suppResult}</p>}
+                <div className="flex gap-2 justify-end">
+                  <button onClick={() => { setSuppAnnee(null); setConfirmText(''); }}
+                    className="px-4 py-2 rounded-xl text-sm border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-50 dark:hover:bg-dark-card transition-all">
+                    Annuler
+                  </button>
+                  <button
+                    disabled={suppLoading || (suppMois ? confirmText !== `${suppAnnee}/${suppMois}` : confirmText !== String(suppAnnee))}
+                    onClick={async () => {
+                      setSuppLoading(true);
+                      const url = suppMois ? `/api/donnees?annee=${suppAnnee}&mois=${suppMois}` : `/api/donnees?annee=${suppAnnee}`;
+                      const res  = await fetch(url, { method: 'DELETE' });
+                      const data = await res.json();
+                      setSuppResult(data.message ?? 'Supprimé');
+                      setSuppLoading(false);
+                      setConfirmText('');
+                      charger();
+                      setTimeout(() => { setSuppAnnee(null); setSuppResult(''); }, 2000);
+                    }}
+                    className="px-4 py-2 rounded-xl text-sm bg-red-500 hover:bg-red-600 text-white font-semibold transition-all disabled:opacity-40">
+                    {suppLoading ? 'Suppression...' : '🗑️ Confirmer'}
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
-          <div className="flex gap-2 justify-end">
-            <button
-              onClick={() => { setSuppAnnee(null); setConfirmText(''); }}
-              className="px-4 py-2 rounded-xl text-sm border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-50 dark:hover:bg-dark-card transition-all">
-              Annuler
-            </button>
-            <button
-              disabled={
-                suppLoading ||
-                (suppMois ? confirmText !== `${suppAnnee}/${suppMois}` : confirmText !== String(suppAnnee))
-              }
-              onClick={async () => {
-                setSuppLoading(true);
-                const url = suppMois
-                  ? `/api/donnees?annee=${suppAnnee}&mois=${suppMois}`
-                  : `/api/donnees?annee=${suppAnnee}`;
-                const res = await fetch(url, { method: 'DELETE' });
-                const data = await res.json();
-                setSuppResult(data.message ?? 'Supprimé');
-                setSuppLoading(false);
-                setConfirmText('');
-                charger();
-                setTimeout(() => { setSuppAnnee(null); setSuppResult(''); }, 2000);
-              }}
-              className="px-4 py-2 rounded-xl text-sm bg-red-500 hover:bg-red-600 text-white font-semibold transition-all disabled:opacity-40">
-              {suppLoading ? 'Suppression...' : '🗑️ Confirmer'}
-            </button>
-          </div>
         </div>
-      </div>
-    )}
-  </div>
-)}
+      )}
 
       {/* ── ONGLET IMPORT ── */}
       {activeTab === 'import' && (
@@ -723,20 +618,14 @@ export default function ParametresPage() {
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-6 transition-colors">
             <h3 className="font-semibold text-[var(--text)] mb-2">Importer depuis Excel</h3>
             <p className="text-sm text-[var(--text-muted)] mb-4">
-              Importez votre fichier{' '}
-              <strong className="text-[var(--text)]">BUDGET_MENSUEL_OK.xlsx</strong>.
+              Importez votre fichier <strong className="text-[var(--text)]">BUDGET_MENSUEL_OK.xlsx</strong>.
               L'import lit les onglets{' '}
               <code className="bg-slate-100 dark:bg-dark-card px-1 rounded text-xs">Suivi-2024</code>,{' '}
               <code className="bg-slate-100 dark:bg-dark-card px-1 rounded text-xs">Suivi-2025</code>,{' '}
               <code className="bg-slate-100 dark:bg-dark-card px-1 rounded text-xs">Suivi-2026</code>.
             </p>
-
-            <label className={clsx(
-              'flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-2xl cursor-pointer transition-all',
-              importing
-                ? 'border-primary bg-primary/5 dark:bg-primary/10'
-                : 'border-[var(--border)] bg-slate-50 dark:bg-dark-card hover:border-primary hover:bg-primary/5 dark:hover:bg-primary/10'
-            )}>
+            <label className={clsx('flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-2xl cursor-pointer transition-all',
+              importing ? 'border-primary bg-primary/5 dark:bg-primary/10' : 'border-[var(--border)] bg-slate-50 dark:bg-dark-card hover:border-primary hover:bg-primary/5 dark:hover:bg-primary/10')}>
               <Upload size={24} className={clsx('mb-2', importing ? 'text-primary animate-bounce' : 'text-[var(--text-muted)]')} />
               <span className="text-sm font-medium text-[var(--text)]">
                 {importing ? 'Import en cours...' : 'Cliquez pour sélectionner votre fichier Excel'}
@@ -744,25 +633,17 @@ export default function ParametresPage() {
               <span className="text-xs text-[var(--text-muted)] mt-1">.xlsx uniquement</span>
               <input type="file" accept=".xlsx,.xls" className="hidden" onChange={importerExcel} disabled={importing} />
             </label>
-
             {importResult && (
               <div className={clsx('mt-4 p-4 rounded-xl text-sm transition-colors',
-                importResult.success
-                  ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800'
-                  : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800')}>
+                importResult.success ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800')}>
                 {importResult.success ? (
                   <>
                     <p className="font-semibold text-green-700 dark:text-green-400 mb-2">✅ Import terminé</p>
                     {Object.entries(importResult.results ?? {}).map(([yr, res]: any) => (
                       <div key={yr} className="text-green-600 dark:text-green-400">
-                        <span className="font-medium">{yr}</span> :
-                        <span className="ml-1">{res.imported} ligne(s) importée(s)</span>
-                        {res.skipped > 0 && (
-                          <span className="ml-1 text-green-500">, {res.skipped} ignorée(s)</span>
-                        )}
-                        {res.errors?.length > 0 && (
-                          <span className="ml-1 text-amber-500">, {res.errors.length} erreur(s)</span>
-                        )}
+                        <span className="font-medium">{yr}</span> : <span className="ml-1">{res.imported} ligne(s) importée(s)</span>
+                        {res.skipped > 0 && <span className="ml-1 text-green-500">, {res.skipped} ignorée(s)</span>}
+                        {res.errors?.length > 0 && <span className="ml-1 text-amber-500">, {res.errors.length} erreur(s)</span>}
                       </div>
                     ))}
                   </>
