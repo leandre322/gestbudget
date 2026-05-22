@@ -44,8 +44,10 @@ export default function ParametresPage() {
   const [revenuRef,     setRevenuRef]     = useState<number>(0);
   const [savingTaux,    setSavingTaux]    = useState(false);
   const [savedTaux,     setSavedTaux]     = useState(false);
+  // Flag : indique si les taux ont déjà été chargés une fois (évite l'écrasement)
+  const [tauxCharge,    setTauxCharge]    = useState(false);
 
-  // ── Chargement — avec try/finally pour éviter loading infini ─────────────
+  // ── Chargement initial complet ────────────────────────────────────────────
   const charger = useCallback(async () => {
     setLoading(true);
     try {
@@ -62,23 +64,53 @@ export default function ParametresPage() {
       if (rComptes.ok) { const d = await rComptes.json(); setComptes(d.comptes ?? []); }
       if (rParams.ok) {
         const d = await rParams.json();
-        setRevenuRef(d.revenuMensuelReference ?? 0);
-        const taux = {} as Record<GrandeCategorie, number>;
-        GRANDES_CATEGORIES.forEach(type => {
-          const cat = (d.categories ?? []).find((c: any) => c.type === type);
-          taux[type] = cat?.tauxReference ?? 0;
-        });
-        setTauxRef(taux);
+        // Ne pas écraser les taux si l'utilisateur les a déjà modifiés (isDirty)
+        // → on n'écrase que si c'est le premier chargement
+        if (!tauxCharge) {
+          setRevenuRef(d.revenuMensuelReference ?? 0);
+          const taux = {} as Record<GrandeCategorie, number>;
+          GRANDES_CATEGORIES.forEach(type => {
+            const cat = (d.categories ?? []).find((c: any) => c.type === type);
+            taux[type] = cat?.tauxReference ?? 0;
+          });
+          setTauxRef(taux);
+          setTauxCharge(true);
+        }
       }
     } catch (e) {
       console.error('Parametres charger error:', e);
     } finally {
       setLoading(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // ← PAS de activeTab ici : évite l'écrasement à chaque changement d'onglet
+
+  // ── Chargement unique au montage ─────────────────────────────────────────
+  useEffect(() => { charger(); }, [charger]);
+
+  // ── Rechargement léger des listes selon l'onglet (sans toucher aux taux) ──
+  const chargerOnglet = useCallback(async (tab: string) => {
+    try {
+      if (tab === 'categories') {
+        const r = await fetch('/api/categories');
+        if (r.ok) { const d = await r.json(); setCategories(d.categories ?? []); }
+      } else if (tab === 'comptes') {
+        const r = await fetch('/api/comptes');
+        if (r.ok) { const d = await r.json(); setComptes(d.comptes ?? []); }
+      } else if (tab === 'banques') {
+        const r = await fetch('/api/banques');
+        if (r.ok) { const d = await r.json(); setBanques(d.banques ?? []); }
+      } else if (tab === 'donnees') {
+        const r = await fetch('/api/donnees');
+        if (r.ok) { const d = await r.json(); setAnneesData(d.annees ?? []); }
+      }
+    } catch (e) {
+      console.error('chargerOnglet error:', e);
+    }
   }, []);
 
-  // ── Re-fetch à chaque changement d'onglet ────────────────────────────────
-  useEffect(() => { charger(); }, [charger, activeTab]);
+  // Rechargement léger à chaque changement d'onglet (sans écraser les taux)
+  useEffect(() => { chargerOnglet(activeTab); }, [activeTab, chargerOnglet]);
 
   const montantPourTaux = (taux: number) =>
     revenuRef > 0 ? Math.round((taux / 100) * revenuRef) : 0;
@@ -87,14 +119,21 @@ export default function ParametresPage() {
 
   const sauvegarderTaux = async () => {
     setSavingTaux(true);
-    await fetch('/api/parametres', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ revenuMensuelReference: revenuRef, tauxReference: tauxRef }),
-    });
-    setSavingTaux(false);
-    setSavedTaux(true);
-    setTimeout(() => setSavedTaux(false), 3000);
+    try {
+      const res = await fetch('/api/parametres', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ revenuMensuelReference: revenuRef, tauxReference: tauxRef }),
+      });
+      if (res.ok) {
+        setSavedTaux(true);
+        setTimeout(() => setSavedTaux(false), 3000);
+      }
+    } catch (e) {
+      console.error('sauvegarderTaux error:', e);
+    } finally {
+      setSavingTaux(false);
+    }
   };
 
   const ajouterCategorie = async () => {
@@ -106,7 +145,7 @@ export default function ParametresPage() {
     });
     setNewCat({ nom: '', type: 'depense_variable', sousType: '' });
     setShowNewCat(false);
-    charger();
+    chargerOnglet('categories');
   };
 
   const sauvegarderCat = async () => {
@@ -117,13 +156,13 @@ export default function ParametresPage() {
       body: JSON.stringify(editCat),
     });
     setEditCat(null);
-    charger();
+    chargerOnglet('categories');
   };
 
   const supprimerCat = async (id: string) => {
     if (!confirm('Désactiver cette catégorie ?')) return;
     await fetch(`/api/categories?id=${id}`, { method: 'DELETE' });
-    charger();
+    chargerOnglet('categories');
   };
 
   const ajouterCompte = async () => {
@@ -135,7 +174,7 @@ export default function ParametresPage() {
     });
     setNewCompte('');
     setShowNewCompte(false);
-    charger();
+    chargerOnglet('comptes');
   };
 
   const sauvegarderCompte = async () => {
@@ -146,13 +185,13 @@ export default function ParametresPage() {
       body: JSON.stringify(editCompte),
     });
     setEditCompte(null);
-    charger();
+    chargerOnglet('comptes');
   };
 
   const supprimerCompte = async (id: string) => {
     if (!confirm('Désactiver ce compte ?')) return;
     await fetch(`/api/comptes?id=${id}`, { method: 'DELETE' });
-    charger();
+    chargerOnglet('comptes');
   };
 
   const importerExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -188,19 +227,13 @@ export default function ParametresPage() {
         <p className="text-[var(--text-muted)] text-sm">Gérez vos catégories, comptes et données</p>
       </div>
 
-      {/* ── Onglets ── */}
+      {/* Onglets */}
       <div className="flex gap-1 bg-slate-100 dark:bg-dark-card rounded-xl p-1 w-fit border border-[var(--border)] flex-wrap">
         {(['categories', 'comptes', 'banques', 'import', 'donnees'] as const).map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             className={clsx('px-4 py-2 rounded-lg text-sm font-medium transition-all',
-              activeTab === tab
-                ? 'bg-[var(--surface)] text-primary shadow-sm'
-                : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>
-            {tab === 'categories' ? 'Catégories'
-              : tab === 'comptes'  ? 'Fonds'
-              : tab === 'banques'  ? 'Banques'
-              : tab === 'donnees'  ? '🗑️ Données'
-              : 'Import Excel'}
+              activeTab === tab ? 'bg-[var(--surface)] text-primary shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>
+            {tab === 'categories' ? 'Catégories' : tab === 'comptes' ? 'Fonds' : tab === 'banques' ? 'Banques' : tab === 'donnees' ? '🗑️ Données' : 'Import Excel'}
           </button>
         ))}
       </div>
@@ -208,20 +241,16 @@ export default function ParametresPage() {
       {/* ── ONGLET CATÉGORIES ── */}
       {activeTab === 'categories' && (
         <div className="space-y-5">
-
           {/* Budget de référence */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="font-semibold text-[var(--text)]">Budget de référence par catégorie</h3>
-                <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                  Définissez le revenu mensuel et les taux par grande catégorie
-                </p>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">Définissez le revenu mensuel et les taux par grande catégorie</p>
               </div>
               <button onClick={sauvegarderTaux} disabled={savingTaux}
                 className="flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white rounded-xl px-3.5 py-2 text-sm font-medium transition-all disabled:opacity-60">
-                <Save size={14} />
-                {savingTaux ? 'Sauvegarde...' : savedTaux ? 'Sauvegardé ✓' : 'Sauvegarder'}
+                <Save size={14} />{savingTaux ? 'Sauvegarde...' : savedTaux ? 'Sauvegardé ✓' : 'Sauvegarder'}
               </button>
             </div>
 
@@ -232,8 +261,7 @@ export default function ParametresPage() {
                   <label className="text-xs font-semibold text-blue-700 dark:text-blue-400 mb-1 block">
                     💰 Revenu mensuel de référence (FCFA)
                   </label>
-                  <input
-                    type="number" value={revenuRef || ''}
+                  <input type="number" value={revenuRef || ''}
                     onChange={e => setRevenuRef(parseInt(e.target.value) || 0)}
                     placeholder="Ex: 500000"
                     className="w-full border border-blue-300 dark:border-blue-700 rounded-xl px-3 py-2 text-sm bg-white dark:bg-dark-card text-[var(--text)] focus:border-primary outline-none" />
@@ -281,8 +309,6 @@ export default function ParametresPage() {
                   </div>
                 );
               })}
-
-              {/* Total taux */}
               <div className={clsx('mt-4 pt-4 border-t border-[var(--border)] flex items-center justify-between rounded-xl px-3 py-2',
                 totalTaux > 100 ? 'bg-red-50 dark:bg-red-900/20' : totalTaux === 100 ? 'bg-green-50 dark:bg-green-900/20' : 'bg-amber-50 dark:bg-amber-900/20')}>
                 <span className="text-sm font-bold text-[var(--text)]">Total alloué</span>
@@ -293,14 +319,13 @@ export default function ParametresPage() {
                     </span>
                   )}
                   <span className={clsx('text-sm font-bold px-3 py-1 rounded-lg',
-                    totalTaux > 100  ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400' :
+                    totalTaux > 100 ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400' :
                     totalTaux === 100 ? 'bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400' :
                     'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400')}>
                     {totalTaux > 100 ? `⚠️ ${totalTaux}% (dépassement!)` : totalTaux === 100 ? `✅ ${totalTaux}%` : `⚡ ${totalTaux}% (reste ${(100 - totalTaux).toFixed(1)}%)`}
                   </span>
                 </div>
               </div>
-
               {totalTaux > 100 && (
                 <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-3 text-sm text-red-600 dark:text-red-400">
                   ⚠️ La somme des taux dépasse 100% ! Réduisez certains taux pour équilibrer votre budget.
@@ -311,9 +336,7 @@ export default function ParametresPage() {
 
           {/* Liste des catégories */}
           <div className="flex justify-between items-center">
-            <p className="text-sm text-[var(--text-muted)]">
-              {categories.filter(c => c.isActive).length} catégories actives
-            </p>
+            <p className="text-sm text-[var(--text-muted)]">{categories.filter(c => c.isActive).length} catégories actives</p>
             <button onClick={() => setShowNewCat(!showNewCat)}
               className="flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white rounded-xl px-3.5 py-2 text-sm font-medium transition-all">
               <Plus size={14} />Ajouter
@@ -324,34 +347,24 @@ export default function ParametresPage() {
             <div className="bg-[var(--surface)] border border-primary/30 rounded-2xl p-4 flex flex-wrap gap-3 items-end transition-colors">
               <div className="flex-1 min-w-40">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Nom *</label>
-                <input type="text" value={newCat.nom}
-                  onChange={e => setNewCat(n => ({ ...n, nom: e.target.value }))}
+                <input type="text" value={newCat.nom} onChange={e => setNewCat(n => ({ ...n, nom: e.target.value }))}
                   placeholder="Nom de la catégorie" className={inputCls} />
               </div>
               <div>
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Type *</label>
-                <select value={newCat.type}
-                  onChange={e => setNewCat(n => ({ ...n, type: e.target.value }))}
+                <select value={newCat.type} onChange={e => setNewCat(n => ({ ...n, type: e.target.value }))}
                   className="border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none">
-                  {ORDRE_TYPES.map(t => (
-                    <option key={t} value={t}>{TYPE_LABELS[t as keyof typeof TYPE_LABELS]}</option>
-                  ))}
+                  {ORDRE_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t as keyof typeof TYPE_LABELS]}</option>)}
                 </select>
               </div>
               <div className="flex-1 min-w-32">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Sous-type</label>
-                <input type="text" value={newCat.sousType}
-                  onChange={e => setNewCat(n => ({ ...n, sousType: e.target.value }))}
+                <input type="text" value={newCat.sousType} onChange={e => setNewCat(n => ({ ...n, sousType: e.target.value }))}
                   placeholder="Ex: Habitation" className={inputCls} />
               </div>
               <div className="flex gap-2">
-                <button onClick={ajouterCategorie} className="bg-primary text-white rounded-xl px-4 py-2 text-sm">
-                  <Check size={14} />
-                </button>
-                <button onClick={() => setShowNewCat(false)}
-                  className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm">
-                  <X size={14} />
-                </button>
+                <button onClick={ajouterCategorie} className="bg-primary text-white rounded-xl px-4 py-2 text-sm"><Check size={14} /></button>
+                <button onClick={() => setShowNewCat(false)} className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm"><X size={14} /></button>
               </div>
             </div>
           )}
@@ -387,13 +400,9 @@ export default function ParametresPage() {
                       <>
                         <span className="flex-1 text-sm text-[var(--text)]">{cat.nom}</span>
                         {cat.sousType && <span className="text-xs text-[var(--text-muted)]">{cat.sousType}</span>}
-                        <button onClick={() => setEditCat(cat)} className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors">
-                          <Pencil size={13} />
-                        </button>
+                        <button onClick={() => setEditCat(cat)} className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors"><Pencil size={13} /></button>
                         {cat.isActive && (
-                          <button onClick={() => supprimerCat(cat.id)} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors">
-                            <Trash2 size={13} />
-                          </button>
+                          <button onClick={() => supprimerCat(cat.id)} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
                         )}
                       </>
                     )}
@@ -419,8 +428,7 @@ export default function ParametresPage() {
             <div className="bg-[var(--surface)] border border-primary/30 rounded-2xl p-4 flex gap-3 items-end transition-colors">
               <div className="flex-1">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Nom du fond *</label>
-                <input type="text" value={newCompte} onChange={e => setNewCompte(e.target.value)}
-                  placeholder="Ex: Fond scolarité" className={inputCls} />
+                <input type="text" value={newCompte} onChange={e => setNewCompte(e.target.value)} placeholder="Ex: Fond scolarité" className={inputCls} />
               </div>
               <button onClick={ajouterCompte} className="bg-primary text-white rounded-xl px-4 py-2 text-sm"><Check size={14} /></button>
               <button onClick={() => setShowNewCompte(false)} className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm"><X size={14} /></button>
@@ -469,25 +477,17 @@ export default function ParametresPage() {
             <div className="bg-[var(--surface)] border border-primary/30 rounded-2xl p-4 flex flex-wrap gap-3 items-end transition-colors">
               <div className="flex-1 min-w-40">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Nom de la banque *</label>
-                <input type="text" value={newBanque.nom} onChange={e => setNewBanque(n => ({ ...n, nom: e.target.value }))}
-                  placeholder="Ex: BOA — Yvan" className={inputCls} />
+                <input type="text" value={newBanque.nom} onChange={e => setNewBanque(n => ({ ...n, nom: e.target.value }))} placeholder="Ex: BOA — Yvan" className={inputCls} />
               </div>
               <div className="w-40">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Solde initial (FCFA)</label>
-                <input type="number" value={newBanque.solde} onChange={e => setNewBanque(n => ({ ...n, solde: e.target.value }))}
-                  placeholder="0" className={inputCls} />
+                <input type="number" value={newBanque.solde} onChange={e => setNewBanque(n => ({ ...n, solde: e.target.value }))} placeholder="0" className={inputCls} />
               </div>
               <div className="flex gap-2">
                 <button onClick={async () => {
                   if (!newBanque.nom) return;
-                  await fetch('/api/banques', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ nomBanque: newBanque.nom, soldeInitial: parseInt(newBanque.solde) || 0 }),
-                  });
-                  setNewBanque({ nom: '', solde: '' });
-                  setShowNewBanque(false);
-                  charger();
+                  await fetch('/api/banques', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nomBanque: newBanque.nom, soldeInitial: parseInt(newBanque.solde) || 0 }) });
+                  setNewBanque({ nom: '', solde: '' }); setShowNewBanque(false); chargerOnglet('banques');
                 }} className="bg-primary text-white rounded-xl px-4 py-2 text-sm"><Check size={14} /></button>
                 <button onClick={() => setShowNewBanque(false)} className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm"><X size={14} /></button>
               </div>
@@ -501,17 +501,9 @@ export default function ParametresPage() {
                 {editBanque?.id === b.id ? (
                   <>
                     <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm flex-shrink-0">🏦</div>
-                    <input type="text" value={editBanque.nomBanque}
-                      onChange={e => setEditBanque((p: any) => ({ ...p, nomBanque: e.target.value }))}
+                    <input type="text" value={editBanque.nomBanque} onChange={e => setEditBanque((p: any) => ({ ...p, nomBanque: e.target.value }))}
                       className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none" />
-                    <button onClick={async () => {
-                      await fetch(`/api/banques?id=${editBanque.id}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ nomBanque: editBanque.nomBanque }),
-                      });
-                      setEditBanque(null); charger();
-                    }} className="text-green-500 hover:text-green-600"><Check size={15} /></button>
+                    <button onClick={async () => { await fetch(`/api/banques?id=${editBanque.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nomBanque: editBanque.nomBanque }) }); setEditBanque(null); chargerOnglet('banques'); }} className="text-green-500 hover:text-green-600"><Check size={15} /></button>
                     <button onClick={() => setEditBanque(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={15} /></button>
                   </>
                 ) : (
@@ -520,11 +512,7 @@ export default function ParametresPage() {
                     <span className="flex-1 text-sm text-[var(--text)] font-medium">{b.nomBanque}</span>
                     <span className="text-sm font-bold text-primary">{formatFCFA(b.solde)}</span>
                     <button onClick={() => setEditBanque(b)} className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors"><Pencil size={13} /></button>
-                    <button onClick={async () => {
-                      if (!confirm('Supprimer cette banque ?')) return;
-                      await fetch(`/api/banques?id=${b.id}`, { method: 'DELETE' });
-                      charger();
-                    }} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
+                    <button onClick={async () => { if (!confirm('Supprimer cette banque ?')) return; await fetch(`/api/banques?id=${b.id}`, { method: 'DELETE' }); chargerOnglet('banques'); }} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
                   </>
                 )}
               </div>
@@ -538,7 +526,7 @@ export default function ParametresPage() {
         <div className="space-y-4">
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
             <p className="font-semibold text-red-700 dark:text-red-400 text-sm mb-1">⚠️ Zone dangereuse</p>
-            <p className="text-xs text-red-600 dark:text-red-400">La suppression de données est irréversible. Procédez avec précaution.</p>
+            <p className="text-xs text-red-600 dark:text-red-400">La suppression de données est irréversible.</p>
           </div>
           {anneesData.length === 0 ? (
             <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-8 text-center text-[var(--text-muted)] text-sm">Aucune donnée disponible</div>
@@ -557,8 +545,7 @@ export default function ParametresPage() {
               {a.moisAvecDonnees.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {a.moisAvecDonnees.map((m: number) => (
-                    <button key={m}
-                      onClick={() => { setSuppAnnee(a.annee); setSuppMois(m); setConfirmText(''); setSuppResult(''); }}
+                    <button key={m} onClick={() => { setSuppAnnee(a.annee); setSuppMois(m); setConfirmText(''); setSuppResult(''); }}
                       className="px-2.5 py-1 border border-[var(--border)] rounded-lg text-xs text-[var(--text-muted)] hover:border-red-400 hover:text-red-500 transition-all">
                       {['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'][m]} ×
                     </button>
@@ -578,7 +565,7 @@ export default function ParametresPage() {
                     : `Vous allez supprimer TOUTES les données de l'année ${suppAnnee}.`}
                 </p>
                 <p className="text-sm font-semibold text-[var(--text)]">
-                  Pour confirmer, tapez <span className="text-red-500 font-bold">{suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}</span> :
+                  Tapez <span className="text-red-500 font-bold">{suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}</span> pour confirmer :
                 </p>
                 <input type="text" value={confirmText} onChange={e => setConfirmText(e.target.value)}
                   placeholder={suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}
@@ -586,20 +573,18 @@ export default function ParametresPage() {
                 {suppResult && <p className="text-sm text-green-600 dark:text-green-400 font-medium">{suppResult}</p>}
                 <div className="flex gap-2 justify-end">
                   <button onClick={() => { setSuppAnnee(null); setConfirmText(''); }}
-                    className="px-4 py-2 rounded-xl text-sm border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-50 dark:hover:bg-dark-card transition-all">
-                    Annuler
-                  </button>
+                    className="px-4 py-2 rounded-xl text-sm border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-50 dark:hover:bg-dark-card transition-all">Annuler</button>
                   <button
                     disabled={suppLoading || (suppMois ? confirmText !== `${suppAnnee}/${suppMois}` : confirmText !== String(suppAnnee))}
                     onClick={async () => {
                       setSuppLoading(true);
                       const url = suppMois ? `/api/donnees?annee=${suppAnnee}&mois=${suppMois}` : `/api/donnees?annee=${suppAnnee}`;
-                      const res  = await fetch(url, { method: 'DELETE' });
-                      const data = await res.json();
-                      setSuppResult(data.message ?? 'Supprimé');
+                      const res = await fetch(url, { method: 'DELETE' });
+                      const d = await res.json();
+                      setSuppResult(d.message ?? 'Supprimé');
                       setSuppLoading(false);
                       setConfirmText('');
-                      charger();
+                      chargerOnglet('donnees');
                       setTimeout(() => { setSuppAnnee(null); setSuppResult(''); }, 2000);
                     }}
                     className="px-4 py-2 rounded-xl text-sm bg-red-500 hover:bg-red-600 text-white font-semibold transition-all disabled:opacity-40">
@@ -627,28 +612,25 @@ export default function ParametresPage() {
             <label className={clsx('flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-2xl cursor-pointer transition-all',
               importing ? 'border-primary bg-primary/5 dark:bg-primary/10' : 'border-[var(--border)] bg-slate-50 dark:bg-dark-card hover:border-primary hover:bg-primary/5 dark:hover:bg-primary/10')}>
               <Upload size={24} className={clsx('mb-2', importing ? 'text-primary animate-bounce' : 'text-[var(--text-muted)]')} />
-              <span className="text-sm font-medium text-[var(--text)]">
-                {importing ? 'Import en cours...' : 'Cliquez pour sélectionner votre fichier Excel'}
-              </span>
+              <span className="text-sm font-medium text-[var(--text)]">{importing ? 'Import en cours...' : 'Cliquez pour sélectionner votre fichier Excel'}</span>
               <span className="text-xs text-[var(--text-muted)] mt-1">.xlsx uniquement</span>
               <input type="file" accept=".xlsx,.xls" className="hidden" onChange={importerExcel} disabled={importing} />
             </label>
             {importResult && (
-              <div className={clsx('mt-4 p-4 rounded-xl text-sm transition-colors',
+              <div className={clsx('mt-4 p-4 rounded-xl text-sm',
                 importResult.success ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800')}>
                 {importResult.success ? (
                   <>
                     <p className="font-semibold text-green-700 dark:text-green-400 mb-2">✅ Import terminé</p>
                     {Object.entries(importResult.results ?? {}).map(([yr, res]: any) => (
                       <div key={yr} className="text-green-600 dark:text-green-400">
-                        <span className="font-medium">{yr}</span> : <span className="ml-1">{res.imported} ligne(s) importée(s)</span>
+                        <span className="font-medium">{yr}</span> : <span className="ml-1">{res.imported} ligne(s)</span>
                         {res.skipped > 0 && <span className="ml-1 text-green-500">, {res.skipped} ignorée(s)</span>}
-                        {res.errors?.length > 0 && <span className="ml-1 text-amber-500">, {res.errors.length} erreur(s)</span>}
                       </div>
                     ))}
                   </>
                 ) : (
-                  <p className="text-red-600 dark:text-red-400">❌ Erreur : {importResult.error}</p>
+                  <p className="text-red-600 dark:text-red-400">❌ {importResult.error}</p>
                 )}
               </div>
             )}

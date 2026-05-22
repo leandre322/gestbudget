@@ -23,13 +23,14 @@ export async function GET(req: NextRequest) {
         evolutionAnnuelle: [], fondsRoulement: [], comptes: [], totalFonds: 0,
         annees: [], banques: [], revenuReference: 0, nMoisUrgence: 6,
         scoreGlobal: 0, nbMoisScore: 0,
+        totalAjouts: 0, totalDecaissements: 0, soldeNetDecaissements: 0,
       });
     }
 
     const anneeIds = annees.map(a => a.id);
 
-    // Requêtes principales — sans parametres
-    const [budgets, comptes, banques] = await Promise.all([
+    // ── Requêtes principales ──────────────────────────────────────────────
+    const [budgets, comptes, banques, decaissements] = await Promise.all([
       prisma.budgetMensuel.findMany({
         where:   { userId: session.user.id, anneeId: { in: anneeIds } },
         include: { categorie: true },
@@ -42,25 +43,34 @@ export async function GET(req: NextRequest) {
         where:   { userId: session.user.id },
         orderBy: { updatedAt: 'desc' },
       }),
+      prisma.decaissement.findMany({
+        where:   { userId: session.user.id },
+        include: { repartitions: true },
+      }),
     ]);
 
-    // Parametres isolés — ne plante jamais le reste
+    // ── Paramètres isolés ────────────────────────────────────────────────
     let parametres: any = null;
     try {
       parametres = await prisma.parametres.findUnique({
         where: { userId: session.user.id },
       });
-    } catch (paramErr) {
-      console.error('Parametres query error (migration pending?):', paramErr);
+    } catch (e) {
+      console.error('Parametres query error:', e);
     }
 
-    // Totaux globaux
+    // ── Totaux globaux budget ────────────────────────────────────────────
     const totalRevenus  = budgets.filter(b => b.categorie.type === 'revenu').reduce((s, b) => s + n(b.montantReel), 0);
     const totalDepenses = budgets.filter(b => b.categorie.type.startsWith('depense') || b.categorie.type === 'remboursement_dette').reduce((s, b) => s + n(b.montantReel), 0);
     const totalEpargne  = budgets.filter(b => b.categorie.type.startsWith('epargne')).reduce((s, b) => s + n(b.montantReel), 0);
     const solde = totalRevenus - totalDepenses - totalEpargne;
 
-    // Évolution annuelle
+    // ── Décaissements globaux ────────────────────────────────────────────
+    const totalAjouts        = decaissements.filter(d => d.typeMouvement === 'ajout').reduce((s, d) => s + n(d.montantTotal), 0);
+    const totalDecaissements = decaissements.filter(d => d.typeMouvement === 'retrait').reduce((s, d) => s + n(d.montantTotal), 0);
+    const soldeNetDecaissements = totalAjouts - totalDecaissements;
+
+    // ── Évolution annuelle ────────────────────────────────────────────────
     const evolutionAnnuelle = annees.map(a => {
       const ab = budgets.filter(b => b.anneeId === a.id);
       return {
@@ -71,11 +81,51 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // Fonds de roulement depuis soldeActuel
-    const fondsRoulement = comptes.map(c => ({ id: c.id, nom: c.nom, totalAuto: n(c.soldeActuel) }));
-    const totalFonds = fondsRoulement.reduce((s, f) => s + f.totalAuto, 0);
+    // ── Fonds de roulement — source unifiée ──────────────────────────────
+    // Épargné   = budget_mensuel epargne_autre (ce que l'utilisateur saisit dans Suivi)
+    // Ajouté    = décaissements typeMouvement='ajout' par compte
+    // Décaissé  = décaissements typeMouvement='retrait' par compte
+    // Solde net = soldeActuel (maintenu par les décaissements)
+    const budgetsEpargneAutre = budgets.filter(b => b.categorie.type === 'epargne_autre');
 
-    // Banques déduplication
+    const fondsRoulement = comptes.map(c => {
+      // Décaissements rattachés à ce compte via repartitions
+      const ajoutsCompte = decaissements
+        .filter(d => d.typeMouvement === 'ajout')
+        .reduce((s, d) => {
+          const rep = d.repartitions.find(r => r.compteId === c.id);
+          return s + (rep ? n(rep.montant) : 0);
+        }, 0);
+
+      const decaisseCompte = decaissements
+        .filter(d => d.typeMouvement === 'retrait')
+        .reduce((s, d) => {
+          const rep = d.repartitions.find(r => r.compteId === c.id);
+          return s + (rep ? n(rep.montant) : 0);
+        }, 0);
+
+      // Budget épargné — catégories epargne_autre dont le nom correspond au fond
+      // Correspondance souple : le nom du fond est contenu dans le nom de la catégorie
+      const totalBudgete = budgetsEpargneAutre
+        .filter(b =>
+          b.categorie.nom.toLowerCase().includes(c.nom.toLowerCase()) ||
+          c.nom.toLowerCase().includes(b.categorie.nom.toLowerCase())
+        )
+        .reduce((s, b) => s + n(b.montantReel), 0);
+
+      return {
+        id:           c.id,
+        nom:          c.nom,
+        soldeActuel:  n(c.soldeActuel),   // source de vérité = solde réel
+        totalBudgete,                      // ce qui a été saisi dans Suivi
+        totalAjout:   ajoutsCompte,        // ajouts via décaissements
+        totalDecaisse: decaisseCompte,     // retraits via décaissements
+      };
+    });
+
+    const totalFonds = fondsRoulement.reduce((s, f) => s + f.soldeActuel, 0);
+
+    // ── Banques — déduplication ──────────────────────────────────────────
     const vus = new Set<string>();
     const banquesUniques = banques.reduce((acc: any[], b) => {
       if (!vus.has(b.nomBanque)) {
@@ -85,10 +135,11 @@ export async function GET(req: NextRequest) {
       return acc;
     }, []);
 
+    // ── Paramètres ───────────────────────────────────────────────────────
     const revenuReference = n(parametres?.revenuMensuelReference ?? 0);
     const nMoisUrgence    = (parametres as any)?.nMoisUrgence ?? 6;
 
-    // Score global
+    // ── Score global ─────────────────────────────────────────────────────
     let totalScore = 0, nbMoisScore = 0;
     try {
       const totalBanques         = banquesUniques.reduce((s, b) => s + b.solde, 0);
@@ -117,13 +168,21 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       totalRevenus, totalDepenses, totalEpargne, solde,
-      evolutionAnnuelle, fondsRoulement,
-      comptes:     comptes.map(c => ({ id: c.id, nom: c.nom, soldeActuel: n(c.soldeActuel) })),
+      evolutionAnnuelle,
+      fondsRoulement,
+      comptes:            comptes.map(c => ({ id: c.id, nom: c.nom, soldeActuel: n(c.soldeActuel) })),
       totalFonds,
-      annees:      annees.map(a => a.annee),
-      banques:     banquesUniques,
-      revenuReference, nMoisUrgence, scoreGlobal, nbMoisScore,
+      annees:             annees.map(a => a.annee),
+      banques:            banquesUniques,
+      revenuReference,
+      nMoisUrgence,
+      scoreGlobal,
+      nbMoisScore,
+      totalAjouts,
+      totalDecaissements,
+      soldeNetDecaissements,
     });
+
   } catch (e: any) {
     console.error('API global error:', e?.message);
     return NextResponse.json({ error: e?.message }, { status: 500 });

@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback, Fragment } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
          CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import { TrendingUp, TrendingDown, PiggyBank, Wallet, AlertTriangle,
-         Shield, ChevronDown, ChevronRight, Building2, Pencil, X, Save } from 'lucide-react';
+         Shield, ChevronDown, ChevronRight, Building2, Pencil, X, Save,
+         ArrowDownCircle, ArrowUpCircle, Minus } from 'lucide-react';
 import { useMois } from '../layout';
 import { formatFCFA, MOIS_COURTS, TYPE_LABELS, calculerScore, couleurScore, ORDRE_TYPES, LABEL_PREVISION } from '@/types';
 import { useToast } from '@/components/Toast';
@@ -32,7 +33,19 @@ function DashboardModal({ isOpen, onClose, titre, children }: {
   );
 }
 
-// ── Onglet Global ─────────────────────────────
+// ── Séparateur de section ─────────────────────────────────────────────────────
+function Separateur({ emoji, label }: { emoji: string; label: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">
+        {emoji} {label}
+      </span>
+      <div className="flex-1 border-t border-[var(--border)]" />
+    </div>
+  );
+}
+
+// ── Onglet Global ─────────────────────────────────────────────────────────────
 function OngletGlobal({
   moisCourant, anneeCourante, budgetMois, loadingMois,
 }: {
@@ -58,19 +71,22 @@ function OngletGlobal({
     ]).then(([global, bqs]) => {
       setData({
         ...global,
-        evolutionAnnuelle: global.evolutionAnnuelle ?? [],
-        fondsRoulement:    global.fondsRoulement    ?? [],
-        comptes:           global.comptes           ?? [],
-        annees:            global.annees            ?? [],
-        totalFonds:        global.totalFonds        ?? 0,
-        totalRevenus:      global.totalRevenus      ?? 0,
-        totalDepenses:     global.totalDepenses     ?? 0,
-        totalEpargne:      global.totalEpargne      ?? 0,
-        solde:             global.solde             ?? 0,
-        scoreGlobal:       global.scoreGlobal       ?? 0,
-        nbMoisScore:       global.nbMoisScore       ?? 0,
-        revenuReference:   global.revenuReference   ?? 0,
-        nMoisUrgence:      global.nMoisUrgence      ?? 6,
+        evolutionAnnuelle:    global.evolutionAnnuelle    ?? [],
+        fondsRoulement:       global.fondsRoulement       ?? [],
+        comptes:              global.comptes              ?? [],
+        annees:               global.annees              ?? [],
+        totalFonds:           global.totalFonds           ?? 0,
+        totalRevenus:         global.totalRevenus         ?? 0,
+        totalDepenses:        global.totalDepenses        ?? 0,
+        totalEpargne:         global.totalEpargne         ?? 0,
+        solde:                global.solde               ?? 0,
+        scoreGlobal:          global.scoreGlobal          ?? 0,
+        nbMoisScore:          global.nbMoisScore          ?? 0,
+        revenuReference:      global.revenuReference      ?? 0,
+        nMoisUrgence:         global.nMoisUrgence         ?? 6,
+        totalAjouts:          global.totalAjouts          ?? 0,
+        totalDecaissements:   global.totalDecaissements   ?? 0,
+        soldeNetDecaissements: global.soldeNetDecaissements ?? 0,
       });
       setBanques(bqs.banques ?? []);
       setLoading(false);
@@ -94,15 +110,16 @@ function OngletGlobal({
   const depenses = { reel: tot('depense','montantReel'), ant: tot('depense','montantAnticipe') };
   const solde    = revenus.reel - epargne.reel - depenses.reel;
 
-  const fondsUrgence    = banques.reduce((s: number, b: any) => s + (b.solde ?? 0), 0);
-  const revenuReference = data?.revenuReference ?? 0;
-  const nMoisUrgence    = data?.nMoisUrgence ?? 6;
-  const fondsObjectif   = revenuReference > 0 ? revenuReference * nMoisUrgence : 3720000;
+  const fondsUrgence   = banques.reduce((s: number, b: any) => s + (b.solde ?? 0), 0);
+  const revenuRef      = data?.revenuReference ?? 0;
+  const nMoisUrgence   = data?.nMoisUrgence ?? 6;
+  const fondsObjectif  = revenuRef > 0 ? revenuRef * nMoisUrgence : 0;
+  const fondsNonConfig = revenuRef === 0;
 
   const { score, details } = calculerScore({
     totalDepenses: depenses.reel, totalDepAnt: depenses.ant,
     totalEpargne: epargne.reel,   totalRevenus: revenus.reel,
-    solde, fondsUrgence, fondsObjectif,
+    solde, fondsUrgence, fondsObjectif: fondsObjectif || 3720000,
   });
 
   const alertes = budgetMois
@@ -112,7 +129,7 @@ function OngletGlobal({
   const ouvrirModal = (type: string) => {
     const init: Record<string, string> = {};
     if (type === 'urgence') {
-      init['revenu'] = String(revenuReference);
+      init['revenu'] = String(revenuRef);
       init['nMois']  = String(nMoisUrgence);
     } else if (type === 'banques') {
       banques.forEach(b => { init[b.id] = String(b.solde ?? 0); });
@@ -145,11 +162,11 @@ function OngletGlobal({
         });
         toast.success('Fonds d\'urgence mis à jour ✓');
       } else if (modalType === 'banques') {
-        for (const [banqueId, solde] of Object.entries(modalVals)) {
+        for (const [banqueId, s] of Object.entries(modalVals)) {
           await fetch(`/api/banques?id=${banqueId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'set', montant: parseInt(solde) || 0 }),
+            body: JSON.stringify({ action: 'set', montant: parseInt(s) || 0 }),
           });
         }
         toast.success('Soldes banques mis à jour ✓');
@@ -161,9 +178,7 @@ function OngletGlobal({
           for (const b of d.budget) {
             lignes[b.categorieId] = {
               anticipe: String(b.montantAnticipe ?? 0),
-              reel: modalVals[b.categorieId] !== undefined
-                ? modalVals[b.categorieId]
-                : String(b.montantReel ?? 0),
+              reel: modalVals[b.categorieId] !== undefined ? modalVals[b.categorieId] : String(b.montantReel ?? 0),
             };
           }
           await fetch('/api/budget', {
@@ -190,11 +205,12 @@ function OngletGlobal({
   if (!data) return null;
 
   const { totalRevenus, totalDepenses, totalEpargne, solde: soldeGlobal,
-          evolutionAnnuelle, fondsRoulement, totalFonds } = data;
+          evolutionAnnuelle, fondsRoulement, totalFonds,
+          totalAjouts, totalDecaissements, soldeNetDecaissements } = data;
 
-  const pctFonds    = fondsObjectif > 0 ? (fondsUrgence / fondsObjectif) * 100 : 0;
-  const barColor    = pctFonds < 50 ? 'bg-red-500' : pctFonds < 80 ? 'bg-orange-400' : 'bg-green-500';
-  const textColor   = pctFonds < 50 ? 'text-red-500' : pctFonds < 80 ? 'text-orange-500' : 'text-green-600';
+  const pctFonds  = fondsObjectif > 0 ? (fondsUrgence / fondsObjectif) * 100 : 0;
+  const barColor  = pctFonds < 50 ? 'bg-red-500' : pctFonds < 80 ? 'bg-orange-400' : 'bg-green-500';
+  const textColor = pctFonds < 50 ? 'text-red-500' : pctFonds < 80 ? 'text-orange-500' : 'text-green-600';
   const totalPrecaution = banques.reduce((s: number, b: any) => s + (b.solde ?? 0), 0);
 
   const catsByModalType = (type: string) => budgetMois.filter((b: any) => {
@@ -230,11 +246,9 @@ function OngletGlobal({
               </div>
               <div>
                 <label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Nombre de mois de précaution</label>
-                <input type="number" value={modalVals['nMois'] ?? String(nMoisUrgence)}
-                  min="1" max="24"
+                <input type="number" value={modalVals['nMois'] ?? String(nMoisUrgence)} min="1" max="24"
                   className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
-                  onChange={e => setModalVals(p => ({ ...p, nMois: e.target.value }))}
-                  placeholder="6" />
+                  onChange={e => setModalVals(p => ({ ...p, nMois: e.target.value }))} />
               </div>
               <div className="bg-primary/5 rounded-xl p-3">
                 <p className="text-xs text-[var(--text-muted)]">Objectif calculé :</p>
@@ -294,45 +308,11 @@ function OngletGlobal({
         </div>
       </DashboardModal>
 
-      {/* ── KPIs cumulés ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        {[
-          { label: 'Revenus cumulés',   val: totalRevenus,  bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',    text: 'text-blue-700 dark:text-blue-400',    icon: TrendingUp },
-          { label: 'Dépenses cumulées', val: totalDepenses, bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',        text: 'text-red-600 dark:text-red-400',      icon: TrendingDown },
-          { label: 'Épargne cumulée',   val: totalEpargne,  bg: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800', text: 'text-green-700 dark:text-green-400',  icon: PiggyBank },
-          { label: 'Solde net cumulé',  val: soldeGlobal,
-            bg: soldeGlobal >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
-            text: soldeGlobal >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400',
-            icon: Wallet },
-        ].map(k => (
-          <div key={k.label} className={clsx('rounded-2xl border p-4 transition-colors', k.bg)}>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-medium opacity-60">{k.label}</p>
-              <k.icon size={15} className="opacity-40" />
-            </div>
-            <p className={clsx('text-xl font-bold', k.text)}>{formatFCFA(k.val)}</p>
-          </div>
-        ))}
-        <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 transition-colors">
-          <p className="text-xs font-medium text-purple-500 dark:text-purple-400 mb-1">Score global</p>
-          <p className={clsx('text-2xl font-bold', couleurScore(data?.scoreGlobal ?? score))}>
-            {data?.scoreGlobal ?? score}<span className="text-sm text-[var(--text-muted)] font-normal">/20</span>
-          </p>
-          <p className="text-xs text-[var(--text-muted)] mt-1">
-            {data?.nbMoisScore ? `Moy. ${data.nbMoisScore} mois` : 'Toutes années'}
-          </p>
-        </div>
-      </div>
+      {/* ══════════════════════════════════════════════════════════ */}
+      {/* 1. MOIS COURANT                                           */}
+      {/* ══════════════════════════════════════════════════════════ */}
+      <Separateur emoji="📅" label={`${MOIS_NOMS[moisCourant]} ${anneeCourante} — Mois courant`} />
 
-      {/* ── Séparateur Mois courant ── */}
-      <div className="flex items-center gap-3">
-        <span className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">
-          📅 {MOIS_NOMS[moisCourant]} {anneeCourante} — Mois courant
-        </span>
-        <div className="flex-1 border-t-2 border-dashed border-[var(--border)]" />
-      </div>
-
-      {/* ── KPIs Mois courant ── */}
       {loadingMois ? (
         <div className="flex items-center justify-center h-20"><div className="spinner" /></div>
       ) : (
@@ -374,6 +354,7 @@ function OngletGlobal({
                 <p className="text-xs opacity-55">Prévision : {formatFCFA(k.ant)}</p>
               </div>
             ))}
+            {/* Score financier mois */}
             <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 col-span-2 lg:col-span-1 transition-colors">
               <p className="text-xs font-medium text-purple-500 dark:text-purple-400 mb-1">Score financier</p>
               <p className={clsx('text-2xl font-bold', couleurScore(score))}>
@@ -393,27 +374,46 @@ function OngletGlobal({
         </div>
       )}
 
-      {/* ── Séparateur Épargnes & Fonds ── */}
-      <div className="flex items-center gap-3">
-        <span className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">
-          💰 Épargnes & Fonds
-        </span>
-        <div className="flex-1 border-t border-[var(--border)]" />
-      </div>
+      {/* ══════════════════════════════════════════════════════════ */}
+      {/* 2. ÉPARGNES & FONDS                                       */}
+      {/* ══════════════════════════════════════════════════════════ */}
+      <Separateur emoji="💰" label="Épargnes & Fonds" />
 
-      {/* ── Épargne de Fonctionnement ── */}
+      {/* Épargne de Fonctionnement */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-[var(--text)]">Épargne de Fonctionnement (cumul)</h3>
+          <h3 className="font-semibold text-[var(--text)]">Épargne de Fonctionnement</h3>
           <span className="text-sm font-bold text-primary">{formatFCFA(totalFonds)}</span>
         </div>
         {(fondsRoulement ?? []).length > 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {(fondsRoulement ?? []).map((f: any) => (
-              <div key={f.id} className="bg-slate-50 dark:bg-dark-card rounded-xl p-3 text-center">
-                <p className="text-xs text-[var(--text-muted)] font-medium truncate">{f.nom}</p>
-                <p className="text-base font-bold text-primary mt-1">{formatFCFA(f.totalAuto)}</p>
-                <p className="text-xs text-[var(--text-muted)] mt-0.5">solde actuel</p>
+              <div key={f.id} className="bg-slate-50 dark:bg-dark-card rounded-xl p-3">
+                <p className="text-xs text-[var(--text-muted)] font-semibold truncate mb-2">{f.nom}</p>
+                {/* Solde actuel = source de vérité */}
+                <p className="text-base font-bold text-primary">{formatFCFA(f.soldeActuel)}</p>
+                <p className="text-xs text-[var(--text-muted)] mb-2">Solde actuel</p>
+                {/* Détail : Épargné / Ajouté / Décaissé */}
+                <div className="space-y-1 pt-2 border-t border-[var(--border)]">
+                  {f.totalBudgete > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-[var(--text-muted)]">📥 Budgété</span>
+                      <span className="font-medium text-[var(--text)]">{formatFCFA(f.totalBudgete)}</span>
+                    </div>
+                  )}
+                  {f.totalAjout > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-green-600">↑ Ajouté</span>
+                      <span className="font-medium text-green-600">{formatFCFA(f.totalAjout)}</span>
+                    </div>
+                  )}
+                  {f.totalDecaisse > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-red-500">↓ Décaissé</span>
+                      <span className="font-medium text-red-500">{formatFCFA(f.totalDecaisse)}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -429,7 +429,7 @@ function OngletGlobal({
         </div>
       </div>
 
-      {/* ── Épargne Précaution (Banques) ── */}
+      {/* Épargne Précaution */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -466,7 +466,7 @@ function OngletGlobal({
         </div>
       </div>
 
-      {/* ── Fonds d'urgence ── */}
+      {/* Fonds d'urgence */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -474,7 +474,9 @@ function OngletGlobal({
             <h3 className="font-semibold text-[var(--text)]">Fonds d'urgence</h3>
           </div>
           <div className="flex items-center gap-2">
-            <span className={clsx('text-sm font-bold', textColor)}>{pctFonds.toFixed(1)}%</span>
+            {!fondsNonConfig && (
+              <span className={clsx('text-sm font-bold', textColor)}>{pctFonds.toFixed(1)}%</span>
+            )}
             <button onClick={() => ouvrirModal('urgence')}
               className="p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card transition-colors"
               title="Modifier l'objectif">
@@ -482,28 +484,124 @@ function OngletGlobal({
             </button>
           </div>
         </div>
-        <div className="flex justify-between text-sm mb-2">
-          <span className="font-medium text-[var(--text)]">{formatFCFA(fondsUrgence)}</span>
-          <span className="text-[var(--text-muted)]">
-            Objectif : {formatFCFA(fondsObjectif)}
-            {revenuReference > 0 && (
-              <span className="text-xs ml-1">({nMoisUrgence} × {formatFCFA(revenuReference)})</span>
-            )}
-          </span>
-        </div>
-        <div className="h-3 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
-          <div className={clsx('h-full rounded-full transition-all', barColor)}
-               style={{ width: `${Math.min(100, pctFonds)}%` }} />
-        </div>
-        <div className="flex justify-between mt-2 text-xs text-[var(--text-muted)]">
-          <span className={clsx('font-medium', textColor)}>
-            {pctFonds < 50 ? '🔴 En dessous de 50%' : pctFonds < 80 ? '🟠 En bonne voie' : '🟢 Objectif atteint'}
-          </span>
-          <span>Reste : {formatFCFA(Math.max(0, fondsObjectif - fondsUrgence))}</span>
+
+        {fondsNonConfig ? (
+          /* ── Revenu non configuré ── */
+          <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-orange-500">⚠️</span>
+              <p className="text-sm font-semibold text-orange-700 dark:text-orange-400">Revenu de référence non configuré</p>
+            </div>
+            <p className="text-xs text-orange-600 dark:text-orange-400 mb-3">
+              L'objectif du fonds d'urgence est calculé automatiquement : Revenu mensuel × Nombre de mois.
+              Configurez votre revenu pour activer ce suivi.
+            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-[var(--text-muted)]">Épargne précaution actuelle</p>
+                <p className="text-lg font-bold text-primary">{formatFCFA(fondsUrgence)}</p>
+              </div>
+              <button onClick={() => ouvrirModal('urgence')}
+                className="flex items-center gap-1.5 px-3 py-2 bg-primary hover:bg-primary-dark text-white rounded-xl text-xs font-medium transition-all">
+                <Pencil size={12} />Configurer
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* ── Fonds configuré ── */
+          <>
+            <div className="flex justify-between text-sm mb-2">
+              <span className="font-medium text-[var(--text)]">{formatFCFA(fondsUrgence)}</span>
+              <span className="text-[var(--text-muted)]">
+                Objectif : {formatFCFA(fondsObjectif)}
+                <span className="text-xs ml-1">({nMoisUrgence} × {formatFCFA(revenuRef)})</span>
+              </span>
+            </div>
+            <div className="h-3 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
+              <div className={clsx('h-full rounded-full transition-all', barColor)}
+                   style={{ width: `${Math.min(100, pctFonds)}%` }} />
+            </div>
+            <div className="flex justify-between mt-2 text-xs text-[var(--text-muted)]">
+              <span className={clsx('font-medium', textColor)}>
+                {pctFonds < 50 ? '🔴 En dessous de 50%' : pctFonds < 80 ? '🟠 En bonne voie' : '🟢 Objectif atteint'}
+              </span>
+              <span>Reste : {formatFCFA(Math.max(0, fondsObjectif - fondsUrgence))}</span>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════ */}
+      {/* 3. STATISTIQUES CUMULÉES                                  */}
+      {/* ══════════════════════════════════════════════════════════ */}
+      <Separateur emoji="📊" label="Statistiques cumulées — toutes années" />
+
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        {[
+          { label: 'Revenus cumulés',   val: totalRevenus,  bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',    text: 'text-blue-700 dark:text-blue-400',    icon: TrendingUp },
+          { label: 'Dépenses cumulées', val: totalDepenses, bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',        text: 'text-red-600 dark:text-red-400',      icon: TrendingDown },
+          { label: 'Épargne cumulée',   val: totalEpargne,  bg: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800', text: 'text-green-700 dark:text-green-400',  icon: PiggyBank },
+          { label: 'Solde net cumulé',  val: soldeGlobal,
+            bg: soldeGlobal >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
+            text: soldeGlobal >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400',
+            icon: Wallet },
+        ].map(k => (
+          <div key={k.label} className={clsx('rounded-2xl border p-4 transition-colors', k.bg)}>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium opacity-60">{k.label}</p>
+              <k.icon size={15} className="opacity-40" />
+            </div>
+            <p className={clsx('text-xl font-bold', k.text)}>{formatFCFA(k.val)}</p>
+          </div>
+        ))}
+        <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 transition-colors">
+          <p className="text-xs font-medium text-purple-500 dark:text-purple-400 mb-1">Score global</p>
+          <p className={clsx('text-2xl font-bold', couleurScore(data?.scoreGlobal ?? score))}>
+            {data?.scoreGlobal ?? score}<span className="text-sm text-[var(--text-muted)] font-normal">/20</span>
+          </p>
+          <p className="text-xs text-[var(--text-muted)] mt-1">
+            {data?.nbMoisScore ? `Moyenne sur ${data.nbMoisScore} mois` : 'Toutes années'}
+          </p>
         </div>
       </div>
 
-      {/* ── Évolution annuelle ── */}
+      {/* ══════════════════════════════════════════════════════════ */}
+      {/* 4. AJOUTS & DÉCAISSEMENTS                                 */}
+      {/* ══════════════════════════════════════════════════════════ */}
+      <Separateur emoji="🔄" label="Ajouts & Décaissements — cumul" />
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-2xl p-4 flex items-center gap-3">
+          <ArrowUpCircle size={28} className="text-green-600 flex-shrink-0" />
+          <div>
+            <p className="text-xs font-medium text-green-700 dark:text-green-400 opacity-70">Total ajouté</p>
+            <p className="text-xl font-bold text-green-700 dark:text-green-400">{formatFCFA(totalAjouts)}</p>
+          </div>
+        </div>
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl p-4 flex items-center gap-3">
+          <ArrowDownCircle size={28} className="text-red-500 flex-shrink-0" />
+          <div>
+            <p className="text-xs font-medium text-red-600 dark:text-red-400 opacity-70">Total décaissé</p>
+            <p className="text-xl font-bold text-red-600 dark:text-red-400">{formatFCFA(totalDecaissements)}</p>
+          </div>
+        </div>
+        <div className={clsx('rounded-2xl border p-4 flex items-center gap-3',
+          soldeNetDecaissements >= 0
+            ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+            : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800')}>
+          <Minus size={28} className={clsx('flex-shrink-0', soldeNetDecaissements >= 0 ? 'text-blue-600' : 'text-orange-500')} />
+          <div>
+            <p className={clsx('text-xs font-medium opacity-70', soldeNetDecaissements >= 0 ? 'text-blue-700 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400')}>Solde net fonds</p>
+            <p className={clsx('text-xl font-bold', soldeNetDecaissements >= 0 ? 'text-blue-700 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400')}>
+              {formatFCFA(soldeNetDecaissements)}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════ */}
+      {/* 5. ÉVOLUTION ANNUELLE                                     */}
+      {/* ══════════════════════════════════════════════════════════ */}
       {(evolutionAnnuelle ?? []).length > 0 && (
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
           <h3 className="font-semibold text-[var(--text)] mb-4">Évolution annuelle</h3>
@@ -525,7 +623,7 @@ function OngletGlobal({
   );
 }
 
-// ── Onglet Récap ──────────────────────────────
+// ── Onglet Récap ──────────────────────────────────────────────────────────────
 function OngletRecap({ moisCourant }: { moisCourant: number }) {
   const anneeActuelle = new Date().getFullYear();
   const [anneeSelect,  setAnneeSelect]  = useState(anneeActuelle);
@@ -535,8 +633,8 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
   const [exporting,    setExporting]    = useState<'excel'|'pdf'|null>(null);
   const [anneesDispos, setAnneesDispos] = useState<number[]>([anneeActuelle]);
   const [groupsOpen,   setGroupsOpen]   = useState<Record<string, boolean>>({});
+  const [decStats,     setDecStats]     = useState({ totalAjouts: 0, totalDecaissements: 0, soldeNet: 0 });
 
-  // Init état des groupes
   useEffect(() => {
     const def: Record<string,boolean> = {};
     ORDRE_TYPES.forEach(t => { def[t] = true; });
@@ -547,20 +645,15 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
   const toutDeployer = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = true;  }); setGroupsOpen(n); };
   const toutPlier    = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = false; }); setGroupsOpen(n); };
 
-  // ── Charger les années disponibles depuis /api/annees ─────────────────────
   useEffect(() => {
     fetch('/api/annees')
       .then(r => r.json())
       .then(d => {
         if (d.annees?.length) {
           setAnneesDispos(d.annees);
-          // Si l'année courante n'est pas dans la liste, prendre la dernière
-          if (!d.annees.includes(anneeActuelle)) {
-            setAnneeSelect(d.annees[d.annees.length - 1]);
-          }
+          if (!d.annees.includes(anneeActuelle)) setAnneeSelect(d.annees[d.annees.length - 1]);
         }
-      })
-      .catch(() => { /* silently keep default */ });
+      }).catch(() => {});
   }, []);
 
   const charger = useCallback(async () => {
@@ -576,14 +669,11 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         if (!r?.budget) return;
         r.budget.forEach((b: any) => {
           const existing = budgetCumul.find(ab => ab.categorieId === b.categorieId);
-          if (existing) {
-            existing.montantAnticipe += b.montantAnticipe ?? 0;
-            existing.montantReel     += b.montantReel     ?? 0;
-          } else {
-            budgetCumul.push({ ...b, montantAnticipe: b.montantAnticipe ?? 0, montantReel: b.montantReel ?? 0 });
-          }
+          if (existing) { existing.montantAnticipe += b.montantAnticipe ?? 0; existing.montantReel += b.montantReel ?? 0; }
+          else budgetCumul.push({ ...b, montantAnticipe: b.montantAnticipe ?? 0, montantReel: b.montantReel ?? 0 });
         });
       });
+
       const histData = [];
       for (let i = 5; i >= 0; i--) {
         let m = moisCourant - i, a = anneeSelect;
@@ -595,48 +685,41 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
           reel: hr?.budget?.filter((b: any) => b.categorie?.type?.startsWith('depense')).reduce((s: number, b: any) => s + b.montantReel, 0) ?? 0,
         });
       }
+
+      // Décaissements de l'année sélectionnée (filtré par dateOperation)
+      const resDec = await fetch(`/api/decaissements?annee=${anneeSelect}`);
+      if (resDec.ok) {
+        const decData = await resDec.json();
+        const decs = decData.decaissements ?? [];
+        const aj  = decs.filter((d: any) => d.typeMouvement === 'ajout').reduce((s: number, d: any) => s + (d.montantTotal ?? 0), 0);
+        const ret = decs.filter((d: any) => d.typeMouvement === 'retrait').reduce((s: number, d: any) => s + (d.montantTotal ?? 0), 0);
+        setDecStats({ totalAjouts: aj, totalDecaissements: ret, soldeNet: aj - ret });
+      }
+
       setData({ budget: budgetCumul, categories: cats });
       setHist(histData);
-    } catch (e) {
-      console.error('OngletRecap charger error:', e);
-    }
+    } catch (e) { console.error('OngletRecap charger error:', e); }
     setLoading(false);
   }, [anneeSelect, moisCourant]);
 
   useEffect(() => { charger(); }, [charger]);
 
   const exportExcel = async () => {
-    const ok = window.confirm(
-      `📊 Exporter Excel\n\nFichier : GestBudget-${anneeSelect}.xlsx\nAnnée   : ${anneeSelect}\n\nConfirmer l'export ?`
-    );
+    const ok = window.confirm(`📊 Exporter Excel\n\nFichier : GestBudget-${anneeSelect}.xlsx\n\nConfirmer ?`);
     if (!ok) return;
     setExporting('excel');
     const res = await fetch(`/api/export/excel?annee=${anneeSelect}`);
-    if (res.ok) {
-      const blob = await res.blob();
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `GestBudget-${anneeSelect}.xlsx`;
-      a.click();
-    }
+    if (res.ok) { const blob = await res.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `GestBudget-${anneeSelect}.xlsx`; a.click(); }
     setExporting(null);
   };
 
   const exportPDF = async () => {
     const MOIS_N = ['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
-    const ok = window.confirm(
-      `📄 Exporter PDF\n\nFichier : GestBudget-${anneeSelect}-${String(moisCourant).padStart(2,'0')}.pdf\nAnnée   : ${anneeSelect}\nMois    : ${MOIS_N[moisCourant]}\n\nConfirmer l'export ?`
-    );
+    const ok = window.confirm(`📄 Exporter PDF\n\nAnnée ${anneeSelect} — ${MOIS_N[moisCourant]}\n\nConfirmer ?`);
     if (!ok) return;
     setExporting('pdf');
     const res = await fetch(`/api/export/pdf?annee=${anneeSelect}&mois=${moisCourant}`);
-    if (res.ok) {
-      const blob = await res.blob();
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `GestBudget-${anneeSelect}-${String(moisCourant).padStart(2,'0')}.pdf`;
-      a.click();
-    }
+    if (res.ok) { const blob = await res.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `GestBudget-${anneeSelect}-${String(moisCourant).padStart(2,'0')}.pdf`; a.click(); }
     setExporting(null);
   };
 
@@ -657,25 +740,21 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
   const epReel  = totType('epargne','montantReel');
   const solde   = revReel - depReel - epReel;
 
+  // Épargne de fonctionnement — source unifiée : budget_mensuel epargne_autre
   const fondsCategories = cats.filter((c: any) => c.type === 'epargne_autre');
-  const totalFonds = fondsCategories.reduce((s: number, cat: any) => {
+  const totalFondsRecap = fondsCategories.reduce((s: number, cat: any) => {
     const b = budget.find((b: any) => b.categorieId === cat.id);
     return s + (b?.montantReel ?? 0);
   }, 0);
 
   const donut = Object.entries(
-    budget
-      .filter((b: any) => b.categorie?.type?.startsWith('depense') && b.montantReel > 0)
-      .reduce((acc: any, b: any) => {
-        const k = b.categorie?.sousType ?? 'Autre';
-        acc[k] = (acc[k] ?? 0) + b.montantReel;
-        return acc;
-      }, {})
+    budget.filter((b: any) => b.categorie?.type?.startsWith('depense') && b.montantReel > 0)
+          .reduce((acc: any, b: any) => { const k = b.categorie?.sousType ?? 'Autre'; acc[k] = (acc[k] ?? 0) + b.montantReel; return acc; }, {})
   ).map(([name, value]) => ({ name, value }));
 
   return (
     <div className="space-y-5">
-      {/* ── Sélecteur d'année + export ── */}
+      {/* Sélecteur + export */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-[var(--text-muted)]">Année :</span>
@@ -683,9 +762,7 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
             {anneesDispos.map(a => (
               <button key={a} onClick={() => setAnneeSelect(a)}
                 className={clsx('px-3 py-1.5 rounded-xl text-sm font-semibold transition-all',
-                  anneeSelect === a
-                    ? 'bg-primary text-white'
-                    : 'border border-[var(--border)] text-[var(--text-muted)] hover:border-primary hover:text-primary')}>
+                  anneeSelect === a ? 'bg-primary text-white' : 'border border-[var(--border)] text-[var(--text-muted)] hover:border-primary hover:text-primary')}>
                 {a}
               </button>
             ))}
@@ -703,16 +780,14 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         </div>
       </div>
 
-      {/* ── KPIs annuels ── */}
+      {/* KPIs annuels */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: `Revenus ${anneeSelect}`,  val: revReel, cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
           { label: `Dépenses ${anneeSelect}`, val: depReel, cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
           { label: `Épargne ${anneeSelect}`,  val: epReel,  cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
           { label: 'Solde annuel', val: solde,
-            cls: solde >= 0
-              ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400'
-              : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
+            cls: solde >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
         ].map(k => (
           <div key={k.label} className={clsx('rounded-2xl border p-3.5 transition-colors', k.cls)}>
             <p className="text-xs font-medium opacity-60">{k.label}</p>
@@ -721,12 +796,12 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         ))}
       </div>
 
-      {/* ── Épargne de Fonctionnement ── */}
+      {/* Épargne de Fonctionnement Récap */}
       {fondsCategories.length > 0 && (
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold text-[var(--text)]">Épargne de Fonctionnement {anneeSelect}</h3>
-            <span className="text-sm font-bold text-primary">{formatFCFA(totalFonds)}</span>
+            <span className="text-sm font-bold text-primary">{formatFCFA(totalFondsRecap)}</span>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {fondsCategories.map((cat: any) => {
@@ -742,7 +817,36 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         </div>
       )}
 
-      {/* ── Graphiques ── */}
+      {/* Ajouts & Décaissements de l'année */}
+      <Separateur emoji="🔄" label={`Ajouts & Décaissements — ${anneeSelect}`} />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-2xl p-4 flex items-center gap-3">
+          <ArrowUpCircle size={28} className="text-green-600 flex-shrink-0" />
+          <div>
+            <p className="text-xs font-medium text-green-700 dark:text-green-400 opacity-70">Total ajouté</p>
+            <p className="text-xl font-bold text-green-700 dark:text-green-400">{formatFCFA(decStats.totalAjouts)}</p>
+          </div>
+        </div>
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl p-4 flex items-center gap-3">
+          <ArrowDownCircle size={28} className="text-red-500 flex-shrink-0" />
+          <div>
+            <p className="text-xs font-medium text-red-600 dark:text-red-400 opacity-70">Total décaissé</p>
+            <p className="text-xl font-bold text-red-600 dark:text-red-400">{formatFCFA(decStats.totalDecaissements)}</p>
+          </div>
+        </div>
+        <div className={clsx('rounded-2xl border p-4 flex items-center gap-3',
+          decStats.soldeNet >= 0 ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800')}>
+          <Minus size={28} className={clsx('flex-shrink-0', decStats.soldeNet >= 0 ? 'text-blue-600' : 'text-orange-500')} />
+          <div>
+            <p className={clsx('text-xs font-medium opacity-70', decStats.soldeNet >= 0 ? 'text-blue-700 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400')}>Solde net fonds</p>
+            <p className={clsx('text-xl font-bold', decStats.soldeNet >= 0 ? 'text-blue-700 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400')}>
+              {formatFCFA(decStats.soldeNet)}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Graphiques */}
       <div className="grid lg:grid-cols-2 gap-5">
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
           <h3 className="font-semibold text-[var(--text)] mb-3">Répartition dépenses</h3>
@@ -775,7 +879,7 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         </div>
       </div>
 
-      {/* ── Tableau détail ── */}
+      {/* Tableau détail */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
         <div className="px-5 py-3 border-b border-[var(--border)] bg-slate-50 dark:bg-dark-card flex items-center justify-between">
           <h3 className="font-semibold text-[var(--text)]">Détail — {anneeSelect} (cumul annuel)</h3>
@@ -784,15 +888,10 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
             <button onClick={toutPlier}    className="text-xs px-2.5 py-1 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-100 dark:hover:bg-dark-card transition">Tout plier</button>
           </div>
         </div>
-
-        {/* ── Table avec colonnes fixes ── */}
         <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[540px]" style={{ tableLayout: 'fixed' }}>
             <colgroup>
-              <col />{/* Catégorie — prend l'espace restant */}
-              <col style={{ width: '150px' }} />{/* Prévision */}
-              <col style={{ width: '150px' }} />{/* Réel */}
-              <col style={{ width: '150px' }} />{/* Écart */}
+              <col /><col style={{ width: '150px' }} /><col style={{ width: '150px' }} /><col style={{ width: '150px' }} />
             </colgroup>
             <thead>
               <tr className="border-b border-[var(--border)] bg-slate-50 dark:bg-dark-card">
@@ -810,46 +909,31 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
                 const gReel = catsDuType.reduce((s: number, c: any) => { const b = budget.find((b: any) => b.categorieId === c.id); return s + (b?.montantReel ?? 0); }, 0);
                 const gEcar = gReel - gAnt;
                 const isOpen = groupsOpen[type] !== false;
-
                 return (
                   <Fragment key={type}>
-                    {/* Ligne de groupe — toujours visible, cliquable */}
-                    <tr
-                      className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)] cursor-pointer hover:bg-slate-100 dark:hover:bg-dark-card/80 transition-colors"
-                      onClick={() => toggleGroup(type)}>
+                    <tr className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)] cursor-pointer hover:bg-slate-100 dark:hover:bg-dark-card/80 transition-colors"
+                        onClick={() => toggleGroup(type)}>
                       <td className="px-4 py-2.5 text-xs font-bold text-[var(--text-muted)] uppercase tracking-wide">
                         <div className="flex items-center gap-2">
                           {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                           {TYPE_LABELS[type as keyof typeof TYPE_LABELS]}
                         </div>
                       </td>
-                      <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">
-                        {gAnt > 0 ? formatFCFA(gAnt) : '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">
-                        {gReel > 0 ? formatFCFA(gReel) : '—'}
-                      </td>
+                      <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{gAnt > 0 ? formatFCFA(gAnt) : '—'}</td>
+                      <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{gReel > 0 ? formatFCFA(gReel) : '—'}</td>
                       <td className={clsx('px-4 py-2.5 text-right text-xs font-bold',
                         gEcar > 0 && type.startsWith('depense') ? 'text-red-500' : gEcar < 0 ? 'text-green-500' : 'text-[var(--text-muted)]')}>
                         {gEcar !== 0 ? (gEcar > 0 ? '+' : '') + formatFCFA(gEcar) : '—'}
                       </td>
                     </tr>
-
-                    {/* Lignes enfants — visibles seulement si le groupe est ouvert */}
                     {isOpen && catsDuType.map((cat: any) => {
-                      const b    = budget.find((b: any) => b.categorieId === cat.id);
-                      const ant  = b?.montantAnticipe ?? 0;
-                      const reel = b?.montantReel ?? 0;
-                      const ecar = reel - ant;
+                      const b = budget.find((b: any) => b.categorieId === cat.id);
+                      const ant = b?.montantAnticipe ?? 0, reel = b?.montantReel ?? 0, ecar = reel - ant;
                       return (
                         <tr key={cat.id} className="border-t border-[var(--border)] hover:bg-slate-50/40 dark:hover:bg-dark-card/40 transition-colors">
                           <td className="px-4 py-2.5 pl-10 text-[var(--text)] truncate">{cat.nom}</td>
-                          <td className="px-4 py-2.5 text-right text-[var(--text-muted)]">
-                            {ant  > 0 ? formatFCFA(ant)  : '—'}
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-medium text-[var(--text)]">
-                            {reel > 0 ? formatFCFA(reel) : '—'}
-                          </td>
+                          <td className="px-4 py-2.5 text-right text-[var(--text-muted)]">{ant  > 0 ? formatFCFA(ant)  : '—'}</td>
+                          <td className="px-4 py-2.5 text-right font-medium text-[var(--text)]">{reel > 0 ? formatFCFA(reel) : '—'}</td>
                           <td className={clsx('px-4 py-2.5 text-right text-xs font-medium',
                             ecar > 0 && type.startsWith('depense') ? 'text-red-500' : ecar < 0 ? 'text-green-500' : 'text-[var(--text-muted)]')}>
                             {ecar !== 0 ? (ecar > 0 ? '+' : '') + formatFCFA(ecar) : '—'}
@@ -868,7 +952,7 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
   );
 }
 
-// ── Page principale ───────────────────────────
+// ── Page principale ───────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const { mois, annee, setMois, setAnnee } = useMois();
   const [onglet,  setOnglet]  = useState<'global'|'recap'>('global');
