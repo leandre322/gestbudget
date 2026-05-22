@@ -73,8 +73,8 @@ export async function PUT(req: NextRequest) {
       if (!existing) return NextResponse.json({ error: 'Compte introuvable' }, { status: 404 });
 
       let newSolde: bigint;
-      const montantVal = BigInt(Math.round(Number(montant) || 0));
-      const soldeActuel = BigInt(existing.soldeActuel ?? 0);
+      const montantVal  = BigInt(Math.round(Number(montant) || 0));
+      const soldeActuel = BigInt(Number(existing.soldeActuel ?? 0));
 
       if (action === 'set') {
         newSolde = montantVal;
@@ -83,7 +83,7 @@ export async function PUT(req: NextRequest) {
       } else {
         // decrement — ne pas descendre en dessous de 0
         newSolde = soldeActuel - montantVal;
-        if (newSolde < 0n) newSolde = 0n;
+        if (newSolde < BigInt(0)) newSolde = BigInt(0);
       }
 
       const compte = await prisma.compteFonds.update({
