@@ -13,12 +13,27 @@ import { formatFCFA, MOIS_LABELS, ORDRE_TYPES, TYPE_LABELS,
          LABEL_PREVISION, LABEL_REEL, LABEL_ECART, LABEL_EXEC } from '@/types';
 import { clsx } from 'clsx';
 
-type Lignes     = Record<string, { anticipe: string; reel: string }>;
+type Lignes      = Record<string, { anticipe: string; reel: string }>;
 type LigneBanque = { id: string; banqueId: string; anticipe: number; reel: string };
 
 const TYPES_OUVERTS_PAR_DEFAUT = ['revenu', 'epargne_precaution'];
-const MOIS_COURTS = ['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+const MOIS_COURTS  = ['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
 const DONUT_COLORS = ['#1E40AF','#EF4444','#F59E0B','#10B981','#8B5CF6','#06B6D4','#F97316'];
+
+// ── Correspondance catégorie epargne_autre → CompteFonds par nom (Option A) ──
+function trouverCompteParNom(catNom: string, comptes: any[]): any | null {
+  if (!catNom || !comptes.length) return null;
+  const cat = catNom.toLowerCase().trim();
+  // 1. Correspondance exacte
+  let match = comptes.find(c => c.nom.toLowerCase().trim() === cat);
+  if (match) return match;
+  // 2. Le nom du fond est contenu dans la catégorie
+  match = comptes.find(c => cat.includes(c.nom.toLowerCase().trim()));
+  if (match) return match;
+  // 3. La catégorie est contenue dans le nom du fond
+  match = comptes.find(c => c.nom.toLowerCase().trim().includes(cat));
+  return match ?? null;
+}
 
 export default function SuiviPage() {
   const { mois, annee, setMois, setAnnee } = useMois();
@@ -27,6 +42,7 @@ export default function SuiviPage() {
   const [data,         setData]         = useState<any>(null);
   const [lignes,       setLignes]       = useState<Lignes>({});
   const [banques,      setBanques]      = useState<any[]>([]);
+  const [comptes,      setComptes]      = useState<any[]>([]); // CompteFonds
   const [lignesBanque, setLignesBanque] = useState<LigneBanque[]>([]);
   const [hist,         setHist]         = useState<any[]>([]);
   const [loading,      setLoading]      = useState(true);
@@ -39,18 +55,17 @@ export default function SuiviPage() {
     try { return localStorage.getItem('suivi-show-totals') === 'true'; } catch { return false; }
   });
 
-  // ── État des groupes (remplace CollapsibleGroup) ──────────────────────────
   const [groupsOpen, setGroupsOpen] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
     ORDRE_TYPES.forEach(t => { init[t] = TYPES_OUVERTS_PAR_DEFAUT.includes(t); });
     return init;
   });
 
-  const toggleGroup      = (type: string) => setGroupsOpen(p => ({ ...p, [type]: !p[type] }));
-  const expandAllGroups  = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = true;  }); setGroupsOpen(n); };
-  const collapseAllGroups= () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = false; }); setGroupsOpen(n); };
+  const toggleGroup       = (type: string) => setGroupsOpen(p => ({ ...p, [type]: !p[type] }));
+  const expandAllGroups   = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = true;  }); setGroupsOpen(n); };
+  const collapseAllGroups = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = false; }); setGroupsOpen(n); };
 
-  const timerRef = useRef<NodeJS.Timeout>();
+  const timerRef            = useRef<NodeJS.Timeout>();
   const moisCourantReel     = new Date().getMonth() + 1;
   const anneeCouranteReelle = new Date().getFullYear();
 
@@ -60,12 +75,13 @@ export default function SuiviPage() {
     try { localStorage.setItem('suivi-show-totals', String(next)); } catch {}
   };
 
-  // ── Chargement des données ────────────────────────────────────────────────
+  // ── Chargement ──────────────────────────────────────────────────────────
   const charger = useCallback(async () => {
     setLoading(true);
-    const [resBudget, resBanques] = await Promise.all([
+    const [resBudget, resBanques, resComptes] = await Promise.all([
       fetch(`/api/budget?annee=${annee}&mois=${mois}`),
       fetch('/api/banques'),
+      fetch('/api/comptes'),   // ← CompteFonds pour epargne_autre
     ]);
     if (!resBudget.ok) { setLoading(false); return; }
     const d = await resBudget.json();
@@ -81,6 +97,11 @@ export default function SuiviPage() {
     }
     setLignes(init);
 
+    if (resComptes.ok) {
+      const dc = await resComptes.json();
+      setComptes(dc.comptes ?? []);
+    }
+
     if (resBanques.ok) {
       const db  = await resBanques.json();
       const bqs = db.banques ?? [];
@@ -91,12 +112,12 @@ export default function SuiviPage() {
         if (sv) {
           setLignesBanque(JSON.parse(sv));
         } else {
-          const catsPrecaution    = d.categories.filter((c: any) => c.type === 'epargne_precaution');
-          const totalAnticipe     = catsPrecaution.reduce((s: number, c: any) => {
+          const catsPrecaution   = d.categories.filter((c: any) => c.type === 'epargne_precaution');
+          const totalAnticipe    = catsPrecaution.reduce((s: number, c: any) => {
             const b = d.budget.find((b: any) => b.categorieId === c.id);
             return s + (b?.montantAnticipe ?? 0);
           }, 0);
-          const anticipeParLigne  = bqs.length > 0 ? Math.round(totalAnticipe / Math.min(2, bqs.length)) : 0;
+          const anticipeParLigne = bqs.length > 0 ? Math.round(totalAnticipe / Math.min(2, bqs.length)) : 0;
           setLignesBanque([
             { id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: anticipeParLigne, reel: '' },
             { id: `lb-${Date.now()}-2`, banqueId: bqs[1]?.id ?? '', anticipe: anticipeParLigne, reel: '' },
@@ -153,15 +174,17 @@ export default function SuiviPage() {
     setSaving(true);
     (window as any).__setSaveStatus?.('saving');
 
+    // 1. Sauvegarder le budget
     const res = await fetch('/api/budget', {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes }),
     });
 
-    // Répercuter banques → catégories epargne_precaution en DB
     const cats           = data?.categories ?? [];
     const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
+
+    // 2. Répercuter banques → catégories epargne_precaution
     if (catsPrecaution.length > 0 && lignesBanque.some(lb => parseInt(lb.reel) > 0)) {
       const newLignesPrecaution = { ...lignes };
       catsPrecaution.forEach((cat: any, idx: number) => {
@@ -180,7 +203,7 @@ export default function SuiviPage() {
       });
     }
 
-    // Incrémenter soldes banques
+    // 3. Incrémenter soldes banques (epargne_precaution) avec diff
     for (const lb of lignesBanque) {
       const reelVal = parseInt(lb.reel) || 0;
       if (lb.banqueId && reelVal > 0) {
@@ -189,6 +212,26 @@ export default function SuiviPage() {
         const diff   = reelVal - oldVal;
         if (diff !== 0) {
           await fetch(`/api/banques?id=${lb.banqueId}`, {
+            method:  'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ action: diff > 0 ? 'increment' : 'decrement', montant: Math.abs(diff) }),
+          });
+          localStorage.setItem(oldKey, String(reelVal));
+        }
+      }
+    }
+
+    // 4. Incrémenter soldes CompteFonds (epargne_autre) avec diff par correspondance de nom
+    const catsAutre = cats.filter((c: any) => c.type === 'epargne_autre');
+    for (const cat of catsAutre) {
+      const reelVal = parseInt(lignes[cat.id]?.reel) || 0;
+      const compte  = trouverCompteParNom(cat.nom, comptes);
+      if (compte) {
+        const oldKey = `epargne-autre-saved-${annee}-${mois}-${cat.id}`;
+        const oldVal = parseInt(localStorage.getItem(oldKey) ?? '0');
+        const diff   = reelVal - oldVal;
+        if (diff !== 0) {
+          await fetch(`/api/comptes?id=${compte.id}`, {
             method:  'PUT',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({ action: diff > 0 ? 'increment' : 'decrement', montant: Math.abs(diff) }),
@@ -213,10 +256,7 @@ export default function SuiviPage() {
   const copierMoisPrecedent = async () => {
     const pm = mois === 1 ? 12 : mois - 1;
     const pa = mois === 1 ? annee - 1 : annee;
-    const ok = window.confirm(
-      `Copier les prévisions de ${MOIS_LABELS[pm]} ${pa} vers ce mois ?\nCela remplacera les prévisions actuelles.`
-    );
-    if (!ok) return;
+    if (!window.confirm(`Copier les prévisions de ${MOIS_LABELS[pm]} ${pa} vers ce mois ?\nCela remplacera les prévisions actuelles.`)) return;
     setCopying(true);
     const res = await fetch(`/api/budget?annee=${pa}&mois=${pm}`);
     if (res.ok) {
@@ -258,14 +298,12 @@ export default function SuiviPage() {
     setLignesBanque(prev => prev.map(l => l.id === id ? { ...l, [field]: val } : l));
 
   if (loading) return (
-    <div className="flex items-center justify-center h-64">
-      <div className="spinner scale-150" />
-    </div>
+    <div className="flex items-center justify-center h-64"><div className="spinner scale-150" /></div>
   );
 
   const cats = data?.categories ?? [];
 
-  // ── Totaux pour KPIs ─────────────────────────────────────────────────────
+  // ── Totaux pour KPIs ────────────────────────────────────────────────────
   const catsPrecaution          = cats.filter((c: any) => c.type === 'epargne_precaution');
   const totalAnticipePrecaution = catsPrecaution.reduce((s: number, c: any) => {
     const b = data?.budget?.find((b: any) => b.categorieId === c.id);
@@ -273,17 +311,14 @@ export default function SuiviPage() {
   }, 0);
   const totalReelBanques = lignesBanque.reduce((s, l) => s + (parseInt(l.reel) || 0), 0);
 
-  // Revenus
   const revAnt  = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
   const revReel = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
 
-  // Épargne totale (précaution + autres)
   const epAutreAnt  = cats.filter((c: any) => c.type?.startsWith('epargne') && c.type !== 'epargne_precaution').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
   const epAutreReel = cats.filter((c: any) => c.type?.startsWith('epargne') && c.type !== 'epargne_precaution').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
   const epAnt  = epAutreAnt  + totalAnticipePrecaution;
   const epReel = epAutreReel + totalReelBanques;
 
-  // Dépenses (sans épargne)
   const depAnt  = cats.filter((c: any) => c.type?.startsWith('depense') || c.type === 'remboursement_dette').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
   const depReel = cats.filter((c: any) => c.type?.startsWith('depense') || c.type === 'remboursement_dette').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
 
@@ -299,33 +334,19 @@ export default function SuiviPage() {
   const modalCats = cats.filter((c: any) => c.type === modalType);
 
   const donutData = Object.entries(
-    cats
-      .filter((c: any) => c.type?.startsWith('depense') && (parseInt(lignes[c.id]?.reel) || 0) > 0)
-      .reduce((acc: any, c: any) => {
-        acc[c.nom] = (acc[c.nom] ?? 0) + (parseInt(lignes[c.id]?.reel) || 0);
-        return acc;
-      }, {})
+    cats.filter((c: any) => c.type?.startsWith('depense') && (parseInt(lignes[c.id]?.reel) || 0) > 0)
+        .reduce((acc: any, c: any) => { acc[c.nom] = (acc[c.nom] ?? 0) + (parseInt(lignes[c.id]?.reel) || 0); return acc; }, {})
   ).map(([name, value]) => ({ name, value }));
 
   return (
     <div className="space-y-5 animate-fadeIn">
 
-      {/* Bandeau mois antérieur */}
-      <BandeauMoisAnterieur
-        mois={mois} annee={annee}
-        onMoisCourant={() => { setMois(moisCourantReel); setAnnee(anneeCouranteReelle); }}
-      />
+      <BandeauMoisAnterieur mois={mois} annee={annee}
+        onMoisCourant={() => { setMois(moisCourantReel); setAnnee(anneeCouranteReelle); }} />
 
-      {/* Modal KPI */}
-      <ModalKPI
-        isOpen={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onSave={handleModalSave}
+      <ModalKPI isOpen={modalOpen} onClose={() => setModalOpen(false)} onSave={handleModalSave}
         titre={TYPE_LABELS[modalType as keyof typeof TYPE_LABELS] ?? ''}
-        categories={modalCats}
-        lignes={lignes}
-        mode="both"
-      />
+        categories={modalCats} lignes={lignes} mode="both" />
 
       {/* ── En-tête ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -357,25 +378,21 @@ export default function SuiviPage() {
         </div>
       </div>
 
-      {/* ── KPIs — avec prévision en bas ── */}
+      {/* ── KPIs ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Revenus',  val: revReel,  ant: revAnt,  type: 'revenu',       cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
-          { label: 'Épargne',  val: epReel,   ant: epAnt,   type: 'epargne_precaution', cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
-          { label: 'Dépenses', val: depReel,  ant: depAnt,  type: 'depense_fixe', cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
+          { label: 'Revenus',  val: revReel,   ant: revAnt,   type: 'revenu',       cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
+          { label: 'Épargne',  val: epReel,    ant: epAnt,    type: 'epargne_precaution', cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
+          { label: 'Dépenses', val: depReel,   ant: depAnt,   type: 'depense_fixe', cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
           { label: 'Solde',    val: soldeReel, ant: soldeAnt, type: '',
-            cls: soldeReel >= 0
-              ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400'
-              : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400' },
+            cls: soldeReel >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400' },
         ].map(k => (
           <div key={k.label} className={clsx('rounded-2xl border p-3.5 flex flex-col gap-1 transition-colors', k.cls)}>
             <div className="flex items-start justify-between">
               <p className="text-xs font-medium opacity-60">{k.label}</p>
               {k.type && (
-                <button
-                  onClick={() => { setModalType(k.type); setModalOpen(true); }}
-                  className="p-1 rounded-lg hover:bg-white/40 dark:hover:bg-black/20 transition-colors flex-shrink-0 -mt-0.5 -mr-0.5"
-                  title="Modifier">
+                <button onClick={() => { setModalType(k.type); setModalOpen(true); }}
+                  className="p-1 rounded-lg hover:bg-white/40 dark:hover:bg-black/20 transition-colors flex-shrink-0 -mt-0.5 -mr-0.5" title="Modifier">
                   <Pencil size={11} className="opacity-60" />
                 </button>
               )}
@@ -411,21 +428,17 @@ export default function SuiviPage() {
         </div>
       </div>
 
-      {/* ── Tableau unique avec groupes inline ── */}
+      {/* ── Tableau unique ── */}
       <div className="max-w-5xl mx-auto w-full">
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
           <div className="overflow-x-auto">
-            {/*
-              table-layout: fixed + colgroup = colonnes parfaitement alignées header ↔ données
-              min-w-[640px] = scroll horizontal sur mobile au lieu d'écrasement
-            */}
             <table className="w-full text-sm min-w-[640px]" style={{ tableLayout: 'fixed' }}>
               <colgroup>
-                <col />{/* Catégorie — prend l'espace restant */}
-                <col style={{ width: '140px' }} />{/* Prévision */}
-                <col style={{ width: '140px' }} />{/* Réel */}
-                <col style={{ width: '110px' }} />{/* Écart */}
-                <col style={{ width: '70px'  }} />{/* Exec */}
+                <col />
+                <col style={{ width: '140px' }} />
+                <col style={{ width: '140px' }} />
+                <col style={{ width: '110px' }} />
+                <col style={{ width: '70px'  }} />
               </colgroup>
               <thead>
                 <tr className="bg-slate-50 dark:bg-dark-card border-b border-[var(--border)]">
@@ -440,9 +453,9 @@ export default function SuiviPage() {
                 {grouped.map(({ type, items }) => {
                   const isRevenu       = type === 'revenu';
                   const isEpPrecaution = type === 'epargne_precaution';
+                  const isEpAutre      = type === 'epargne_autre';
                   const isOpen         = groupsOpen[type] !== false;
 
-                  // Totaux du groupe
                   let gAnt: number, gReel: number;
                   if (isEpPrecaution) {
                     gAnt  = totalAnticipePrecaution;
@@ -457,40 +470,30 @@ export default function SuiviPage() {
                   const gEcarColor = isRevenu
                     ? gEcar > 0 ? 'text-green-500' : gEcar < 0 ? 'text-red-500' : 'text-[var(--text-muted)]'
                     : gEcar > 0 ? 'text-red-500'  : gEcar < 0 ? 'text-green-500' : 'text-[var(--text-muted)]';
-
                   const gTauxColor = gPct > 110 ? 'text-red-500' : gPct > 100 ? 'text-orange-500' : gPct >= 80 ? 'text-amber-500' : 'text-green-500';
 
                   return (
                     <Fragment key={type}>
-                      {/* ── Ligne de groupe (toujours visible, cliquable) ── */}
-                      <tr
-                        className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)] cursor-pointer hover:bg-slate-100 dark:hover:bg-dark-card/80 transition-colors"
-                        onClick={() => toggleGroup(type)}>
+                      {/* Ligne de groupe */}
+                      <tr className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)] cursor-pointer hover:bg-slate-100 dark:hover:bg-dark-card/80 transition-colors"
+                          onClick={() => toggleGroup(type)}>
                         <td className="px-4 py-2.5 text-xs font-bold text-[var(--text-muted)] uppercase tracking-wide">
                           <div className="flex items-center gap-2">
-                            {isOpen
-                              ? <ChevronDown  size={14} className="text-slate-400 flex-shrink-0" />
-                              : <ChevronRight size={14} className="text-slate-400 flex-shrink-0" />}
+                            {isOpen ? <ChevronDown size={14} className="text-slate-400 flex-shrink-0" /> : <ChevronRight size={14} className="text-slate-400 flex-shrink-0" />}
                             {TYPE_LABELS[type as keyof typeof TYPE_LABELS]}
                           </div>
                         </td>
-                        <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">
-                          {gAnt > 0 ? formatFCFA(gAnt) : '—'}
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">
-                          {gReel > 0 ? formatFCFA(gReel) : '—'}
-                        </td>
+                        <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{gAnt > 0 ? formatFCFA(gAnt) : '—'}</td>
+                        <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{gReel > 0 ? formatFCFA(gReel) : '—'}</td>
                         <td className={clsx('px-4 py-2.5 text-right text-xs font-bold', gEcarColor)}>
                           {gEcar !== 0 ? (gEcar > 0 ? '+' : '') + formatFCFA(gEcar) : '—'}
                         </td>
                         <td className="px-4 py-2.5 text-right">
-                          {gAnt > 0
-                            ? <span className={clsx('text-xs font-bold', gTauxColor)}>{gPct.toFixed(0)}%</span>
-                            : <span className="text-xs text-[var(--text-muted)]">—</span>}
+                          {gAnt > 0 ? <span className={clsx('text-xs font-bold', gTauxColor)}>{gPct.toFixed(0)}%</span> : <span className="text-xs text-[var(--text-muted)]">—</span>}
                         </td>
                       </tr>
 
-                      {/* ── Lignes enfants (visibles si groupe ouvert) ── */}
+                      {/* Lignes enfants */}
                       {isOpen && (
                         <>
                           {isEpPrecaution ? (
@@ -498,36 +501,28 @@ export default function SuiviPage() {
                               {lignesBanque.map(lb => (
                                 <tr key={lb.id} className="border-t border-[var(--border)] hover:bg-slate-50/60 dark:hover:bg-dark-card/60 transition-colors">
                                   <td className="px-4 py-2.5 pl-10">
-                                    <select
-                                      value={lb.banqueId}
-                                      onChange={e => updateLigneBanque(lb.id, 'banqueId', e.target.value)}
+                                    <select value={lb.banqueId} onChange={e => updateLigneBanque(lb.id, 'banqueId', e.target.value)}
                                       className="border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none w-full max-w-[180px]">
                                       <option value="">— Choisir banque —</option>
-                                      {banques.map((b: any) => (
-                                        <option key={b.id} value={b.id}>{b.nomBanque}</option>
-                                      ))}
+                                      {banques.map((b: any) => <option key={b.id} value={b.id}>{b.nomBanque}</option>)}
                                     </select>
                                   </td>
                                   <td className="px-4 py-2.5 text-right text-sm text-[var(--text-muted)]">
                                     {lb.anticipe > 0 ? formatFCFA(lb.anticipe) : '—'}
                                   </td>
                                   <td className="px-3 py-2">
-                                    <input
-                                      type="number" value={lb.reel}
-                                      onChange={e => updateLigneBanque(lb.id, 'reel', e.target.value)}
+                                    <input type="number" value={lb.reel} onChange={e => updateLigneBanque(lb.id, 'reel', e.target.value)}
                                       placeholder="0"
                                       className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" />
                                   </td>
                                   <td className="px-4 py-2.5 text-right text-sm text-[var(--text-muted)]">—</td>
                                   <td className="px-4 py-2.5 text-right">
-                                    <button onClick={() => supprimerLigneBanque(lb.id)}
-                                      className="text-slate-300 hover:text-red-500 transition-colors">
+                                    <button onClick={() => supprimerLigneBanque(lb.id)} className="text-slate-300 hover:text-red-500 transition-colors">
                                       <Trash2 size={13} />
                                     </button>
                                   </td>
                                 </tr>
                               ))}
-                              {/* Bouton ajouter banque */}
                               <tr className="border-t border-[var(--border)]">
                                 <td colSpan={5} className="px-4 py-2 pl-10">
                                   <button onClick={ajouterLigneBanque}
@@ -536,7 +531,6 @@ export default function SuiviPage() {
                                   </button>
                                 </td>
                               </tr>
-                              {/* Sous-total précaution (si showTotals) */}
                               {showTotals && (
                                 <tr className="bg-blue-50/40 dark:bg-blue-900/10 border-t border-[var(--border)]">
                                   <td className="px-4 py-2 pl-10 text-xs font-bold text-[var(--text-muted)] uppercase">Sous-total</td>
@@ -561,6 +555,10 @@ export default function SuiviPage() {
                                 const ecar = reel - ant;
                                 const pct  = ant > 0 ? (reel / ant) * 100 : 0;
                                 const over = !isRevenu && ant > 0 && reel > ant;
+
+                                // Badge fond lié pour epargne_autre
+                                const fondLie = isEpAutre ? trouverCompteParNom(cat.nom, comptes) : null;
+
                                 const ecarColor = isRevenu
                                   ? reel > ant ? 'text-green-500' : reel < ant ? 'text-red-500' : 'text-[var(--text-muted)]'
                                   : ecar > 0   ? 'text-red-500'  : ecar < 0   ? 'text-green-500' : 'text-[var(--text-muted)]';
@@ -568,11 +566,22 @@ export default function SuiviPage() {
                                   <tr key={cat.id}
                                     className={clsx('border-t border-[var(--border)] hover:bg-slate-50/60 dark:hover:bg-dark-card/60 transition-colors',
                                       over && 'bg-red-50/30 dark:bg-red-900/10')}>
-                                    <td className="px-4 py-2.5 pl-10 text-[var(--text)] truncate">
-                                      <span className="flex items-center gap-1.5">
+                                    <td className="px-4 py-2.5 pl-10 text-[var(--text)]">
+                                      <div className="flex items-center gap-2 flex-wrap">
                                         {over && <span className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0" />}
-                                        {cat.nom}
-                                      </span>
+                                        <span className="truncate">{cat.nom}</span>
+                                        {/* Badge fond lié — alimentation automatique */}
+                                        {fondLie && (
+                                          <span className="text-xs px-1.5 py-0.5 rounded-md bg-primary/10 text-primary font-medium flex-shrink-0">
+                                            → {fondLie.nom}
+                                          </span>
+                                        )}
+                                        {isEpAutre && !fondLie && (
+                                          <span className="text-xs px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-dark-card text-[var(--text-muted)] flex-shrink-0">
+                                            non lié
+                                          </span>
+                                        )}
+                                      </div>
                                     </td>
                                     <td className="px-3 py-2">
                                       <input type="number" value={lignes[cat.id]?.anticipe ?? ''}
@@ -600,7 +609,6 @@ export default function SuiviPage() {
                                   </tr>
                                 );
                               })}
-                              {/* Sous-total groupe (si showTotals) */}
                               {showTotals && (
                                 <tr className="bg-slate-50/70 dark:bg-dark-card/70 border-t border-[var(--border)]">
                                   <td className="px-4 py-2 pl-10 text-xs font-bold text-[var(--text-muted)] uppercase">Sous-total</td>
@@ -625,7 +633,7 @@ export default function SuiviPage() {
             </table>
           </div>
 
-          {/* ── Totaux globaux ── */}
+          {/* Totaux globaux */}
           <div className="border-t-2 border-primary/30 bg-primary/5 dark:bg-primary/10">
             <div className="px-4 py-2.5 flex items-center justify-between border-b border-primary/10">
               <span className="font-semibold text-[var(--text)] text-sm">Total sorties (épargne + dépenses)</span>
@@ -637,12 +645,8 @@ export default function SuiviPage() {
             <div className="px-4 py-3 flex items-center justify-between">
               <span className="font-bold text-[var(--text)]">Solde disponible</span>
               <div className="flex gap-8">
-                <span className={clsx('font-bold', soldeAnt >= 0 ? 'text-green-600' : 'text-red-500')}>
-                  {formatFCFA(soldeAnt)}
-                </span>
-                <span className={clsx('font-bold text-lg', soldeReel >= 0 ? 'text-green-600' : 'text-red-500')}>
-                  {formatFCFA(soldeReel)}
-                </span>
+                <span className={clsx('font-bold', soldeAnt >= 0 ? 'text-green-600' : 'text-red-500')}>{formatFCFA(soldeAnt)}</span>
+                <span className={clsx('font-bold text-lg', soldeReel >= 0 ? 'text-green-600' : 'text-red-500')}>{formatFCFA(soldeReel)}</span>
               </div>
             </div>
           </div>
@@ -678,13 +682,10 @@ export default function SuiviPage() {
               </PieChart>
             </ResponsiveContainer>
           ) : (
-            <div className="h-40 flex items-center justify-center text-[var(--text-muted)] text-sm">
-              Aucune dépense ce mois
-            </div>
+            <div className="h-40 flex items-center justify-center text-[var(--text-muted)] text-sm">Aucune dépense ce mois</div>
           )}
         </div>
       </div>
-
     </div>
   );
 }

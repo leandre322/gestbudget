@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, Fragment } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
          CartesianGrid, PieChart, Pie, Cell } from 'recharts';
-import { TrendingUp, TrendingDown, PiggyBank, Wallet, AlertTriangle,
+import { TrendingUp, TrendingDown, Wallet, AlertTriangle,
          Shield, ChevronDown, ChevronRight, Building2, Pencil, X, Save,
          ArrowDownCircle, ArrowUpCircle, Minus } from 'lucide-react';
 import { useMois } from '../layout';
@@ -33,7 +33,6 @@ function DashboardModal({ isOpen, onClose, titre, children }: {
   );
 }
 
-// ── Séparateur de section ─────────────────────────────────────────────────────
 function Separateur({ emoji, label }: { emoji: string; label: string }) {
   return (
     <div className="flex items-center gap-3">
@@ -71,44 +70,42 @@ function OngletGlobal({
     ]).then(([global, bqs]) => {
       setData({
         ...global,
-        evolutionAnnuelle:    global.evolutionAnnuelle    ?? [],
-        fondsRoulement:       global.fondsRoulement       ?? [],
-        comptes:              global.comptes              ?? [],
-        annees:               global.annees              ?? [],
-        totalFonds:           global.totalFonds           ?? 0,
-        totalRevenus:         global.totalRevenus         ?? 0,
-        totalDepenses:        global.totalDepenses        ?? 0,
-        totalEpargne:         global.totalEpargne         ?? 0,
-        solde:                global.solde               ?? 0,
-        scoreGlobal:          global.scoreGlobal          ?? 0,
-        nbMoisScore:          global.nbMoisScore          ?? 0,
-        revenuReference:      global.revenuReference      ?? 0,
-        nMoisUrgence:         global.nMoisUrgence         ?? 6,
-        totalAjouts:          global.totalAjouts          ?? 0,
-        totalDecaissements:   global.totalDecaissements   ?? 0,
+        evolutionAnnuelle:     global.evolutionAnnuelle     ?? [],
+        fondsRoulement:        global.fondsRoulement        ?? [],
+        comptes:               global.comptes               ?? [],
+        annees:                global.annees                ?? [],
+        totalFonds:            global.totalFonds            ?? 0,
+        totalRevenus:          global.totalRevenus          ?? 0,
+        totalDepenses:         global.totalDepenses         ?? 0,
+        solde:                 global.solde                 ?? 0,
+        scoreGlobal:           global.scoreGlobal           ?? 0,
+        nbMoisScore:           global.nbMoisScore           ?? 0,
+        revenuReference:       global.revenuReference       ?? 0,
+        nMoisUrgence:          global.nMoisUrgence          ?? 6,
+        totalAjouts:           global.totalAjouts           ?? 0,
+        totalDecaissements:    global.totalDecaissements    ?? 0,
         soldeNetDecaissements: global.soldeNetDecaissements ?? 0,
       });
       setBanques(bqs.banques ?? []);
       setLoading(false);
-    }).catch(err => {
-      console.error('Dashboard load error:', err);
-      setLoading(false);
-    });
+    }).catch(() => setLoading(false));
   }, [moisCourant, anneeCourante]);
 
   useEffect(() => { chargerData(); }, [chargerData]);
 
   const tot = (type: string, f: 'montantAnticipe'|'montantReel') =>
     budgetMois.filter((b: any) =>
-      type==='epargne' ? b.categorie?.type?.startsWith('epargne') :
       type==='depense' ? (b.categorie?.type?.startsWith('depense') || b.categorie?.type==='remboursement_dette') :
       b.categorie?.type === type
     ).reduce((s: number, b: any) => s + b[f], 0);
 
   const revenus  = { reel: tot('revenu','montantReel'),  ant: tot('revenu','montantAnticipe')  };
-  const epargne  = { reel: tot('epargne','montantReel'), ant: tot('epargne','montantAnticipe') };
   const depenses = { reel: tot('depense','montantReel'), ant: tot('depense','montantAnticipe') };
-  const solde    = revenus.reel - epargne.reel - depenses.reel;
+  // Solde = Revenus - Dépenses - Épargne (formule inchangée)
+  const epargneReel = budgetMois.filter((b: any) => b.categorie?.type?.startsWith('epargne')).reduce((s: number, b: any) => s + b.montantReel, 0);
+  const epargneAnt  = budgetMois.filter((b: any) => b.categorie?.type?.startsWith('epargne')).reduce((s: number, b: any) => s + b.montantAnticipe, 0);
+  const solde = revenus.reel - depenses.reel - epargneReel;
+  const soldeAnt = revenus.ant - depenses.ant - epargneAnt;
 
   const fondsUrgence   = banques.reduce((s: number, b: any) => s + (b.solde ?? 0), 0);
   const revenuRef      = data?.revenuReference ?? 0;
@@ -118,7 +115,7 @@ function OngletGlobal({
 
   const { score, details } = calculerScore({
     totalDepenses: depenses.reel, totalDepAnt: depenses.ant,
-    totalEpargne: epargne.reel,   totalRevenus: revenus.reel,
+    totalEpargne: epargneReel,    totalRevenus: revenus.reel,
     solde, fondsUrgence, fondsObjectif: fondsObjectif || 3720000,
   });
 
@@ -137,7 +134,6 @@ function OngletGlobal({
       budgetMois
         .filter((b: any) => {
           if (type === 'revenus')  return b.categorie?.type === 'revenu';
-          if (type === 'epargne')  return b.categorie?.type?.startsWith('epargne');
           if (type === 'depenses') return b.categorie?.type?.startsWith('depense') || b.categorie?.type === 'remboursement_dette';
           return false;
         })
@@ -162,10 +158,9 @@ function OngletGlobal({
         });
         toast.success('Fonds d\'urgence mis à jour ✓');
       } else if (modalType === 'banques') {
-        for (const [banqueId, s] of Object.entries(modalVals)) {
-          await fetch(`/api/banques?id=${banqueId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+        for (const [id, s] of Object.entries(modalVals)) {
+          await fetch(`/api/banques?id=${id}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'set', montant: parseInt(s) || 0 }),
           });
         }
@@ -182,8 +177,7 @@ function OngletGlobal({
             };
           }
           await fetch('/api/budget', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ anneeId: d.anneeId, mois: moisCourant, lignes }),
           });
           toast.success('Données mises à jour ✓');
@@ -191,20 +185,14 @@ function OngletGlobal({
       }
       chargerData();
       setModalType(null);
-    } catch {
-      toast.error('Erreur lors de la sauvegarde');
-    }
+    } catch { toast.error('Erreur lors de la sauvegarde'); }
     setSavingModal(false);
   };
 
-  if (loading) return (
-    <div className="flex items-center justify-center h-64">
-      <div className="spinner scale-150" />
-    </div>
-  );
+  if (loading) return <div className="flex items-center justify-center h-64"><div className="spinner scale-150" /></div>;
   if (!data) return null;
 
-  const { totalRevenus, totalDepenses, totalEpargne, solde: soldeGlobal,
+  const { totalRevenus, totalDepenses, solde: soldeGlobal,
           evolutionAnnuelle, fondsRoulement, totalFonds,
           totalAjouts, totalDecaissements, soldeNetDecaissements } = data;
 
@@ -215,7 +203,6 @@ function OngletGlobal({
 
   const catsByModalType = (type: string) => budgetMois.filter((b: any) => {
     if (type === 'revenus')  return b.categorie?.type === 'revenu';
-    if (type === 'epargne')  return b.categorie?.type?.startsWith('epargne');
     if (type === 'depenses') return b.categorie?.type?.startsWith('depense') || b.categorie?.type === 'remboursement_dette';
     return false;
   });
@@ -231,7 +218,6 @@ function OngletGlobal({
           modalType === 'urgence'  ? 'Fonds d\'urgence — Objectif' :
           modalType === 'banques'  ? 'Épargne Précaution — Soldes banques' :
           modalType === 'revenus'  ? `Revenus — ${MOIS_NOMS[moisCourant]} ${anneeCourante}` :
-          modalType === 'epargne'  ? `Épargne — ${MOIS_NOMS[moisCourant]} ${anneeCourante}` :
           modalType === 'depenses' ? `Dépenses — ${MOIS_NOMS[moisCourant]} ${anneeCourante}` : ''
         }>
         <div className="space-y-3">
@@ -241,8 +227,7 @@ function OngletGlobal({
                 <label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Revenu mensuel de référence (FCFA)</label>
                 <input type="number" value={modalVals['revenu'] ?? ''}
                   className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
-                  onChange={e => setModalVals(p => ({ ...p, revenu: e.target.value }))}
-                  placeholder="Ex: 690 000" />
+                  onChange={e => setModalVals(p => ({ ...p, revenu: e.target.value }))} placeholder="Ex: 690 000" />
               </div>
               <div>
                 <label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Nombre de mois de précaution</label>
@@ -274,7 +259,7 @@ function OngletGlobal({
               ))}
             </div>
           )}
-          {(modalType === 'revenus' || modalType === 'epargne' || modalType === 'depenses') && (
+          {(modalType === 'revenus' || modalType === 'depenses') && (
             <div className="space-y-2">
               <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-[var(--text-muted)] uppercase pb-2 border-b border-[var(--border)]">
                 <span>Catégorie</span>
@@ -326,12 +311,12 @@ function OngletGlobal({
               </div>
             </div>
           )}
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          {/* ── KPIs mois courant : Revenus / Dépenses / Solde / Score (sans Épargne) ── */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {[
               { titre: 'Revenus',  val: revenus.reel,  ant: revenus.ant,  type: 'revenus',  bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',    text: 'text-blue-700 dark:text-blue-400',   icon: TrendingUp },
               { titre: 'Dépenses', val: depenses.reel, ant: depenses.ant, type: 'depenses', bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',        text: 'text-red-600 dark:text-red-400',     icon: TrendingDown },
-              { titre: 'Épargne',  val: epargne.reel,  ant: epargne.ant,  type: 'epargne',  bg: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800', text: 'text-green-700 dark:text-green-400', icon: PiggyBank },
-              { titre: 'Solde',    val: solde,         ant: revenus.ant - epargne.ant - depenses.ant, type: '',
+              { titre: 'Solde',    val: solde,         ant: soldeAnt,     type: '',
                 bg: solde >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
                 text: solde >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400',
                 icon: Wallet },
@@ -343,8 +328,7 @@ function OngletGlobal({
                     <k.icon size={15} className="opacity-40" />
                     {k.type && (
                       <button onClick={() => ouvrirModal(k.type)}
-                        className="p-1 rounded-lg hover:bg-white/40 dark:hover:bg-black/20 transition-colors"
-                        title="Modifier">
+                        className="p-1 rounded-lg hover:bg-white/40 dark:hover:bg-black/20 transition-colors" title="Modifier">
                         <Pencil size={11} className="opacity-60" />
                       </button>
                     )}
@@ -354,8 +338,8 @@ function OngletGlobal({
                 <p className="text-xs opacity-55">Prévision : {formatFCFA(k.ant)}</p>
               </div>
             ))}
-            {/* Score financier mois */}
-            <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 col-span-2 lg:col-span-1 transition-colors">
+            {/* Score financier */}
+            <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 transition-colors">
               <p className="text-xs font-medium text-purple-500 dark:text-purple-400 mb-1">Score financier</p>
               <p className={clsx('text-2xl font-bold', couleurScore(score))}>
                 {score}<span className="text-sm text-[var(--text-muted)] font-normal">/20</span>
@@ -390,10 +374,8 @@ function OngletGlobal({
             {(fondsRoulement ?? []).map((f: any) => (
               <div key={f.id} className="bg-slate-50 dark:bg-dark-card rounded-xl p-3">
                 <p className="text-xs text-[var(--text-muted)] font-semibold truncate mb-2">{f.nom}</p>
-                {/* Solde actuel = source de vérité */}
                 <p className="text-base font-bold text-primary">{formatFCFA(f.soldeActuel)}</p>
                 <p className="text-xs text-[var(--text-muted)] mb-2">Solde actuel</p>
-                {/* Détail : Épargné / Ajouté / Décaissé */}
                 <div className="space-y-1 pt-2 border-t border-[var(--border)]">
                   {f.totalBudgete > 0 && (
                     <div className="flex justify-between text-xs">
@@ -439,8 +421,7 @@ function OngletGlobal({
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold text-primary">{formatFCFA(totalPrecaution)}</span>
             <button onClick={() => ouvrirModal('banques')}
-              className="p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card transition-colors"
-              title="Modifier les soldes">
+              className="p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card transition-colors" title="Modifier les soldes">
               <Pencil size={13} className="text-[var(--text-muted)]" />
             </button>
           </div>
@@ -474,27 +455,21 @@ function OngletGlobal({
             <h3 className="font-semibold text-[var(--text)]">Fonds d'urgence</h3>
           </div>
           <div className="flex items-center gap-2">
-            {!fondsNonConfig && (
-              <span className={clsx('text-sm font-bold', textColor)}>{pctFonds.toFixed(1)}%</span>
-            )}
+            {!fondsNonConfig && <span className={clsx('text-sm font-bold', textColor)}>{pctFonds.toFixed(1)}%</span>}
             <button onClick={() => ouvrirModal('urgence')}
-              className="p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card transition-colors"
-              title="Modifier l'objectif">
+              className="p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card transition-colors" title="Modifier l'objectif">
               <Pencil size={13} className="text-[var(--text-muted)]" />
             </button>
           </div>
         </div>
-
         {fondsNonConfig ? (
-          /* ── Revenu non configuré ── */
           <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl p-4">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-orange-500">⚠️</span>
               <p className="text-sm font-semibold text-orange-700 dark:text-orange-400">Revenu de référence non configuré</p>
             </div>
             <p className="text-xs text-orange-600 dark:text-orange-400 mb-3">
-              L'objectif du fonds d'urgence est calculé automatiquement : Revenu mensuel × Nombre de mois.
-              Configurez votre revenu pour activer ce suivi.
+              L'objectif est calculé automatiquement : Revenu mensuel × Nombre de mois. Configurez votre revenu pour activer ce suivi.
             </p>
             <div className="flex items-center justify-between">
               <div>
@@ -508,7 +483,6 @@ function OngletGlobal({
             </div>
           </div>
         ) : (
-          /* ── Fonds configuré ── */
           <>
             <div className="flex justify-between text-sm mb-2">
               <span className="font-medium text-[var(--text)]">{formatFCFA(fondsUrgence)}</span>
@@ -518,8 +492,7 @@ function OngletGlobal({
               </span>
             </div>
             <div className="h-3 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
-              <div className={clsx('h-full rounded-full transition-all', barColor)}
-                   style={{ width: `${Math.min(100, pctFonds)}%` }} />
+              <div className={clsx('h-full rounded-full transition-all', barColor)} style={{ width: `${Math.min(100, pctFonds)}%` }} />
             </div>
             <div className="flex justify-between mt-2 text-xs text-[var(--text-muted)]">
               <span className={clsx('font-medium', textColor)}>
@@ -536,11 +509,11 @@ function OngletGlobal({
       {/* ══════════════════════════════════════════════════════════ */}
       <Separateur emoji="📊" label="Statistiques cumulées — toutes années" />
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      {/* KPIs cumulés : Revenus / Dépenses / Solde / Score (sans Épargne) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: 'Revenus cumulés',   val: totalRevenus,  bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',    text: 'text-blue-700 dark:text-blue-400',    icon: TrendingUp },
-          { label: 'Dépenses cumulées', val: totalDepenses, bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',        text: 'text-red-600 dark:text-red-400',      icon: TrendingDown },
-          { label: 'Épargne cumulée',   val: totalEpargne,  bg: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800', text: 'text-green-700 dark:text-green-400',  icon: PiggyBank },
+          { label: 'Revenus cumulés',   val: totalRevenus,  bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',    text: 'text-blue-700 dark:text-blue-400',   icon: TrendingUp },
+          { label: 'Dépenses cumulées', val: totalDepenses, bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',        text: 'text-red-600 dark:text-red-400',     icon: TrendingDown },
           { label: 'Solde net cumulé',  val: soldeGlobal,
             bg: soldeGlobal >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
             text: soldeGlobal >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400',
@@ -586,9 +559,7 @@ function OngletGlobal({
           </div>
         </div>
         <div className={clsx('rounded-2xl border p-4 flex items-center gap-3',
-          soldeNetDecaissements >= 0
-            ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-            : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800')}>
+          soldeNetDecaissements >= 0 ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800')}>
           <Minus size={28} className={clsx('flex-shrink-0', soldeNetDecaissements >= 0 ? 'text-blue-600' : 'text-orange-500')} />
           <div>
             <p className={clsx('text-xs font-medium opacity-70', soldeNetDecaissements >= 0 ? 'text-blue-700 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400')}>Solde net fonds</p>
@@ -646,14 +617,12 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
   const toutPlier    = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = false; }); setGroupsOpen(n); };
 
   useEffect(() => {
-    fetch('/api/annees')
-      .then(r => r.json())
-      .then(d => {
-        if (d.annees?.length) {
-          setAnneesDispos(d.annees);
-          if (!d.annees.includes(anneeActuelle)) setAnneeSelect(d.annees[d.annees.length - 1]);
-        }
-      }).catch(() => {});
+    fetch('/api/annees').then(r => r.json()).then(d => {
+      if (d.annees?.length) {
+        setAnneesDispos(d.annees);
+        if (!d.annees.includes(anneeActuelle)) setAnneeSelect(d.annees[d.annees.length - 1]);
+      }
+    }).catch(() => {});
   }, []);
 
   const charger = useCallback(async () => {
@@ -673,7 +642,6 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
           else budgetCumul.push({ ...b, montantAnticipe: b.montantAnticipe ?? 0, montantReel: b.montantReel ?? 0 });
         });
       });
-
       const histData = [];
       for (let i = 5; i >= 0; i--) {
         let m = moisCourant - i, a = anneeSelect;
@@ -685,8 +653,6 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
           reel: hr?.budget?.filter((b: any) => b.categorie?.type?.startsWith('depense')).reduce((s: number, b: any) => s + b.montantReel, 0) ?? 0,
         });
       }
-
-      // Décaissements de l'année sélectionnée (filtré par dateOperation)
       const resDec = await fetch(`/api/decaissements?annee=${anneeSelect}`);
       if (resDec.ok) {
         const decData = await resDec.json();
@@ -695,18 +661,16 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         const ret = decs.filter((d: any) => d.typeMouvement === 'retrait').reduce((s: number, d: any) => s + (d.montantTotal ?? 0), 0);
         setDecStats({ totalAjouts: aj, totalDecaissements: ret, soldeNet: aj - ret });
       }
-
       setData({ budget: budgetCumul, categories: cats });
       setHist(histData);
-    } catch (e) { console.error('OngletRecap charger error:', e); }
+    } catch (e) { console.error(e); }
     setLoading(false);
   }, [anneeSelect, moisCourant]);
 
   useEffect(() => { charger(); }, [charger]);
 
   const exportExcel = async () => {
-    const ok = window.confirm(`📊 Exporter Excel\n\nFichier : GestBudget-${anneeSelect}.xlsx\n\nConfirmer ?`);
-    if (!ok) return;
+    if (!window.confirm(`📊 Exporter GestBudget-${anneeSelect}.xlsx ?`)) return;
     setExporting('excel');
     const res = await fetch(`/api/export/excel?annee=${anneeSelect}`);
     if (res.ok) { const blob = await res.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `GestBudget-${anneeSelect}.xlsx`; a.click(); }
@@ -714,9 +678,7 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
   };
 
   const exportPDF = async () => {
-    const MOIS_N = ['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
-    const ok = window.confirm(`📄 Exporter PDF\n\nAnnée ${anneeSelect} — ${MOIS_N[moisCourant]}\n\nConfirmer ?`);
-    if (!ok) return;
+    if (!window.confirm(`📄 Exporter PDF ${anneeSelect} ?`)) return;
     setExporting('pdf');
     const res = await fetch(`/api/export/pdf?annee=${anneeSelect}&mois=${moisCourant}`);
     if (res.ok) { const blob = await res.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `GestBudget-${anneeSelect}-${String(moisCourant).padStart(2,'0')}.pdf`; a.click(); }
@@ -730,17 +692,15 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
 
   const totType = (type: string, field: 'montantAnticipe'|'montantReel') =>
     budget.filter((b: any) =>
-      type==='epargne' ? b.categorie?.type?.startsWith('epargne') :
       type==='depense' ? (b.categorie?.type?.startsWith('depense') || b.categorie?.type==='remboursement_dette') :
       b.categorie?.type === type
     ).reduce((s: number, b: any) => s + b[field], 0);
 
   const revReel = totType('revenu','montantReel');
   const depReel = totType('depense','montantReel');
-  const epReel  = totType('epargne','montantReel');
+  const epReel  = budget.filter((b: any) => b.categorie?.type?.startsWith('epargne')).reduce((s: number, b: any) => s + b.montantReel, 0);
   const solde   = revReel - depReel - epReel;
 
-  // Épargne de fonctionnement — source unifiée : budget_mensuel epargne_autre
   const fondsCategories = cats.filter((c: any) => c.type === 'epargne_autre');
   const totalFondsRecap = fondsCategories.reduce((s: number, cat: any) => {
     const b = budget.find((b: any) => b.categorieId === cat.id);
@@ -780,12 +740,11 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         </div>
       </div>
 
-      {/* KPIs annuels */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* KPIs annuels — sans Épargne */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {[
           { label: `Revenus ${anneeSelect}`,  val: revReel, cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
           { label: `Dépenses ${anneeSelect}`, val: depReel, cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
-          { label: `Épargne ${anneeSelect}`,  val: epReel,  cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
           { label: 'Solde annuel', val: solde,
             cls: solde >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
         ].map(k => (
@@ -890,9 +849,7 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[540px]" style={{ tableLayout: 'fixed' }}>
-            <colgroup>
-              <col /><col style={{ width: '150px' }} /><col style={{ width: '150px' }} /><col style={{ width: '150px' }} />
-            </colgroup>
+            <colgroup><col /><col style={{ width: '150px' }} /><col style={{ width: '150px' }} /><col style={{ width: '150px' }} /></colgroup>
             <thead>
               <tr className="border-b border-[var(--border)] bg-slate-50 dark:bg-dark-card">
                 <th className="text-left px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Catégorie</th>

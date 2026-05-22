@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const comptes = await prisma.compteFonds.findMany({
-      where: { userId: session.user.id },
+      where:   { userId: session.user.id },
       orderBy: { ordre: 'asc' },
     });
 
@@ -53,11 +53,51 @@ export async function PUT(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
-    const { id, nom, ordre, isActive } = await req.json();
+    // Lire l'id depuis le body OU depuis les query params
+    const url = new URL(req.url);
+    const idParam = url.searchParams.get('id');
 
+    const body = await req.json();
+    const { id: idBody, nom, ordre, isActive, action, montant } = body;
+    const id = idParam ?? idBody;
+
+    if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
+
+    // ── Mode action : increment / decrement / set sur soldeActuel ──────────
+    if (action === 'increment' || action === 'decrement' || action === 'set') {
+      // Vérifier que le compte appartient à l'utilisateur
+      const existing = await prisma.compteFonds.findFirst({
+        where: { id, userId: session.user.id },
+        select: { soldeActuel: true },
+      });
+      if (!existing) return NextResponse.json({ error: 'Compte introuvable' }, { status: 404 });
+
+      let newSolde: bigint;
+      const montantVal = BigInt(Math.round(Number(montant) || 0));
+      const soldeActuel = BigInt(existing.soldeActuel ?? 0);
+
+      if (action === 'set') {
+        newSolde = montantVal;
+      } else if (action === 'increment') {
+        newSolde = soldeActuel + montantVal;
+      } else {
+        // decrement — ne pas descendre en dessous de 0
+        newSolde = soldeActuel - montantVal;
+        if (newSolde < 0n) newSolde = 0n;
+      }
+
+      const compte = await prisma.compteFonds.update({
+        where: { id },
+        data:  { soldeActuel: newSolde, updatedAt: new Date() },
+      });
+
+      return NextResponse.json(serial({ success: true, compte }));
+    }
+
+    // ── Mode normal : mise à jour nom / ordre / isActive ───────────────────
     const compte = await prisma.compteFonds.update({
       where: { id, userId: session.user.id },
-      data: { nom, ordre, isActive },
+      data:  { nom, ordre, isActive },
     });
 
     return NextResponse.json(serial({ success: true, compte }));
@@ -76,7 +116,7 @@ export async function DELETE(req: NextRequest) {
 
     await prisma.compteFonds.update({
       where: { id, userId: session.user.id },
-      data: { isActive: false },
+      data:  { isActive: false },
     });
 
     return NextResponse.json({ success: true });
