@@ -42,12 +42,20 @@ export async function PUT(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
-    const { revenuMensuelReference, tauxReference } = await req.json();
+    const { revenuMensuelReference, tauxReference, nMoisUrgence } = await req.json();
 
     await prisma.parametres.upsert({
       where:  { userId: session.user.id },
-      create: { userId: session.user.id, revenuMensuelReference: BigInt(revenuMensuelReference ?? 0) },
-      update: { revenuMensuelReference: BigInt(revenuMensuelReference ?? 0), updatedAt: new Date() },
+      create: {
+        userId: session.user.id,
+        revenuMensuelReference: BigInt(revenuMensuelReference ?? 0),
+        nMoisUrgence: nMoisUrgence ?? 6,
+      },
+      update: {
+        revenuMensuelReference: BigInt(revenuMensuelReference ?? 0),
+        nMoisUrgence: nMoisUrgence ?? 6,
+        updatedAt: new Date(),
+      },
     });
 
     if (tauxReference) {

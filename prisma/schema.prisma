@@ -194,6 +194,7 @@ model Parametres {
   objectifEpargneAnnuel       BigInt @default(0)
   objectifRevenusAnnuel       BigInt @default(0)
   objectifRemboursementAnnuel BigInt @default(0)
+  nMoisUrgence  Int @default(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

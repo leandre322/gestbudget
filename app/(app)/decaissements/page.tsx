@@ -326,45 +326,6 @@ export default function DecaissementsPage() {
         </div>
       </div>
 
-      {/* Solde par fond */}
-      {totauxComptes.length > 0 && (
-        <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-4 transition-colors">
-          <h3 className="font-semibold text-[var(--text)] mb-3 text-sm">💼 Solde par fond de fonctionnement</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {totauxComptes.map((c: any) => {
-              const solde = c.totalAjout - c.totalRetrait;
-              return (
-                <div key={c.id} className="bg-slate-50 dark:bg-dark-card rounded-xl p-3 text-center">
-                  <p className="text-xs text-[var(--text-muted)] font-medium truncate">{c.nom}</p>
-                  <p className={clsx('text-sm font-bold mt-1', solde >= 0 ? 'text-primary' : 'text-red-500')}>
-                    {formatFCFA(solde)}
-                  </p>
-                  <p className="text-xs text-green-500">+{formatFCFA(c.totalAjout)}</p>
-                  <p className="text-xs text-red-400">-{formatFCFA(c.totalRetrait)}</p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Solde par banque */}
-      {banques.length > 0 && (
-        <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-4 transition-colors">
-          <h3 className="font-semibold text-[var(--text)] mb-3 text-sm">🏦 Solde par compte bancaire</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            {banques.map((b: any) => (
-              <div key={b.id} className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3 text-center">
-                <p className="text-xs text-[var(--text-muted)] font-medium truncate">{b.nomBanque}</p>
-                <p className={clsx('text-sm font-bold mt-1', b.solde >= 0 ? 'text-primary' : 'text-red-500')}>
-                  {formatFCFA(b.solde)}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Onglets */}
       <div className="flex gap-1 bg-slate-100 dark:bg-dark-card rounded-xl p-1 w-fit border border-[var(--border)]">
         {([

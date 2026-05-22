@@ -92,9 +92,11 @@ function OngletGlobal({
   const epargne  = { reel: tot('epargne','montantReel'), ant: tot('epargne','montantAnticipe') };
   const depenses = { reel: tot('depense','montantReel'), ant: tot('depense','montantAnticipe') };
   const solde    = revenus.reel - epargne.reel - depenses.reel;
-  const fondsUrgence    = budgetMois.filter((b: any) => b.categorie?.type === 'epargne_precaution').reduce((s: number, b: any) => s + b.montantReel, 0);
+  // Fonds urgence = somme des soldes bancaires (BOA Yvan, Naëlle, NSIA, Atlantique, BGFI)
+  const fondsUrgence = banques.reduce((s: number, b: any) => s + (b.solde ?? 0), 0);
   const revenuReference = data?.revenuReference ?? 0;
-  const fondsObjectif   = revenuReference > 0 ? revenuReference * 6 : 3720000;
+  const nMoisUrgence  = data?.nMoisUrgence ?? 6;
+  const fondsObjectif = revenuReference > 0 ? revenuReference * nMoisUrgence : 3720000;
   const { score, details } = calculerScore({
     totalDepenses: depenses.reel, totalDepAnt: depenses.ant,
     totalEpargne: epargne.reel,   totalRevenus: revenus.reel,
@@ -132,9 +134,12 @@ function OngletGlobal({
         await fetch('/api/parametres', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ revenuMensuelReference: Math.round(parseInt(modalVals['objectif'] || '0') / 6) }),
+          body: JSON.stringify({
+            revenuMensuelReference: parseInt(modalVals['revenu'] || '0') || 0,
+            nMoisUrgence:           parseInt(modalVals['nMois']  || '6') || 6,
+          }),
         });
-        toast.success('Objectif fonds d\'urgence mis à jour ✓');
+        toast.success('Fonds d\'urgence mis à jour ✓');
       } else if (modalType === 'banques') {
         for (const [banqueId, solde] of Object.entries(modalVals)) {
           await fetch(`/api/banques?id=${banqueId}`, {
@@ -209,16 +214,31 @@ function OngletGlobal({
         }>
         <div className="space-y-3">
           {modalType === 'urgence' && (
-            <div>
-              <label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Objectif fonds d'urgence (FCFA)</label>
-              <input type="number" value={modalVals['objectif'] ?? ''}
-                className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
-                onChange={e => setModalVals({ objectif: e.target.value })} placeholder="3 720 000" />
-              <p className="text-xs text-[var(--text-muted)] mt-1.5">
-                = {parseInt(modalVals['objectif'] || '0') > 0
-                  ? `${formatFCFA(Math.round(parseInt(modalVals['objectif']) / 6))} × 6 mois`
-                  : '6 × revenu mensuel de référence'}
-              </p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Revenu mensuel de référence (FCFA)</label>
+                <input type="number" value={modalVals['revenu'] ?? ''}
+                  className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
+                  onChange={e => setModalVals(p => ({ ...p, revenu: e.target.value }))}
+                  placeholder="Ex: 690 000" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Nombre de mois de précaution</label>
+                <input type="number" value={modalVals['nMois'] ?? '6'}
+                  min="1" max="24"
+                  className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
+                  onChange={e => setModalVals(p => ({ ...p, nMois: e.target.value }))}
+                  placeholder="6" />
+              </div>
+              <div className="bg-primary/5 rounded-xl p-3">
+                <p className="text-xs text-[var(--text-muted)]">Objectif calculé :</p>
+                <p className="text-lg font-bold text-primary mt-1">
+                  {formatFCFA((parseInt(modalVals['revenu'] || '0') || 0) * (parseInt(modalVals['nMois'] || '6') || 6))}
+                </p>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                  = {formatFCFA(parseInt(modalVals['revenu'] || '0') || 0)} × {modalVals['nMois'] || 6} mois
+                </p>
+              </div>
             </div>
           )}
           {modalType === 'banques' && (
@@ -551,6 +571,10 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
   useEffect(() => { charger(); }, [charger]);
 
   const exportExcel = async () => {
+    const ok = window.confirm(
+      `📊 Exporter Excel\n\nFichier : GestBudget-${anneeSelect}.xlsx\nAnnée   : ${anneeSelect}\n\nConfirmer l'export ?`
+    );
+    if (!ok) return;
     setExporting('excel');
     const res = await fetch(`/api/export/excel?annee=${anneeSelect}`);
     if (res.ok) { const blob = await res.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `GestBudget-${anneeSelect}.xlsx`; a.click(); }
@@ -558,6 +582,11 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
   };
 
   const exportPDF = async () => {
+    const MOIS_N = ['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    const ok = window.confirm(
+      `📄 Exporter PDF\n\nFichier : GestBudget-${anneeSelect}-${String(moisCourant).padStart(2,'0')}.pdf\nAnnée   : ${anneeSelect}\nMois    : ${MOIS_N[moisCourant]}\n\nConfirmer l'export ?`
+    );
+    if (!ok) return;
     setExporting('pdf');
     const res = await fetch(`/api/export/pdf?annee=${anneeSelect}&mois=${moisCourant}`);
     if (res.ok) { const blob = await res.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `GestBudget-${anneeSelect}-${String(moisCourant).padStart(2,'0')}.pdf`; a.click(); }

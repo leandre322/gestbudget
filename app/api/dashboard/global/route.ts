@@ -23,6 +23,7 @@ export async function GET(req: NextRequest) {
 
     const anneeIds = annees.map(a => a.id);
 
+    // ── Fix 1 : suppression catsFonds, fix prisma.parametres ──
     const [budgets, comptes, banques, parametres] = await Promise.all([
       prisma.budgetMensuel.findMany({
         where:   { userId: session.user.id, anneeId: { in: anneeIds } },
@@ -61,7 +62,7 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // ── Fonds de roulement — depuis soldeActuel des compteFonds ──
+    // ── Fix 2 : Fonds de roulement depuis soldeActuel des compteFonds ──
     const fondsRoulement = comptes.map(c => ({
       id:        c.id,
       nom:       c.nom,
@@ -69,7 +70,7 @@ export async function GET(req: NextRequest) {
     }));
     const totalFonds = fondsRoulement.reduce((s, f) => s + f.totalAuto, 0);
 
-    // ── Banques — déduplication par nom ──
+    // ── Fix 3 : Banques déduplication propre ──
     const vus = new Set<string>();
     const banquesUniques = banques.reduce((acc: any[], b) => {
       if (!vus.has(b.nomBanque)) {
@@ -88,11 +89,11 @@ export async function GET(req: NextRequest) {
     const revenuReference = n(parametres?.revenuMensuelReference ?? 0);
     const nMoisUrgence    = (parametres as any)?.nMoisUrgence ?? 6;
 
-    // ── Score global — moyenne pondérée ──
-    let totalScore = 0;
+    // ── Fix 4 : Score global dans try/catch avec totalBanques ──
+    let totalScore  = 0;
     let nbMoisScore = 0;
     try {
-      const totalBanques = banquesUniques.reduce((s, b) => s + b.solde, 0);
+      const totalBanques        = banquesUniques.reduce((s, b) => s + b.solde, 0);
       const fondsUrgenceObjectif = revenuReference > 0 ? revenuReference * nMoisUrgence : 3720000;
       for (const anneeRec of annees) {
         for (let m = 1; m <= 12; m++) {
