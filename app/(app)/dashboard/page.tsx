@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
          CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import { TrendingUp, TrendingDown, PiggyBank, Wallet, AlertTriangle,
-         Shield, ChevronDown, ChevronRight, Building2, Pencil, X, Save, Target } from 'lucide-react';
+         Shield, ChevronDown, ChevronRight, Building2, Pencil, X, Save } from 'lucide-react';
 import { useMois } from '../layout';
 import { formatFCFA, MOIS_COURTS, TYPE_LABELS, calculerScore, couleurScore, ORDRE_TYPES, LABEL_PREVISION } from '@/types';
 import { useToast } from '@/components/Toast';
@@ -12,7 +12,6 @@ import { clsx } from 'clsx';
 
 const COLORS = ['#1E40AF','#10B981','#F59E0B','#EF4444','#8B5CF6','#06B6D4','#F97316','#84CC16'];
 
-// ── Modal Dashboard générique ────────────────
 function DashboardModal({ isOpen, onClose, titre, children }: {
   isOpen: boolean; onClose: () => void; titre: string; children: React.ReactNode;
 }) {
@@ -27,27 +26,24 @@ function DashboardModal({ isOpen, onClose, titre, children }: {
             <X size={18} />
           </button>
         </div>
-        <div className="p-5 max-h-[65vh] overflow-y-auto">
-          {children}
-        </div>
+        <div className="p-5 max-h-[65vh] overflow-y-auto">{children}</div>
       </div>
     </div>
   );
 }
 
-// ── Onglet Global ────────────────────────────
 function OngletGlobal({
   moisCourant, anneeCourante, budgetMois, loadingMois,
 }: {
   moisCourant: number; anneeCourante: number; budgetMois: any[]; loadingMois: boolean;
 }) {
   const toast = useToast();
-  const [data,         setData]         = useState<any>(null);
-  const [banques,      setBanques]      = useState<any[]>([]);
-  const [loading,      setLoading]      = useState(true);
-  const [modalType,    setModalType]    = useState<string|null>(null);
-  const [modalVals,    setModalVals]    = useState<Record<string, string>>({});
-  const [savingModal,  setSavingModal]  = useState(false);
+  const [data,        setData]        = useState<any>(null);
+  const [banques,     setBanques]     = useState<any[]>([]);
+  const [loading,     setLoading]     = useState(true);
+  const [modalType,   setModalType]   = useState<string|null>(null);
+  const [modalVals,   setModalVals]   = useState<Record<string, string>>({});
+  const [savingModal, setSavingModal] = useState(false);
 
   const MOIS_NOMS: Record<number, string> = {
     1:'Janvier',2:'Février',3:'Mars',4:'Avril',5:'Mai',6:'Juin',
@@ -59,15 +55,32 @@ function OngletGlobal({
       fetch('/api/dashboard/global').then(r => r.json()),
       fetch('/api/banques').then(r => r.json()),
     ]).then(([global, bqs]) => {
-      setData(global);
+      // ── Fix : sécuriser tous les tableaux pour éviter .map() sur undefined ──
+      setData({
+        ...global,
+        evolutionAnnuelle: global.evolutionAnnuelle ?? [],
+        fondsRoulement:    global.fondsRoulement    ?? [],
+        comptes:           global.comptes           ?? [],
+        annees:            global.annees            ?? [],
+        totalFonds:        global.totalFonds        ?? 0,
+        totalRevenus:      global.totalRevenus      ?? 0,
+        totalDepenses:     global.totalDepenses     ?? 0,
+        totalEpargne:      global.totalEpargne      ?? 0,
+        solde:             global.solde             ?? 0,
+        scoreGlobal:       global.scoreGlobal       ?? 0,
+        nbMoisScore:       global.nbMoisScore       ?? 0,
+        revenuReference:   global.revenuReference   ?? 0,
+      });
       setBanques(bqs.banques ?? []);
+      setLoading(false);
+    }).catch(err => {
+      console.error('Dashboard load error:', err);
       setLoading(false);
     });
   }, [moisCourant, anneeCourante]);
 
   useEffect(() => { chargerData(); }, [chargerData]);
 
-  // ── Calculs mois courant ──
   const tot = (type: string, f: 'montantAnticipe'|'montantReel') =>
     budgetMois.filter((b: any) =>
       type==='epargne' ? b.categorie?.type?.startsWith('epargne') :
@@ -91,21 +104,17 @@ function OngletGlobal({
     .filter((b: any) => b.categorie?.type?.startsWith('depense') && b.montantAnticipe > 0 && b.montantReel > b.montantAnticipe)
     .map((b: any) => b.categorie?.nom);
 
-  // ── Ouvrir modal ──
   const ouvrirModal = (type: string) => {
     const init: Record<string, string> = {};
     if (type === 'urgence') {
       init['objectif'] = String(fondsObjectif);
     } else if (type === 'banques') {
       banques.forEach(b => { init[b.id] = String(b.solde ?? 0); });
-    } else if (type === 'fonds') {
-      (data?.fondsRoulement ?? []).forEach((f: any) => { init[f.id] = String(f.totalAuto ?? 0); });
     } else {
-      // KPI mois courant — catégories du type
       budgetMois
         .filter((b: any) => {
-          if (type === 'revenus') return b.categorie?.type === 'revenu';
-          if (type === 'epargne') return b.categorie?.type?.startsWith('epargne');
+          if (type === 'revenus')  return b.categorie?.type === 'revenu';
+          if (type === 'epargne')  return b.categorie?.type?.startsWith('epargne');
           if (type === 'depenses') return b.categorie?.type?.startsWith('depense') || b.categorie?.type === 'remboursement_dette';
           return false;
         })
@@ -115,14 +124,11 @@ function OngletGlobal({
     setModalType(type);
   };
 
-  // ── Sauvegarder modal ──
   const sauvegarderModal = async () => {
     if (!modalType) return;
     setSavingModal(true);
     try {
       if (modalType === 'urgence') {
-        // Mettre à jour l'objectif fonds urgence dans parametres
-        const params = await fetch('/api/parametres').then(r => r.json());
         await fetch('/api/parametres', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -130,7 +136,6 @@ function OngletGlobal({
         });
         toast.success('Objectif fonds d\'urgence mis à jour ✓');
       } else if (modalType === 'banques') {
-        // Mettre à jour soldes banques
         for (const [banqueId, solde] of Object.entries(modalVals)) {
           await fetch(`/api/banques?id=${banqueId}`, {
             method: 'PUT',
@@ -140,7 +145,6 @@ function OngletGlobal({
         }
         toast.success('Soldes banques mis à jour ✓');
       } else {
-        // KPI mois courant — mettre à jour budget
         const anneeRes = await fetch(`/api/budget?annee=${anneeCourante}&mois=${moisCourant}`);
         if (anneeRes.ok) {
           const d = await anneeRes.json();
@@ -177,12 +181,11 @@ function OngletGlobal({
   const { totalRevenus, totalDepenses, totalEpargne, solde: soldeGlobal,
           evolutionAnnuelle, fondsRoulement, totalFonds } = data;
 
-  const pctFonds  = fondsObjectif > 0 ? (fondsUrgence / fondsObjectif) * 100 : 0;
-  const barColor  = pctFonds < 50 ? 'bg-red-500' : pctFonds < 80 ? 'bg-orange-400' : 'bg-green-500';
-  const textColor = pctFonds < 50 ? 'text-red-500' : pctFonds < 80 ? 'text-orange-500' : 'text-green-600';
+  const pctFonds    = fondsObjectif > 0 ? (fondsUrgence / fondsObjectif) * 100 : 0;
+  const barColor    = pctFonds < 50 ? 'bg-red-500' : pctFonds < 80 ? 'bg-orange-400' : 'bg-green-500';
+  const textColor   = pctFonds < 50 ? 'text-red-500' : pctFonds < 80 ? 'text-orange-500' : 'text-green-600';
   const totalPrecaution = banques.reduce((s: number, b: any) => s + (b.solde ?? 0), 0);
 
-  // Catégories pour les modals KPI
   const catsByModalType = (type: string) => budgetMois.filter((b: any) => {
     if (type === 'revenus')  return b.categorie?.type === 'revenu';
     if (type === 'epargne')  return b.categorie?.type?.startsWith('epargne');
@@ -190,19 +193,16 @@ function OngletGlobal({
     return false;
   });
 
-  const inputCls = "w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none";
-
   return (
     <div className="space-y-5">
 
-      {/* ── Modal Dashboard ── */}
+      {/* ── Modal ── */}
       <DashboardModal
         isOpen={modalType !== null}
         onClose={() => setModalType(null)}
         titre={
           modalType === 'urgence'  ? 'Fonds d\'urgence — Objectif' :
           modalType === 'banques'  ? 'Épargne Précaution — Soldes banques' :
-          modalType === 'fonds'    ? 'Épargne de Fonctionnement' :
           modalType === 'revenus'  ? `Revenus — ${MOIS_NOMS[moisCourant]} ${anneeCourante}` :
           modalType === 'epargne'  ? `Épargne — ${MOIS_NOMS[moisCourant]} ${anneeCourante}` :
           modalType === 'depenses' ? `Dépenses — ${MOIS_NOMS[moisCourant]} ${anneeCourante}` : ''
@@ -210,10 +210,9 @@ function OngletGlobal({
         <div className="space-y-3">
           {modalType === 'urgence' && (
             <div>
-              <label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">
-                Objectif fonds d'urgence (FCFA)
-              </label>
-              <input type="number" value={modalVals['objectif'] ?? ''} className={inputCls}
+              <label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Objectif fonds d'urgence (FCFA)</label>
+              <input type="number" value={modalVals['objectif'] ?? ''}
+                className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
                 onChange={e => setModalVals({ objectif: e.target.value })} placeholder="3 720 000" />
               <p className="text-xs text-[var(--text-muted)] mt-1.5">
                 = {parseInt(modalVals['objectif'] || '0') > 0
@@ -222,20 +221,19 @@ function OngletGlobal({
               </p>
             </div>
           )}
-
           {modalType === 'banques' && (
             <div className="space-y-2">
-              <p className="text-xs text-[var(--text-muted)] mb-2">Modifier les soldes actuels des comptes bancaires :</p>
+              <p className="text-xs text-[var(--text-muted)] mb-2">Modifier les soldes actuels :</p>
               {banques.map(b => (
                 <div key={b.id} className="flex items-center gap-3">
                   <span className="flex-1 text-sm text-[var(--text)] font-medium">🏦 {b.nomBanque}</span>
-                  <input type="number" value={modalVals[b.id] ?? ''} className="w-36 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
+                  <input type="number" value={modalVals[b.id] ?? ''}
+                    className="w-36 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
                     onChange={e => setModalVals(p => ({ ...p, [b.id]: e.target.value }))} placeholder="0" />
                 </div>
               ))}
             </div>
           )}
-
           {(modalType === 'revenus' || modalType === 'epargne' || modalType === 'depenses') && (
             <div className="space-y-2">
               <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-[var(--text-muted)] uppercase pb-2 border-b border-[var(--border)]">
@@ -251,15 +249,12 @@ function OngletGlobal({
                     </span>
                     <input type="number" value={modalVals[b.categorieId] ?? ''}
                       className="w-32 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
-                      onChange={e => setModalVals(p => ({ ...p, [b.categorieId]: e.target.value }))}
-                      placeholder="0" />
+                      onChange={e => setModalVals(p => ({ ...p, [b.categorieId]: e.target.value }))} placeholder="0" />
                   </div>
                 </div>
               ))}
             </div>
           )}
-
-          {/* Footer modal */}
           <div className="flex justify-end gap-2 pt-3 border-t border-[var(--border)] mt-4">
             <button onClick={() => setModalType(null)}
               className="px-4 py-2 rounded-xl text-sm border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-50 dark:hover:bg-dark-card transition-all">
@@ -289,7 +284,6 @@ function OngletGlobal({
             <p className={clsx('text-xl font-bold', k.text)}>{formatFCFA(k.val)}</p>
           </div>
         ))}
-        {/* Score global */}
         <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 transition-colors">
           <p className="text-xs font-medium text-purple-500 dark:text-purple-400 mb-1">Score global</p>
           <p className={clsx('text-2xl font-bold', couleurScore(data?.scoreGlobal ?? score))}>
@@ -301,7 +295,7 @@ function OngletGlobal({
         </div>
       </div>
 
-      {/* ── Séparateur Mois courant (texte à gauche) ── */}
+      {/* ── Séparateur Mois courant — texte à gauche ── */}
       <div className="flex items-center gap-3">
         <span className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">
           📅 {MOIS_NOMS[moisCourant]} {anneeCourante} — Mois courant
@@ -351,7 +345,6 @@ function OngletGlobal({
                 <p className="text-xs opacity-60">Prévision : {formatFCFA(k.ant)}</p>
               </div>
             ))}
-            {/* Score mois */}
             <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 col-span-2 lg:col-span-1 transition-colors">
               <p className="text-xs font-medium text-purple-500 dark:text-purple-400 mb-1">Score financier</p>
               <p className={clsx('text-2xl font-bold', couleurScore(score))}>
@@ -371,7 +364,7 @@ function OngletGlobal({
         </div>
       )}
 
-      {/* ── Séparateur Épargnes & Fonds (texte à gauche) ── */}
+      {/* ── Séparateur Épargnes & Fonds — texte à gauche ── */}
       <div className="flex items-center gap-3">
         <span className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">
           💰 Épargnes & Fonds
@@ -383,12 +376,10 @@ function OngletGlobal({
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-[var(--text)]">Épargne de Fonctionnement (cumul)</h3>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-bold text-primary">{formatFCFA(totalFonds)}</span>
-          </div>
+          <span className="text-sm font-bold text-primary">{formatFCFA(totalFonds)}</span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {fondsRoulement.map((f: any) => (
+          {(fondsRoulement ?? []).map((f: any) => (
             <div key={f.id} className="bg-slate-50 dark:bg-dark-card rounded-xl p-3 text-center">
               <p className="text-xs text-[var(--text-muted)] font-medium truncate">{f.nom}</p>
               <p className="text-base font-bold text-primary mt-1">{formatFCFA(f.totalAuto)}</p>
@@ -475,7 +466,7 @@ function OngletGlobal({
       </div>
 
       {/* ── Évolution annuelle ── */}
-      {evolutionAnnuelle?.length > 0 && (
+      {(evolutionAnnuelle ?? []).length > 0 && (
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
           <h3 className="font-semibold text-[var(--text)] mb-4">Évolution annuelle</h3>
           <ResponsiveContainer width="100%" height={260}>
@@ -496,7 +487,7 @@ function OngletGlobal({
   );
 }
 
-// ── Onglet Récap année ───────────────────────
+// ── Onglet Récap ─────────────────────────────
 function OngletRecap({ moisCourant }: { moisCourant: number }) {
   const anneeActuelle = new Date().getFullYear();
   const [anneeSelect,  setAnneeSelect]  = useState(anneeActuelle);
@@ -515,10 +506,8 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
     } catch { const def: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { def[t] = true; }); setGroupsOpen(def); }
   }, []);
 
-  const toggleGroup = (type: string) => {
-    setGroupsOpen(prev => { const next = { ...prev, [type]: !prev[type] }; try { localStorage.setItem('recap-groups', JSON.stringify(next)); } catch {} return next; });
-  };
-  const toutDeployer = () => { const next: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { next[t] = true; }); setGroupsOpen(next); try { localStorage.setItem('recap-groups', JSON.stringify(next)); } catch {} };
+  const toggleGroup  = (type: string) => { setGroupsOpen(prev => { const next = { ...prev, [type]: !prev[type] }; try { localStorage.setItem('recap-groups', JSON.stringify(next)); } catch {} return next; }); };
+  const toutDeployer = () => { const next: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { next[t] = true;  }); setGroupsOpen(next); try { localStorage.setItem('recap-groups', JSON.stringify(next)); } catch {} };
   const toutPlier    = () => { const next: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { next[t] = false; }); setGroupsOpen(next); try { localStorage.setItem('recap-groups', JSON.stringify(next)); } catch {} };
 
   useEffect(() => {
@@ -602,7 +591,6 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
 
   return (
     <div className="space-y-5">
-      {/* Sélecteur + exports */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-[var(--text-muted)]">Année :</span>
@@ -628,7 +616,6 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         </div>
       </div>
 
-      {/* KPIs annuels */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: `Revenus ${anneeSelect}`,  val: revReel, cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
@@ -643,7 +630,6 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         ))}
       </div>
 
-      {/* Épargne Fonctionnement */}
       {fondsCategories.length > 0 && (
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
           <div className="flex items-center justify-between mb-3">
@@ -664,7 +650,6 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         </div>
       )}
 
-      {/* Graphiques */}
       <div className="grid lg:grid-cols-2 gap-5">
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
           <h3 className="font-semibold text-[var(--text)] mb-3">Répartition dépenses</h3>
@@ -697,7 +682,6 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
         </div>
       </div>
 
-      {/* Tableau détail */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
         <div className="px-5 py-3 border-b border-[var(--border)] bg-slate-50 dark:bg-dark-card flex items-center justify-between">
           <h3 className="font-semibold text-[var(--text)]">Détail — {anneeSelect} (cumul annuel)</h3>
@@ -766,7 +750,7 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
   );
 }
 
-// ── Page principale Dashboard ────────────────
+// ── Page principale ───────────────────────────
 export default function DashboardPage() {
   const { mois, annee, setMois, setAnnee } = useMois();
   const [onglet,  setOnglet]  = useState<'global'|'recap'>('global');
@@ -787,8 +771,6 @@ export default function DashboardPage() {
 
   useEffect(() => { charger(); }, [charger]);
 
-  const budgetMois = data?.budget ?? [];
-
   return (
     <div className="space-y-5 animate-fadeIn">
       <div className="flex items-center justify-between">
@@ -805,7 +787,6 @@ export default function DashboardPage() {
           </button>
         )}
       </div>
-
       <div className="flex gap-1 bg-slate-100 dark:bg-dark-card rounded-xl p-1 w-fit">
         {([['global','🌍 Global'],['recap','📋 Récapitulatif']] as const).map(([key, label]) => (
           <button key={key} onClick={() => setOnglet(key)}
@@ -815,9 +796,8 @@ export default function DashboardPage() {
           </button>
         ))}
       </div>
-
       {onglet === 'global' ? (
-        <OngletGlobal moisCourant={mois} anneeCourante={annee} budgetMois={budgetMois} loadingMois={loading} />
+        <OngletGlobal moisCourant={mois} anneeCourante={annee} budgetMois={data?.budget ?? []} loadingMois={loading} />
       ) : (
         <OngletRecap moisCourant={mois} />
       )}
