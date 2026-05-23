@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Pencil, Trash2, Check, X, Upload, Save } from 'lucide-react';
+import { Plus, Pencil, Trash2, Check, X, Upload, Save, Link, LinkOff } from 'lucide-react';
 import { TYPE_LABELS, ORDRE_TYPES, formatFCFA } from '@/types';
 import { clsx } from 'clsx';
 
@@ -44,10 +44,10 @@ export default function ParametresPage() {
   const [revenuRef,     setRevenuRef]     = useState<number>(0);
   const [savingTaux,    setSavingTaux]    = useState(false);
   const [savedTaux,     setSavedTaux]     = useState(false);
-  // Flag : indique si les taux ont déjà été chargés une fois (évite l'écrasement)
   const [tauxCharge,    setTauxCharge]    = useState(false);
+  // Liaison catégorie → fond en cours de sauvegarde
+  const [savingLien,    setSavingLien]    = useState<string|null>(null);
 
-  // ── Chargement initial complet ────────────────────────────────────────────
   const charger = useCallback(async () => {
     setLoading(true);
     try {
@@ -64,8 +64,6 @@ export default function ParametresPage() {
       if (rComptes.ok) { const d = await rComptes.json(); setComptes(d.comptes ?? []); }
       if (rParams.ok) {
         const d = await rParams.json();
-        // Ne pas écraser les taux si l'utilisateur les a déjà modifiés (isDirty)
-        // → on n'écrase que si c'est le premier chargement
         if (!tauxCharge) {
           setRevenuRef(d.revenuMensuelReference ?? 0);
           const taux = {} as Record<GrandeCategorie, number>;
@@ -83,17 +81,17 @@ export default function ParametresPage() {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // ← PAS de activeTab ici : évite l'écrasement à chaque changement d'onglet
+  }, []);
 
-  // ── Chargement unique au montage ─────────────────────────────────────────
   useEffect(() => { charger(); }, [charger]);
 
-  // ── Rechargement léger des listes selon l'onglet (sans toucher aux taux) ──
   const chargerOnglet = useCallback(async (tab: string) => {
     try {
       if (tab === 'categories') {
         const r = await fetch('/api/categories');
         if (r.ok) { const d = await r.json(); setCategories(d.categories ?? []); }
+        const rc = await fetch('/api/comptes');
+        if (rc.ok) { const d = await rc.json(); setComptes(d.comptes ?? []); }
       } else if (tab === 'comptes') {
         const r = await fetch('/api/comptes');
         if (r.ok) { const d = await r.json(); setComptes(d.comptes ?? []); }
@@ -104,12 +102,9 @@ export default function ParametresPage() {
         const r = await fetch('/api/donnees');
         if (r.ok) { const d = await r.json(); setAnneesData(d.annees ?? []); }
       }
-    } catch (e) {
-      console.error('chargerOnglet error:', e);
-    }
+    } catch (e) { console.error('chargerOnglet error:', e); }
   }, []);
 
-  // Rechargement léger à chaque changement d'onglet (sans écraser les taux)
   useEffect(() => { chargerOnglet(activeTab); }, [activeTab, chargerOnglet]);
 
   const montantPourTaux = (taux: number) =>
@@ -125,15 +120,28 @@ export default function ParametresPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ revenuMensuelReference: revenuRef, tauxReference: tauxRef }),
       });
-      if (res.ok) {
-        setSavedTaux(true);
-        setTimeout(() => setSavedTaux(false), 3000);
-      }
-    } catch (e) {
-      console.error('sauvegarderTaux error:', e);
-    } finally {
-      setSavingTaux(false);
-    }
+      if (res.ok) { setSavedTaux(true); setTimeout(() => setSavedTaux(false), 3000); }
+    } catch (e) { console.error('sauvegarderTaux error:', e); }
+    finally { setSavingTaux(false); }
+  };
+
+  // ── Liaison catégorie → CompteFonds ─────────────────────────────────────
+  const sauvegarderLien = async (catId: string, compteFondsId: string | null) => {
+    setSavingLien(catId);
+    try {
+      await fetch('/api/categories', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: catId, compteFondsId }),
+      });
+      // Mettre à jour localement sans re-fetch complet
+      setCategories(prev => prev.map(c =>
+        c.id === catId
+          ? { ...c, compteFondsId, compteFonds: compteFondsId ? comptes.find(cp => cp.id === compteFondsId) : null }
+          : c
+      ));
+    } catch (e) { console.error('sauvegarderLien error:', e); }
+    finally { setSavingLien(null); }
   };
 
   const ajouterCategorie = async () => {
@@ -208,15 +216,16 @@ export default function ParametresPage() {
   };
 
   if (loading) return (
-    <div className="flex items-center justify-center h-64">
-      <div className="spinner scale-150" />
-    </div>
+    <div className="flex items-center justify-center h-64"><div className="spinner scale-150" /></div>
   );
 
   const catsByType = ORDRE_TYPES.map(type => ({
     type,
     cats: categories.filter(c => c.type === type),
   })).filter(g => g.cats.length > 0);
+
+  // Fonds actifs pour le dropdown de liaison
+  const fondsActifs = comptes.filter(c => c.isActive);
 
   const inputCls = "w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none transition-all";
 
@@ -241,6 +250,7 @@ export default function ParametresPage() {
       {/* ── ONGLET CATÉGORIES ── */}
       {activeTab === 'categories' && (
         <div className="space-y-5">
+
           {/* Budget de référence */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
             <div className="flex items-center justify-between mb-4">
@@ -253,8 +263,6 @@ export default function ParametresPage() {
                 <Save size={14} />{savingTaux ? 'Sauvegarde...' : savedTaux ? 'Sauvegardé ✓' : 'Sauvegarder'}
               </button>
             </div>
-
-            {/* Revenu de référence */}
             <div className="mb-5 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-800">
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex-1 min-w-48">
@@ -269,14 +277,10 @@ export default function ParametresPage() {
                 <div className="text-right">
                   <p className="text-xs text-blue-600 dark:text-blue-400">100%</p>
                   <p className="text-lg font-bold text-blue-700 dark:text-blue-400">{formatFCFA(revenuRef)}</p>
-                  <p className="text-xs text-blue-500">
-                    Objectif fonds urgence (×6) : {formatFCFA(revenuRef * 6)}
-                  </p>
+                  <p className="text-xs text-blue-500">Objectif fonds urgence (×6) : {formatFCFA(revenuRef * 6)}</p>
                 </div>
               </div>
             </div>
-
-            {/* Tableau des taux */}
             <div className="space-y-3">
               {GRANDES_CATEGORIES.map(type => {
                 const taux    = tauxRef[type] ?? 0;
@@ -322,15 +326,10 @@ export default function ParametresPage() {
                     totalTaux > 100 ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400' :
                     totalTaux === 100 ? 'bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400' :
                     'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400')}>
-                    {totalTaux > 100 ? `⚠️ ${totalTaux}% (dépassement!)` : totalTaux === 100 ? `✅ ${totalTaux}%` : `⚡ ${totalTaux}% (reste ${(100 - totalTaux).toFixed(1)}%)`}
+                    {totalTaux > 100 ? `⚠️ ${totalTaux}%` : totalTaux === 100 ? `✅ ${totalTaux}%` : `⚡ ${totalTaux}% (reste ${(100 - totalTaux).toFixed(1)}%)`}
                   </span>
                 </div>
               </div>
-              {totalTaux > 100 && (
-                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-3 text-sm text-red-600 dark:text-red-400">
-                  ⚠️ La somme des taux dépasse 100% ! Réduisez certains taux pour équilibrer votre budget.
-                </div>
-              )}
             </div>
           </div>
 
@@ -378,16 +377,25 @@ export default function ParametresPage() {
                   </span>
                   <span className="ml-2 text-xs text-[var(--text-muted)] opacity-60">({cats.length})</span>
                 </div>
-                {tauxRef[type as GrandeCategorie] > 0 && (
-                  <span className="text-xs font-semibold text-primary">
-                    {tauxRef[type as GrandeCategorie]}% — {formatFCFA(montantPourTaux(tauxRef[type as GrandeCategorie]))}
-                  </span>
-                )}
+                <div className="flex items-center gap-3">
+                  {tauxRef[type as GrandeCategorie] > 0 && (
+                    <span className="text-xs font-semibold text-primary">
+                      {tauxRef[type as GrandeCategorie]}% — {formatFCFA(montantPourTaux(tauxRef[type as GrandeCategorie]))}
+                    </span>
+                  )}
+                  {/* Légende liaison pour epargne_autre */}
+                  {type === 'epargne_autre' && fondsActifs.length > 0 && (
+                    <span className="text-xs text-[var(--text-muted)] flex items-center gap-1">
+                      <Link size={10} />Fond lié
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="divide-y divide-[var(--border)]">
                 {cats.map((cat: any) => (
                   <div key={cat.id}
-                    className={clsx('px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors', !cat.isActive && 'opacity-40')}>
+                    className={clsx('px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors',
+                      !cat.isActive && 'opacity-40')}>
                     {editCat?.id === cat.id ? (
                       <>
                         <input type="text" value={editCat.nom}
@@ -400,9 +408,45 @@ export default function ParametresPage() {
                       <>
                         <span className="flex-1 text-sm text-[var(--text)]">{cat.nom}</span>
                         {cat.sousType && <span className="text-xs text-[var(--text-muted)]">{cat.sousType}</span>}
-                        <button onClick={() => setEditCat(cat)} className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors"><Pencil size={13} /></button>
+
+                        {/* ── Dropdown liaison fond (epargne_autre uniquement) ── */}
+                        {type === 'epargne_autre' && cat.isActive && (
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            {savingLien === cat.id ? (
+                              <span className="text-xs text-primary animate-pulse">Liaison...</span>
+                            ) : (
+                              <>
+                                <select
+                                  value={cat.compteFondsId ?? ''}
+                                  onChange={e => sauvegarderLien(cat.id, e.target.value || null)}
+                                  className={clsx(
+                                    'text-xs border rounded-lg px-2 py-1 outline-none transition-all',
+                                    cat.compteFondsId
+                                      ? 'border-primary/40 bg-primary/5 text-primary font-medium'
+                                      : 'border-[var(--border)] bg-[var(--card)] text-[var(--text-muted)]'
+                                  )}>
+                                  <option value="">— Non lié —</option>
+                                  {fondsActifs.map((f: any) => (
+                                    <option key={f.id} value={f.id}>{f.nom}</option>
+                                  ))}
+                                </select>
+                                {cat.compteFondsId
+                                  ? <Link size={12} className="text-primary flex-shrink-0" />
+                                  : <LinkOff size={12} className="text-slate-300 flex-shrink-0" />}
+                              </>
+                            )}
+                          </div>
+                        )}
+
+                        <button onClick={() => setEditCat(cat)}
+                          className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors">
+                          <Pencil size={13} />
+                        </button>
                         {cat.isActive && (
-                          <button onClick={() => supprimerCat(cat.id)} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
+                          <button onClick={() => supprimerCat(cat.id)}
+                            className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors">
+                            <Trash2 size={13} />
+                          </button>
                         )}
                       </>
                     )}
@@ -428,7 +472,8 @@ export default function ParametresPage() {
             <div className="bg-[var(--surface)] border border-primary/30 rounded-2xl p-4 flex gap-3 items-end transition-colors">
               <div className="flex-1">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Nom du fond *</label>
-                <input type="text" value={newCompte} onChange={e => setNewCompte(e.target.value)} placeholder="Ex: Fond scolarité" className={inputCls} />
+                <input type="text" value={newCompte} onChange={e => setNewCompte(e.target.value)}
+                  placeholder="Ex: Fond scolarité" className={inputCls} />
               </div>
               <button onClick={ajouterCompte} className="bg-primary text-white rounded-xl px-4 py-2 text-sm"><Check size={14} /></button>
               <button onClick={() => setShowNewCompte(false)} className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm"><X size={14} /></button>
@@ -449,6 +494,14 @@ export default function ParametresPage() {
                   <>
                     <div className="w-8 h-8 rounded-xl bg-primary/10 dark:bg-primary/20 flex items-center justify-center text-primary font-bold text-sm">{c.nom.charAt(0)}</div>
                     <span className="flex-1 text-sm text-[var(--text)] font-medium">{c.nom}</span>
+                    <span className="text-sm font-bold text-primary">{formatFCFA(c.soldeActuel ?? 0)}</span>
+                    {/* Nombre de catégories liées */}
+                    {categories.filter(cat => cat.compteFondsId === c.id).length > 0 && (
+                      <span className="text-xs px-2 py-0.5 rounded-lg bg-primary/10 text-primary font-medium flex items-center gap-1">
+                        <Link size={10} />
+                        {categories.filter(cat => cat.compteFondsId === c.id).length} cat.
+                      </span>
+                    )}
                     {c.isActive && (
                       <>
                         <button onClick={() => setEditCompte(c)} className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors"><Pencil size={13} /></button>
@@ -477,11 +530,13 @@ export default function ParametresPage() {
             <div className="bg-[var(--surface)] border border-primary/30 rounded-2xl p-4 flex flex-wrap gap-3 items-end transition-colors">
               <div className="flex-1 min-w-40">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Nom de la banque *</label>
-                <input type="text" value={newBanque.nom} onChange={e => setNewBanque(n => ({ ...n, nom: e.target.value }))} placeholder="Ex: BOA — Yvan" className={inputCls} />
+                <input type="text" value={newBanque.nom} onChange={e => setNewBanque(n => ({ ...n, nom: e.target.value }))}
+                  placeholder="Ex: BOA — Yvan" className={inputCls} />
               </div>
               <div className="w-40">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Solde initial (FCFA)</label>
-                <input type="number" value={newBanque.solde} onChange={e => setNewBanque(n => ({ ...n, solde: e.target.value }))} placeholder="0" className={inputCls} />
+                <input type="number" value={newBanque.solde} onChange={e => setNewBanque(n => ({ ...n, solde: e.target.value }))}
+                  placeholder="0" className={inputCls} />
               </div>
               <div className="flex gap-2">
                 <button onClick={async () => {
@@ -539,7 +594,7 @@ export default function ParametresPage() {
                 </div>
                 <button onClick={() => { setSuppAnnee(a.annee); setSuppMois(null); setConfirmText(''); setSuppResult(''); }}
                   className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-xl text-xs font-semibold transition-all">
-                  🗑️ Supprimer l'année {a.annee}
+                  🗑️ Supprimer {a.annee}
                 </button>
               </div>
               {a.moisAvecDonnees.length > 0 && (
@@ -565,7 +620,7 @@ export default function ParametresPage() {
                     : `Vous allez supprimer TOUTES les données de l'année ${suppAnnee}.`}
                 </p>
                 <p className="text-sm font-semibold text-[var(--text)]">
-                  Tapez <span className="text-red-500 font-bold">{suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}</span> pour confirmer :
+                  Tapez <span className="text-red-500 font-bold">{suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}</span> :
                 </p>
                 <input type="text" value={confirmText} onChange={e => setConfirmText(e.target.value)}
                   placeholder={suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}
@@ -582,8 +637,7 @@ export default function ParametresPage() {
                       const res = await fetch(url, { method: 'DELETE' });
                       const d = await res.json();
                       setSuppResult(d.message ?? 'Supprimé');
-                      setSuppLoading(false);
-                      setConfirmText('');
+                      setSuppLoading(false); setConfirmText('');
                       chargerOnglet('donnees');
                       setTimeout(() => { setSuppAnnee(null); setSuppResult(''); }, 2000);
                     }}
@@ -612,7 +666,7 @@ export default function ParametresPage() {
             <label className={clsx('flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-2xl cursor-pointer transition-all',
               importing ? 'border-primary bg-primary/5 dark:bg-primary/10' : 'border-[var(--border)] bg-slate-50 dark:bg-dark-card hover:border-primary hover:bg-primary/5 dark:hover:bg-primary/10')}>
               <Upload size={24} className={clsx('mb-2', importing ? 'text-primary animate-bounce' : 'text-[var(--text-muted)]')} />
-              <span className="text-sm font-medium text-[var(--text)]">{importing ? 'Import en cours...' : 'Cliquez pour sélectionner votre fichier Excel'}</span>
+              <span className="text-sm font-medium text-[var(--text)]">{importing ? 'Import en cours...' : 'Cliquez pour sélectionner'}</span>
               <span className="text-xs text-[var(--text-muted)] mt-1">.xlsx uniquement</span>
               <input type="file" accept=".xlsx,.xls" className="hidden" onChange={importerExcel} disabled={importing} />
             </label>

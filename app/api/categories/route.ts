@@ -11,8 +11,14 @@ export async function GET(req: NextRequest) {
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const categories = await prisma.categorie.findMany({
-      where: { userId: session.user.id },
+      where:   { userId: session.user.id },
       orderBy: { ordre: 'asc' },
+      // Inclure le fond lié pour affichage dans Suivi et Paramètres
+      include: {
+        compteFonds: {
+          select: { id: true, nom: true },
+        },
+      },
     });
 
     return NextResponse.json({ categories });
@@ -27,15 +33,17 @@ export async function POST(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
-    const { nom, type, sousType, ordre } = await req.json();
+    const { nom, type, sousType, ordre, compteFondsId } = await req.json();
 
     const cat = await prisma.categorie.create({
       data: {
-        userId: session.user.id,
+        userId:       session.user.id,
         nom,
-        type: type as TypeCategorie,
-        sousType: sousType ?? null,
-        ordre: ordre ?? 0,
+        type:         type as TypeCategorie,
+        sousType:     sousType ?? null,
+        ordre:        ordre ?? 0,
+        // Liaison fond (optionnel, pertinent pour epargne_autre)
+        compteFondsId: compteFondsId ?? null,
       },
     });
 
@@ -51,16 +59,21 @@ export async function PUT(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
-    const { id, nom, type, sousType, ordre, isActive } = await req.json();
+    const { id, nom, type, sousType, ordre, isActive, compteFondsId } = await req.json();
 
     const cat = await prisma.categorie.update({
       where: { id, userId: session.user.id },
       data: {
         nom,
-        type: type as TypeCategorie,
+        type:     type as TypeCategorie,
         sousType,
         ordre,
         isActive,
+        // null = délier ; undefined = ne pas toucher
+        // On passe explicitement null pour déliage, sinon la valeur fournie
+        ...(compteFondsId !== undefined
+          ? { compteFondsId: compteFondsId || null }
+          : {}),
       },
     });
 
@@ -82,7 +95,7 @@ export async function DELETE(req: NextRequest) {
     // Désactiver plutôt que supprimer (préserve l'historique)
     await prisma.categorie.update({
       where: { id, userId: session.user.id },
-      data: { isActive: false },
+      data:  { isActive: false },
     });
 
     return NextResponse.json({ success: true });

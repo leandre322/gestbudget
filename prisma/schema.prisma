@@ -89,8 +89,13 @@ model Categorie {
   ordre     Int           @default(0)
   isActive  Boolean       @default(true)
   createdAt DateTime      @default(now())
+
   tauxReference    Float   @default(0)
   montantReference BigInt  @default(0)
+
+  // ── Liaison vers CompteFonds (epargne_autre uniquement) ──
+  compteFondsId String?       @map("compte_fonds_id")
+  compteFonds   CompteFonds?  @relation(fields: [compteFondsId], references: [id], onDelete: SetNull)
 
   user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   budgetMensuel BudgetMensuel[]
@@ -128,6 +133,8 @@ model CompteFonds {
 
   user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   repartitions DecaissementCompte[]
+  // ── Catégories liées à ce fond ──
+  categories   Categorie[]
 
   @@map("comptes_fonds")
 }
@@ -190,11 +197,12 @@ model Parametres {
   moisCourant   Int      @default(1)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
-  revenuMensuelReference BigInt @default(0)
+
+  revenuMensuelReference      BigInt @default(0)
   objectifEpargneAnnuel       BigInt @default(0)
   objectifRevenusAnnuel       BigInt @default(0)
   objectifRemboursementAnnuel BigInt @default(0)
-  nMoisUrgence  Int @default(6)
+  nMoisUrgence                Int    @default(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

@@ -20,18 +20,37 @@ const TYPES_OUVERTS_PAR_DEFAUT = ['revenu', 'epargne_precaution'];
 const MOIS_COURTS  = ['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
 const DONUT_COLORS = ['#1E40AF','#EF4444','#F59E0B','#10B981','#8B5CF6','#06B6D4','#F97316'];
 
-// ── Correspondance catégorie epargne_autre → CompteFonds par nom (Option A) ──
+// ── Normalisation pour matching robuste ──────────────────────────────────────
+// Gère : "Fête / Vacances" = "Fête / Vacances", accents, espaces autour des /
+function normaliser(s: string): string {
+  return s
+    .toLowerCase()
+    .trim()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // supprime les accents
+    .replace(/\s*\/\s*/g, '/')                         // normalise espaces autour de /
+    .replace(/\s+/g, ' ');                             // espaces multiples → un seul
+}
+
+// ── Correspondance catégorie → CompteFonds ───────────────────────────────────
+// Priorité 1 : compteFondsId en base (liaison explicite dans Paramètres)
+// Priorité 2 : matching par nom normalisé (fallback automatique)
+function trouverCompte(cat: any, comptes: any[]): any | null {
+  if (!comptes.length) return null;
+  if (cat.compteFondsId) {
+    const direct = comptes.find(c => c.id === cat.compteFondsId);
+    if (direct) return direct;
+  }
+  return trouverCompteParNom(cat.nom, comptes);
+}
+
 function trouverCompteParNom(catNom: string, comptes: any[]): any | null {
   if (!catNom || !comptes.length) return null;
-  const cat = catNom.toLowerCase().trim();
-  // 1. Correspondance exacte
-  let match = comptes.find(c => c.nom.toLowerCase().trim() === cat);
+  const cat = normaliser(catNom);
+  let match = comptes.find(c => normaliser(c.nom) === cat);
   if (match) return match;
-  // 2. Le nom du fond est contenu dans la catégorie
-  match = comptes.find(c => cat.includes(c.nom.toLowerCase().trim()));
+  match = comptes.find(c => cat.includes(normaliser(c.nom)));
   if (match) return match;
-  // 3. La catégorie est contenue dans le nom du fond
-  match = comptes.find(c => c.nom.toLowerCase().trim().includes(cat));
+  match = comptes.find(c => normaliser(c.nom).includes(cat));
   return match ?? null;
 }
 
@@ -42,7 +61,7 @@ export default function SuiviPage() {
   const [data,         setData]         = useState<any>(null);
   const [lignes,       setLignes]       = useState<Lignes>({});
   const [banques,      setBanques]      = useState<any[]>([]);
-  const [comptes,      setComptes]      = useState<any[]>([]); // CompteFonds
+  const [comptes,      setComptes]      = useState<any[]>([]);
   const [lignesBanque, setLignesBanque] = useState<LigneBanque[]>([]);
   const [hist,         setHist]         = useState<any[]>([]);
   const [loading,      setLoading]      = useState(true);
@@ -81,7 +100,7 @@ export default function SuiviPage() {
     const [resBudget, resBanques, resComptes] = await Promise.all([
       fetch(`/api/budget?annee=${annee}&mois=${mois}`),
       fetch('/api/banques'),
-      fetch('/api/comptes'),   // ← CompteFonds pour epargne_autre
+      fetch('/api/comptes'),
     ]);
     if (!resBudget.ok) { setLoading(false); return; }
     const d = await resBudget.json();
@@ -184,7 +203,7 @@ export default function SuiviPage() {
     const cats           = data?.categories ?? [];
     const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
 
-    // 2. Répercuter banques → catégories epargne_precaution
+    // 2. Répercuter banques → catégories epargne_precaution en DB
     if (catsPrecaution.length > 0 && lignesBanque.some(lb => parseInt(lb.reel) > 0)) {
       const newLignesPrecaution = { ...lignes };
       catsPrecaution.forEach((cat: any, idx: number) => {
@@ -203,40 +222,48 @@ export default function SuiviPage() {
       });
     }
 
-    // 3. Incrémenter soldes banques (epargne_precaution) avec diff
+    // 3. ── Incrémenter banques (epargne_precaution) ────────────────────────
+    // Clé stable : banqueId (pas lb.id qui est volatile)
+    // Référence : localStorage avec clé basée sur banqueId
     for (const lb of lignesBanque) {
       const reelVal = parseInt(lb.reel) || 0;
-      if (lb.banqueId && reelVal > 0) {
-        const oldKey = `lignes-banque-saved-${annee}-${mois}-${lb.id}`;
-        const oldVal = parseInt(localStorage.getItem(oldKey) ?? '0');
-        const diff   = reelVal - oldVal;
-        if (diff !== 0) {
-          await fetch(`/api/banques?id=${lb.banqueId}`, {
-            method:  'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ action: diff > 0 ? 'increment' : 'decrement', montant: Math.abs(diff) }),
-          });
-          localStorage.setItem(oldKey, String(reelVal));
-        }
+      if (!lb.banqueId) continue;
+
+      // Clé stable basée sur banqueId (non volatile entre rechargements)
+      const oldKey = `banque-saved-${annee}-${mois}-${lb.banqueId}`;
+      const oldVal = parseInt(localStorage.getItem(oldKey) ?? '0');
+      const diff   = reelVal - oldVal;
+
+      if (diff !== 0) {
+        await fetch(`/api/banques?id=${lb.banqueId}`, {
+          method:  'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ action: diff > 0 ? 'increment' : 'decrement', montant: Math.abs(diff) }),
+        });
+        localStorage.setItem(oldKey, String(reelVal));
       }
     }
 
-    // 4. Incrémenter soldes CompteFonds (epargne_autre) avec diff par correspondance de nom
+    // 4. ── Incrémenter CompteFonds (epargne_autre) — référence DB ──────────
+    // Référence = data.budget (chargé depuis DB au dernier charger())
+    // → pas de localStorage → pas de doublon si rechargement page
     const catsAutre = cats.filter((c: any) => c.type === 'epargne_autre');
+    const budgetRef = data?.budget ?? [];
+
     for (const cat of catsAutre) {
-      const reelVal = parseInt(lignes[cat.id]?.reel) || 0;
-      const compte  = trouverCompteParNom(cat.nom, comptes);
-      if (compte) {
-        const oldKey = `epargne-autre-saved-${annee}-${mois}-${cat.id}`;
-        const oldVal = parseInt(localStorage.getItem(oldKey) ?? '0');
-        const diff   = reelVal - oldVal;
-        if (diff !== 0) {
+      const newVal = parseInt(lignes[cat.id]?.reel) || 0;
+      // Valeur de référence = ce qui était en DB au dernier chargement
+      const oldVal = Number(budgetRef.find((b: any) => b.categorieId === cat.id)?.montantReel ?? 0);
+      const diff   = newVal - oldVal;
+
+      if (diff !== 0) {
+        const compte = trouverCompte(cat, comptes);
+        if (compte) {
           await fetch(`/api/comptes?id=${compte.id}`, {
             method:  'PUT',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({ action: diff > 0 ? 'increment' : 'decrement', montant: Math.abs(diff) }),
           });
-          localStorage.setItem(oldKey, String(reelVal));
         }
       }
     }
@@ -246,6 +273,21 @@ export default function SuiviPage() {
       setSaved(true);
       toast.success('Suivi mensuel sauvegardé ✓');
       (window as any).__setSaveStatus?.('saved');
+
+      // ── Mettre à jour la référence DB locale après sauvegarde ───────────
+      // Évite les doublons si l'utilisateur re-sauvegarde sans recharger
+      setData((prev: any) => {
+        if (!prev?.budget) return prev;
+        return {
+          ...prev,
+          budget: prev.budget.map((b: any) => ({
+            ...b,
+            montantAnticipe: parseInt(lignes[b.categorieId]?.anticipe) || b.montantAnticipe,
+            montantReel:     parseInt(lignes[b.categorieId]?.reel)     || b.montantReel,
+          })),
+        };
+      });
+
       setTimeout(() => { setSaved(false); (window as any).__setSaveStatus?.('idle'); }, 3000);
     } else {
       toast.error('Erreur lors de la sauvegarde');
@@ -303,7 +345,7 @@ export default function SuiviPage() {
 
   const cats = data?.categories ?? [];
 
-  // ── Totaux pour KPIs ────────────────────────────────────────────────────
+  // ── Totaux ──────────────────────────────────────────────────────────────
   const catsPrecaution          = cats.filter((c: any) => c.type === 'epargne_precaution');
   const totalAnticipePrecaution = catsPrecaution.reduce((s: number, c: any) => {
     const b = data?.budget?.find((b: any) => b.categorieId === c.id);
@@ -428,7 +470,7 @@ export default function SuiviPage() {
         </div>
       </div>
 
-      {/* ── Tableau unique ── */}
+      {/* ── Tableau ── */}
       <div className="max-w-5xl mx-auto w-full">
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
           <div className="overflow-x-auto">
@@ -493,7 +535,6 @@ export default function SuiviPage() {
                         </td>
                       </tr>
 
-                      {/* Lignes enfants */}
                       {isOpen && (
                         <>
                           {isEpPrecaution ? (
@@ -555,10 +596,7 @@ export default function SuiviPage() {
                                 const ecar = reel - ant;
                                 const pct  = ant > 0 ? (reel / ant) * 100 : 0;
                                 const over = !isRevenu && ant > 0 && reel > ant;
-
-                                // Badge fond lié pour epargne_autre
-                                const fondLie = isEpAutre ? trouverCompteParNom(cat.nom, comptes) : null;
-
+                                const fondLie = isEpAutre ? trouverCompte(cat, comptes) : null;
                                 const ecarColor = isRevenu
                                   ? reel > ant ? 'text-green-500' : reel < ant ? 'text-red-500' : 'text-[var(--text-muted)]'
                                   : ecar > 0   ? 'text-red-500'  : ecar < 0   ? 'text-green-500' : 'text-[var(--text-muted)]';
@@ -570,7 +608,6 @@ export default function SuiviPage() {
                                       <div className="flex items-center gap-2 flex-wrap">
                                         {over && <span className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0" />}
                                         <span className="truncate">{cat.nom}</span>
-                                        {/* Badge fond lié — alimentation automatique */}
                                         {fondLie && (
                                           <span className="text-xs px-1.5 py-0.5 rounded-md bg-primary/10 text-primary font-medium flex-shrink-0">
                                             → {fondLie.nom}
@@ -585,14 +622,12 @@ export default function SuiviPage() {
                                     </td>
                                     <td className="px-3 py-2">
                                       <input type="number" value={lignes[cat.id]?.anticipe ?? ''}
-                                        onChange={e => handleChange(cat.id, 'anticipe', e.target.value)}
-                                        placeholder="0"
+                                        onChange={e => handleChange(cat.id, 'anticipe', e.target.value)} placeholder="0"
                                         className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" />
                                     </td>
                                     <td className="px-3 py-2">
                                       <input type="number" value={lignes[cat.id]?.reel ?? ''}
-                                        onChange={e => handleChange(cat.id, 'reel', e.target.value)}
-                                        placeholder="0"
+                                        onChange={e => handleChange(cat.id, 'reel', e.target.value)} placeholder="0"
                                         className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" />
                                     </td>
                                     <td className={clsx('px-4 py-2.5 text-right text-sm font-medium', ecarColor)}>
