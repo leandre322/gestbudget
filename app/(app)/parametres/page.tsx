@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Pencil, Trash2, Check, X, Upload, Save, Link, LinkOff } from 'lucide-react';
+import { Plus, Pencil, Trash2, Check, X, Upload, Save, Link, Link2Off } from 'lucide-react';
 import { TYPE_LABELS, ORDRE_TYPES, formatFCFA } from '@/types';
 import { clsx } from 'clsx';
 
@@ -432,7 +432,7 @@ export default function ParametresPage() {
                                 </select>
                                 {cat.compteFondsId
                                   ? <Link size={12} className="text-primary flex-shrink-0" />
-                                  : <LinkOff size={12} className="text-slate-300 flex-shrink-0" />}
+                                  : <Link2Off size={12} className="text-slate-300 flex-shrink-0" />}
                               </>
                             )}
                           </div>
