@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, Fragment } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
          CartesianGrid, PieChart, Pie, Cell } from 'recharts';
-import { TrendingUp, TrendingDown, Wallet, AlertTriangle,
+import { TrendingUp, TrendingDown, PiggyBank, Wallet, AlertTriangle,
          Shield, ChevronDown, ChevronRight, Building2, Pencil, X, Save,
          ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
 import { useMois } from '../layout';
@@ -101,9 +101,10 @@ function OngletGlobal({
 
   const revenus  = { reel: tot('revenu','montantReel'),  ant: tot('revenu','montantAnticipe')  };
   const depenses = { reel: tot('depense','montantReel'), ant: tot('depense','montantAnticipe') };
-  // Solde = Revenus - Dépenses - Épargne (formule inchangée)
+  // Épargne depuis budgetMois (même source que Dashboard cumul → cohérence garantie)
   const epargneReel = budgetMois.filter((b: any) => b.categorie?.type?.startsWith('epargne')).reduce((s: number, b: any) => s + b.montantReel, 0);
   const epargneAnt  = budgetMois.filter((b: any) => b.categorie?.type?.startsWith('epargne')).reduce((s: number, b: any) => s + b.montantAnticipe, 0);
+  const epargne  = { reel: epargneReel, ant: epargneAnt };
   const solde = revenus.reel - depenses.reel - epargneReel;
   const soldeAnt = revenus.ant - depenses.ant - epargneAnt;
 
@@ -312,11 +313,12 @@ function OngletGlobal({
             </div>
           )}
           {/* ── KPIs mois courant : Revenus / Dépenses / Solde / Score (sans Épargne) ── */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
             {[
-              { titre: 'Revenus',  val: revenus.reel,  ant: revenus.ant,  type: 'revenus',  bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',    text: 'text-blue-700 dark:text-blue-400',   icon: TrendingUp },
-              { titre: 'Dépenses', val: depenses.reel, ant: depenses.ant, type: 'depenses', bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',        text: 'text-red-600 dark:text-red-400',     icon: TrendingDown },
-              { titre: 'Solde',    val: solde,         ant: soldeAnt,     type: '',
+              { titre: 'Revenus',  val: revenus.reel,  ant: revenus.ant,   type: 'revenus',  bg: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',    text: 'text-blue-700 dark:text-blue-400',   icon: TrendingUp },
+              { titre: 'Dépenses', val: depenses.reel, ant: depenses.ant,  type: 'depenses', bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',        text: 'text-red-600 dark:text-red-400',     icon: TrendingDown },
+              { titre: 'Épargne',  val: epargne.reel,  ant: epargne.ant,   type: 'epargne',  bg: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800', text: 'text-green-700 dark:text-green-400', icon: PiggyBank },
+              { titre: 'Solde',    val: solde,         ant: soldeAnt,      type: '',
                 bg: solde >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
                 text: solde >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400',
                 icon: Wallet },
