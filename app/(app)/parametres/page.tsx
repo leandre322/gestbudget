@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Plus, Pencil, Trash2, Check, X, Upload, Save, Link, Link2Off } from 'lucide-react';
 import { TYPE_LABELS, ORDRE_TYPES, formatFCFA } from '@/types';
 import { clsx } from 'clsx';
@@ -14,7 +14,6 @@ const GRANDES_CATEGORIES = [
   'depense_occasionnelle',
   'remboursement_dette',
 ] as const;
-
 type GrandeCategorie = typeof GRANDES_CATEGORIES[number];
 
 export default function ParametresPage() {
@@ -44,11 +43,14 @@ export default function ParametresPage() {
   const [revenuRef,     setRevenuRef]     = useState<number>(0);
   const [savingTaux,    setSavingTaux]    = useState(false);
   const [savedTaux,     setSavedTaux]     = useState(false);
-  const [tauxCharge,    setTauxCharge]    = useState(false);
-  // Liaison catégorie → fond en cours de sauvegarde
   const [savingLien,    setSavingLien]    = useState<string|null>(null);
 
-  const charger = useCallback(async () => {
+  // isDirty : vrai dès que l'utilisateur modifie revenuRef ou tauxRef
+  // → empêche le rechargement depuis DB d'écraser les modifications en cours
+  const isDirty = useRef(false);
+
+  // ── Chargement complet (initial + après sauvegarde) ──────────────────────
+  const charger = useCallback(async (force = false) => {
     setLoading(true);
     try {
       const [rCats, rComptes, rParams, rBanques, rDonnees] = await Promise.all([
@@ -64,34 +66,35 @@ export default function ParametresPage() {
       if (rComptes.ok) { const d = await rComptes.json(); setComptes(d.comptes ?? []); }
       if (rParams.ok) {
         const d = await rParams.json();
-        if (!tauxCharge) {
+        // Lire depuis DB seulement si pas de modifications en cours OU si force=true (après save)
+        if (!isDirty.current || force) {
           setRevenuRef(d.revenuMensuelReference ?? 0);
           const taux = {} as Record<GrandeCategorie, number>;
           GRANDES_CATEGORIES.forEach(type => {
-            const cat = (d.categories ?? []).find((c: any) => c.type === type);
-            taux[type] = cat?.tauxReference ?? 0;
+            // Trouver la catégorie de ce type avec le taux le plus élevé
+            // (plusieurs catégories peuvent avoir le même type, on prend le représentant)
+            const cats = (d.categories ?? []).filter((c: any) => c.type === type);
+            const maxTaux = cats.reduce((max: number, c: any) => Math.max(max, c.tauxReference ?? 0), 0);
+            taux[type] = maxTaux;
           });
           setTauxRef(taux);
-          setTauxCharge(true);
+          isDirty.current = false;
         }
       }
-    } catch (e) {
-      console.error('Parametres charger error:', e);
-    } finally {
-      setLoading(false);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    } catch (e) { console.error('Parametres charger error:', e); }
+    finally { setLoading(false); }
   }, []);
 
+  // Chargement unique au montage
   useEffect(() => { charger(); }, [charger]);
 
+  // Rechargement léger par onglet (sans toucher aux taux)
   const chargerOnglet = useCallback(async (tab: string) => {
     try {
       if (tab === 'categories') {
-        const r = await fetch('/api/categories');
-        if (r.ok) { const d = await r.json(); setCategories(d.categories ?? []); }
-        const rc = await fetch('/api/comptes');
-        if (rc.ok) { const d = await rc.json(); setComptes(d.comptes ?? []); }
+        const [rC, rCo] = await Promise.all([fetch('/api/categories'), fetch('/api/comptes')]);
+        if (rC.ok)  { const d = await rC.json();  setCategories(d.categories ?? []); }
+        if (rCo.ok) { const d = await rCo.json(); setComptes(d.comptes ?? []); }
       } else if (tab === 'comptes') {
         const r = await fetch('/api/comptes');
         if (r.ok) { const d = await r.json(); setComptes(d.comptes ?? []); }
@@ -116,25 +119,33 @@ export default function ParametresPage() {
     setSavingTaux(true);
     try {
       const res = await fetch('/api/parametres', {
-        method: 'PUT',
+        method:  'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ revenuMensuelReference: revenuRef, tauxReference: tauxRef }),
+        body:    JSON.stringify({ revenuMensuelReference: revenuRef, tauxReference: tauxRef }),
       });
-      if (res.ok) { setSavedTaux(true); setTimeout(() => setSavedTaux(false), 3000); }
+      if (res.ok) {
+        isDirty.current = false;
+        setSavedTaux(true);
+        setTimeout(() => setSavedTaux(false), 3000);
+        // Recharger pour confirmer la sauvegarde
+        await charger(true);
+      } else {
+        const err = await res.json();
+        alert(`Erreur sauvegarde : ${err.error ?? 'Inconnue'}`);
+      }
     } catch (e) { console.error('sauvegarderTaux error:', e); }
     finally { setSavingTaux(false); }
   };
 
-  // ── Liaison catégorie → CompteFonds ─────────────────────────────────────
+  // Liaison catégorie → CompteFonds
   const sauvegarderLien = async (catId: string, compteFondsId: string | null) => {
     setSavingLien(catId);
     try {
       await fetch('/api/categories', {
-        method: 'PUT',
+        method:  'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: catId, compteFondsId }),
+        body:    JSON.stringify({ id: catId, compteFondsId }),
       });
-      // Mettre à jour localement sans re-fetch complet
       setCategories(prev => prev.map(c =>
         c.id === catId
           ? { ...c, compteFondsId, compteFonds: compteFondsId ? comptes.find(cp => cp.id === compteFondsId) : null }
@@ -146,11 +157,7 @@ export default function ParametresPage() {
 
   const ajouterCategorie = async () => {
     if (!newCat.nom) return;
-    await fetch('/api/categories', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newCat),
-    });
+    await fetch('/api/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newCat) });
     setNewCat({ nom: '', type: 'depense_variable', sousType: '' });
     setShowNewCat(false);
     chargerOnglet('categories');
@@ -158,11 +165,7 @@ export default function ParametresPage() {
 
   const sauvegarderCat = async () => {
     if (!editCat) return;
-    await fetch('/api/categories', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(editCat),
-    });
+    await fetch('/api/categories', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editCat) });
     setEditCat(null);
     chargerOnglet('categories');
   };
@@ -175,25 +178,14 @@ export default function ParametresPage() {
 
   const ajouterCompte = async () => {
     if (!newCompte) return;
-    await fetch('/api/comptes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nom: newCompte, ordre: comptes.length }),
-    });
-    setNewCompte('');
-    setShowNewCompte(false);
-    chargerOnglet('comptes');
+    await fetch('/api/comptes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nom: newCompte, ordre: comptes.length }) });
+    setNewCompte(''); setShowNewCompte(false); chargerOnglet('comptes');
   };
 
   const sauvegarderCompte = async () => {
     if (!editCompte) return;
-    await fetch('/api/comptes', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(editCompte),
-    });
-    setEditCompte(null);
-    chargerOnglet('comptes');
+    await fetch('/api/comptes', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editCompte) });
+    setEditCompte(null); chargerOnglet('comptes');
   };
 
   const supprimerCompte = async (id: string) => {
@@ -203,31 +195,18 @@ export default function ParametresPage() {
   };
 
   const importerExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setImporting(true);
-    setImportResult(null);
-    const fd = new FormData();
-    fd.append('file', file);
+    const file = e.target.files?.[0]; if (!file) return;
+    setImporting(true); setImportResult(null);
+    const fd = new FormData(); fd.append('file', file);
     const res = await fetch('/api/import', { method: 'POST', body: fd });
-    setImportResult(await res.json());
-    setImporting(false);
-    e.target.value = '';
+    setImportResult(await res.json()); setImporting(false); e.target.value = '';
   };
 
-  if (loading) return (
-    <div className="flex items-center justify-center h-64"><div className="spinner scale-150" /></div>
-  );
+  if (loading) return <div className="flex items-center justify-center h-64"><div className="spinner scale-150" /></div>;
 
-  const catsByType = ORDRE_TYPES.map(type => ({
-    type,
-    cats: categories.filter(c => c.type === type),
-  })).filter(g => g.cats.length > 0);
-
-  // Fonds actifs pour le dropdown de liaison
+  const catsByType  = ORDRE_TYPES.map(type => ({ type, cats: categories.filter(c => c.type === type) })).filter(g => g.cats.length > 0);
   const fondsActifs = comptes.filter(c => c.isActive);
-
-  const inputCls = "w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none transition-all";
+  const inputCls    = "w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none transition-all";
 
   return (
     <div className="space-y-5 animate-fadeIn">
@@ -238,7 +217,7 @@ export default function ParametresPage() {
 
       {/* Onglets */}
       <div className="flex gap-1 bg-slate-100 dark:bg-dark-card rounded-xl p-1 w-fit border border-[var(--border)] flex-wrap">
-        {(['categories', 'comptes', 'banques', 'import', 'donnees'] as const).map(tab => (
+        {(['categories','comptes','banques','import','donnees'] as const).map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             className={clsx('px-4 py-2 rounded-lg text-sm font-medium transition-all',
               activeTab === tab ? 'bg-[var(--surface)] text-primary shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>
@@ -247,16 +226,14 @@ export default function ParametresPage() {
         ))}
       </div>
 
-      {/* ── ONGLET CATÉGORIES ── */}
+      {/* ── CATÉGORIES ── */}
       {activeTab === 'categories' && (
         <div className="space-y-5">
-
-          {/* Budget de référence */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="font-semibold text-[var(--text)]">Budget de référence par catégorie</h3>
-                <p className="text-xs text-[var(--text-muted)] mt-0.5">Définissez le revenu mensuel et les taux par grande catégorie</p>
+                <h3 className="font-semibold text-[var(--text)]">Budget de référence</h3>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">Revenu mensuel et taux par grande catégorie</p>
               </div>
               <button onClick={sauvegarderTaux} disabled={savingTaux}
                 className="flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white rounded-xl px-3.5 py-2 text-sm font-medium transition-all disabled:opacity-60">
@@ -266,41 +243,33 @@ export default function ParametresPage() {
             <div className="mb-5 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-800">
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex-1 min-w-48">
-                  <label className="text-xs font-semibold text-blue-700 dark:text-blue-400 mb-1 block">
-                    💰 Revenu mensuel de référence (FCFA)
-                  </label>
-                  <input type="number" value={revenuRef || ''}
-                    onChange={e => setRevenuRef(parseInt(e.target.value) || 0)}
-                    placeholder="Ex: 500000"
+                  <label className="text-xs font-semibold text-blue-700 dark:text-blue-400 mb-1 block">💰 Revenu mensuel de référence (FCFA)</label>
+                  <input type="number" value={revenuRef || ''} placeholder="Ex: 500000"
+                    onChange={e => { isDirty.current = true; setRevenuRef(parseInt(e.target.value) || 0); }}
                     className="w-full border border-blue-300 dark:border-blue-700 rounded-xl px-3 py-2 text-sm bg-white dark:bg-dark-card text-[var(--text)] focus:border-primary outline-none" />
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-blue-600 dark:text-blue-400">100%</p>
                   <p className="text-lg font-bold text-blue-700 dark:text-blue-400">{formatFCFA(revenuRef)}</p>
-                  <p className="text-xs text-blue-500">Objectif fonds urgence (×6) : {formatFCFA(revenuRef * 6)}</p>
+                  <p className="text-xs text-blue-500">Fonds urgence ×6 : {formatFCFA(revenuRef * 6)}</p>
                 </div>
               </div>
             </div>
             <div className="space-y-3">
               {GRANDES_CATEGORIES.map(type => {
-                const taux    = tauxRef[type] ?? 0;
-                const montant = montantPourTaux(taux);
-                const isOver  = totalTaux > 100;
-                const label   = TYPE_LABELS[type as keyof typeof TYPE_LABELS];
+                const taux = tauxRef[type] ?? 0;
+                const isOver = totalTaux > 100;
                 return (
                   <div key={type} className="space-y-1.5">
                     <div className="flex items-center gap-3 flex-wrap">
-                      <span className="text-sm font-medium text-[var(--text)] w-52 flex-shrink-0">{label}</span>
+                      <span className="text-sm font-medium text-[var(--text)] w-52 flex-shrink-0">{TYPE_LABELS[type as keyof typeof TYPE_LABELS]}</span>
                       <div className="flex items-center gap-1.5">
-                        <input type="number" min="0" max="100" step="0.5" value={taux || ''}
-                          onChange={e => setTauxRef(prev => ({ ...prev, [type]: parseFloat(e.target.value) || 0 }))}
-                          placeholder="0"
+                        <input type="number" min="0" max="100" step="0.5" value={taux || ''} placeholder="0"
+                          onChange={e => { isDirty.current = true; setTauxRef(p => ({ ...p, [type]: parseFloat(e.target.value) || 0 })); }}
                           className="w-20 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" />
                         <span className="text-sm text-[var(--text-muted)]">%</span>
                       </div>
-                      <span className="text-sm font-semibold text-primary w-36">
-                        {revenuRef > 0 ? formatFCFA(montant) : '—'}
-                      </span>
+                      <span className="text-sm font-semibold text-primary w-36">{revenuRef > 0 ? formatFCFA(montantPourTaux(taux)) : '—'}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 h-2 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
@@ -317,23 +286,18 @@ export default function ParametresPage() {
                 totalTaux > 100 ? 'bg-red-50 dark:bg-red-900/20' : totalTaux === 100 ? 'bg-green-50 dark:bg-green-900/20' : 'bg-amber-50 dark:bg-amber-900/20')}>
                 <span className="text-sm font-bold text-[var(--text)]">Total alloué</span>
                 <div className="flex items-center gap-3">
-                  {revenuRef > 0 && (
-                    <span className="text-sm text-[var(--text-muted)]">
-                      {formatFCFA(Math.round((totalTaux / 100) * revenuRef))} / {formatFCFA(revenuRef)}
-                    </span>
-                  )}
+                  {revenuRef > 0 && <span className="text-sm text-[var(--text-muted)]">{formatFCFA(Math.round((totalTaux/100)*revenuRef))} / {formatFCFA(revenuRef)}</span>}
                   <span className={clsx('text-sm font-bold px-3 py-1 rounded-lg',
                     totalTaux > 100 ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400' :
                     totalTaux === 100 ? 'bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400' :
                     'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400')}>
-                    {totalTaux > 100 ? `⚠️ ${totalTaux}%` : totalTaux === 100 ? `✅ ${totalTaux}%` : `⚡ ${totalTaux}% (reste ${(100 - totalTaux).toFixed(1)}%)`}
+                    {totalTaux > 100 ? `⚠️ ${totalTaux}%` : totalTaux === 100 ? `✅ ${totalTaux}%` : `⚡ ${totalTaux}% (reste ${(100-totalTaux).toFixed(1)}%)`}
                   </span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Liste des catégories */}
           <div className="flex justify-between items-center">
             <p className="text-sm text-[var(--text-muted)]">{categories.filter(c => c.isActive).length} catégories actives</p>
             <button onClick={() => setShowNewCat(!showNewCat)}
@@ -346,20 +310,18 @@ export default function ParametresPage() {
             <div className="bg-[var(--surface)] border border-primary/30 rounded-2xl p-4 flex flex-wrap gap-3 items-end transition-colors">
               <div className="flex-1 min-w-40">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Nom *</label>
-                <input type="text" value={newCat.nom} onChange={e => setNewCat(n => ({ ...n, nom: e.target.value }))}
-                  placeholder="Nom de la catégorie" className={inputCls} />
+                <input type="text" value={newCat.nom} onChange={e => setNewCat(n => ({...n, nom: e.target.value}))} placeholder="Nom" className={inputCls} />
               </div>
               <div>
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Type *</label>
-                <select value={newCat.type} onChange={e => setNewCat(n => ({ ...n, type: e.target.value }))}
+                <select value={newCat.type} onChange={e => setNewCat(n => ({...n, type: e.target.value}))}
                   className="border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none">
                   {ORDRE_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t as keyof typeof TYPE_LABELS]}</option>)}
                 </select>
               </div>
               <div className="flex-1 min-w-32">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Sous-type</label>
-                <input type="text" value={newCat.sousType} onChange={e => setNewCat(n => ({ ...n, sousType: e.target.value }))}
-                  placeholder="Ex: Habitation" className={inputCls} />
+                <input type="text" value={newCat.sousType} onChange={e => setNewCat(n => ({...n, sousType: e.target.value}))} placeholder="Ex: Habitation" className={inputCls} />
               </div>
               <div className="flex gap-2">
                 <button onClick={ajouterCategorie} className="bg-primary text-white rounded-xl px-4 py-2 text-sm"><Check size={14} /></button>
@@ -372,34 +334,26 @@ export default function ParametresPage() {
             <div key={type} className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
               <div className="px-4 py-2.5 bg-slate-50 dark:bg-dark-card border-b border-[var(--border)] flex items-center justify-between">
                 <div>
-                  <span className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wide">
-                    {TYPE_LABELS[type as keyof typeof TYPE_LABELS]}
-                  </span>
+                  <span className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wide">{TYPE_LABELS[type as keyof typeof TYPE_LABELS]}</span>
                   <span className="ml-2 text-xs text-[var(--text-muted)] opacity-60">({cats.length})</span>
                 </div>
                 <div className="flex items-center gap-3">
-                  {tauxRef[type as GrandeCategorie] > 0 && (
+                  {(tauxRef[type as GrandeCategorie] ?? 0) > 0 && (
                     <span className="text-xs font-semibold text-primary">
                       {tauxRef[type as GrandeCategorie]}% — {formatFCFA(montantPourTaux(tauxRef[type as GrandeCategorie]))}
                     </span>
                   )}
-                  {/* Légende liaison pour epargne_autre */}
                   {type === 'epargne_autre' && fondsActifs.length > 0 && (
-                    <span className="text-xs text-[var(--text-muted)] flex items-center gap-1">
-                      <Link size={10} />Fond lié
-                    </span>
+                    <span className="text-xs text-[var(--text-muted)] flex items-center gap-1"><Link size={10} />Fond lié</span>
                   )}
                 </div>
               </div>
               <div className="divide-y divide-[var(--border)]">
                 {cats.map((cat: any) => (
-                  <div key={cat.id}
-                    className={clsx('px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors',
-                      !cat.isActive && 'opacity-40')}>
+                  <div key={cat.id} className={clsx('px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors', !cat.isActive && 'opacity-40')}>
                     {editCat?.id === cat.id ? (
                       <>
-                        <input type="text" value={editCat.nom}
-                          onChange={e => setEditCat((c: any) => ({ ...c, nom: e.target.value }))}
+                        <input type="text" value={editCat.nom} onChange={e => setEditCat((c: any) => ({...c, nom: e.target.value}))}
                           className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none" />
                         <button onClick={sauvegarderCat} className="text-green-500 hover:text-green-600"><Check size={15} /></button>
                         <button onClick={() => setEditCat(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={15} /></button>
@@ -408,46 +362,26 @@ export default function ParametresPage() {
                       <>
                         <span className="flex-1 text-sm text-[var(--text)]">{cat.nom}</span>
                         {cat.sousType && <span className="text-xs text-[var(--text-muted)]">{cat.sousType}</span>}
-
-                        {/* ── Dropdown liaison fond (epargne_autre uniquement) ── */}
                         {type === 'epargne_autre' && cat.isActive && (
                           <div className="flex items-center gap-1.5 flex-shrink-0">
                             {savingLien === cat.id ? (
                               <span className="text-xs text-primary animate-pulse">Liaison...</span>
                             ) : (
                               <>
-                                <select
-                                  value={cat.compteFondsId ?? ''}
+                                <select value={cat.compteFondsId ?? ''}
                                   onChange={e => sauvegarderLien(cat.id, e.target.value || null)}
-                                  className={clsx(
-                                    'text-xs border rounded-lg px-2 py-1 outline-none transition-all',
-                                    cat.compteFondsId
-                                      ? 'border-primary/40 bg-primary/5 text-primary font-medium'
-                                      : 'border-[var(--border)] bg-[var(--card)] text-[var(--text-muted)]'
-                                  )}>
+                                  className={clsx('text-xs border rounded-lg px-2 py-1 outline-none transition-all',
+                                    cat.compteFondsId ? 'border-primary/40 bg-primary/5 text-primary font-medium' : 'border-[var(--border)] bg-[var(--card)] text-[var(--text-muted)]')}>
                                   <option value="">— Non lié —</option>
-                                  {fondsActifs.map((f: any) => (
-                                    <option key={f.id} value={f.id}>{f.nom}</option>
-                                  ))}
+                                  {fondsActifs.map((f: any) => <option key={f.id} value={f.id}>{f.nom}</option>)}
                                 </select>
-                                {cat.compteFondsId
-                                  ? <Link size={12} className="text-primary flex-shrink-0" />
-                                  : <Link2Off size={12} className="text-slate-300 flex-shrink-0" />}
+                                {cat.compteFondsId ? <Link size={12} className="text-primary flex-shrink-0" /> : <Link2Off size={12} className="text-slate-300 flex-shrink-0" />}
                               </>
                             )}
                           </div>
                         )}
-
-                        <button onClick={() => setEditCat(cat)}
-                          className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors">
-                          <Pencil size={13} />
-                        </button>
-                        {cat.isActive && (
-                          <button onClick={() => supprimerCat(cat.id)}
-                            className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors">
-                            <Trash2 size={13} />
-                          </button>
-                        )}
+                        <button onClick={() => setEditCat(cat)} className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors"><Pencil size={13} /></button>
+                        {cat.isActive && <button onClick={() => supprimerCat(cat.id)} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>}
                       </>
                     )}
                   </div>
@@ -458,7 +392,7 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* ── ONGLET FONDS ── */}
+      {/* ── FONDS ── */}
       {activeTab === 'comptes' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
@@ -472,8 +406,7 @@ export default function ParametresPage() {
             <div className="bg-[var(--surface)] border border-primary/30 rounded-2xl p-4 flex gap-3 items-end transition-colors">
               <div className="flex-1">
                 <label className="text-xs text-[var(--text-muted)] mb-1 block">Nom du fond *</label>
-                <input type="text" value={newCompte} onChange={e => setNewCompte(e.target.value)}
-                  placeholder="Ex: Fond scolarité" className={inputCls} />
+                <input type="text" value={newCompte} onChange={e => setNewCompte(e.target.value)} placeholder="Ex: Fond scolarité" className={inputCls} />
               </div>
               <button onClick={ajouterCompte} className="bg-primary text-white rounded-xl px-4 py-2 text-sm"><Check size={14} /></button>
               <button onClick={() => setShowNewCompte(false)} className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm"><X size={14} /></button>
@@ -485,7 +418,7 @@ export default function ParametresPage() {
                 {editCompte?.id === c.id ? (
                   <>
                     <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-bold text-sm flex-shrink-0">{editCompte.nom.charAt(0)}</div>
-                    <input type="text" value={editCompte.nom} onChange={e => setEditCompte((p: any) => ({ ...p, nom: e.target.value }))}
+                    <input type="text" value={editCompte.nom} onChange={e => setEditCompte((p: any) => ({...p, nom: e.target.value}))}
                       className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none" />
                     <button onClick={sauvegarderCompte} className="text-green-500 hover:text-green-600"><Check size={15} /></button>
                     <button onClick={() => setEditCompte(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={15} /></button>
@@ -495,11 +428,9 @@ export default function ParametresPage() {
                     <div className="w-8 h-8 rounded-xl bg-primary/10 dark:bg-primary/20 flex items-center justify-center text-primary font-bold text-sm">{c.nom.charAt(0)}</div>
                     <span className="flex-1 text-sm text-[var(--text)] font-medium">{c.nom}</span>
                     <span className="text-sm font-bold text-primary">{formatFCFA(c.soldeActuel ?? 0)}</span>
-                    {/* Nombre de catégories liées */}
                     {categories.filter(cat => cat.compteFondsId === c.id).length > 0 && (
                       <span className="text-xs px-2 py-0.5 rounded-lg bg-primary/10 text-primary font-medium flex items-center gap-1">
-                        <Link size={10} />
-                        {categories.filter(cat => cat.compteFondsId === c.id).length} cat.
+                        <Link size={10} />{categories.filter(cat => cat.compteFondsId === c.id).length} cat.
                       </span>
                     )}
                     {c.isActive && (
@@ -516,32 +447,30 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* ── ONGLET BANQUES ── */}
+      {/* ── BANQUES ── */}
       {activeTab === 'banques' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
-            <p className="text-sm text-[var(--text-muted)]">{banques.length} banque(s) configurée(s)</p>
+            <p className="text-sm text-[var(--text-muted)]">{banques.length} banque(s)</p>
             <button onClick={() => setShowNewBanque(!showNewBanque)}
               className="flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white rounded-xl px-3.5 py-2 text-sm font-medium transition-all">
-              <Plus size={14} />Ajouter une banque
+              <Plus size={14} />Ajouter
             </button>
           </div>
           {showNewBanque && (
             <div className="bg-[var(--surface)] border border-primary/30 rounded-2xl p-4 flex flex-wrap gap-3 items-end transition-colors">
               <div className="flex-1 min-w-40">
-                <label className="text-xs text-[var(--text-muted)] mb-1 block">Nom de la banque *</label>
-                <input type="text" value={newBanque.nom} onChange={e => setNewBanque(n => ({ ...n, nom: e.target.value }))}
-                  placeholder="Ex: BOA — Yvan" className={inputCls} />
+                <label className="text-xs text-[var(--text-muted)] mb-1 block">Nom *</label>
+                <input type="text" value={newBanque.nom} onChange={e => setNewBanque(n => ({...n, nom: e.target.value}))} placeholder="Ex: BOA — Yvan" className={inputCls} />
               </div>
               <div className="w-40">
-                <label className="text-xs text-[var(--text-muted)] mb-1 block">Solde initial (FCFA)</label>
-                <input type="number" value={newBanque.solde} onChange={e => setNewBanque(n => ({ ...n, solde: e.target.value }))}
-                  placeholder="0" className={inputCls} />
+                <label className="text-xs text-[var(--text-muted)] mb-1 block">Solde initial</label>
+                <input type="number" value={newBanque.solde} onChange={e => setNewBanque(n => ({...n, solde: e.target.value}))} placeholder="0" className={inputCls} />
               </div>
               <div className="flex gap-2">
                 <button onClick={async () => {
                   if (!newBanque.nom) return;
-                  await fetch('/api/banques', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nomBanque: newBanque.nom, soldeInitial: parseInt(newBanque.solde) || 0 }) });
+                  await fetch('/api/banques', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nomBanque: newBanque.nom, soldeInitial: parseInt(newBanque.solde)||0 }) });
                   setNewBanque({ nom: '', solde: '' }); setShowNewBanque(false); chargerOnglet('banques');
                 }} className="bg-primary text-white rounded-xl px-4 py-2 text-sm"><Check size={14} /></button>
                 <button onClick={() => setShowNewBanque(false)} className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm"><X size={14} /></button>
@@ -556,7 +485,7 @@ export default function ParametresPage() {
                 {editBanque?.id === b.id ? (
                   <>
                     <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm flex-shrink-0">🏦</div>
-                    <input type="text" value={editBanque.nomBanque} onChange={e => setEditBanque((p: any) => ({ ...p, nomBanque: e.target.value }))}
+                    <input type="text" value={editBanque.nomBanque} onChange={e => setEditBanque((p: any) => ({...p, nomBanque: e.target.value}))}
                       className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none" />
                     <button onClick={async () => { await fetch(`/api/banques?id=${editBanque.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nomBanque: editBanque.nomBanque }) }); setEditBanque(null); chargerOnglet('banques'); }} className="text-green-500 hover:text-green-600"><Check size={15} /></button>
                     <button onClick={() => setEditBanque(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={15} /></button>
@@ -567,7 +496,7 @@ export default function ParametresPage() {
                     <span className="flex-1 text-sm text-[var(--text)] font-medium">{b.nomBanque}</span>
                     <span className="text-sm font-bold text-primary">{formatFCFA(b.solde)}</span>
                     <button onClick={() => setEditBanque(b)} className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors"><Pencil size={13} /></button>
-                    <button onClick={async () => { if (!confirm('Supprimer cette banque ?')) return; await fetch(`/api/banques?id=${b.id}`, { method: 'DELETE' }); chargerOnglet('banques'); }} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
+                    <button onClick={async () => { if (!confirm('Supprimer ?')) return; await fetch(`/api/banques?id=${b.id}`, { method: 'DELETE' }); chargerOnglet('banques'); }} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
                   </>
                 )}
               </div>
@@ -576,21 +505,21 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* ── ONGLET DONNÉES ── */}
+      {/* ── DONNÉES ── */}
       {activeTab === 'donnees' && (
         <div className="space-y-4">
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
             <p className="font-semibold text-red-700 dark:text-red-400 text-sm mb-1">⚠️ Zone dangereuse</p>
-            <p className="text-xs text-red-600 dark:text-red-400">La suppression de données est irréversible.</p>
+            <p className="text-xs text-red-600 dark:text-red-400">La suppression est irréversible.</p>
           </div>
           {anneesData.length === 0 ? (
-            <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-8 text-center text-[var(--text-muted)] text-sm">Aucune donnée disponible</div>
+            <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-8 text-center text-[var(--text-muted)] text-sm">Aucune donnée</div>
           ) : anneesData.map((a: any) => (
             <div key={a.id} className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="font-bold text-[var(--text)]">{a.annee}</h3>
-                  <p className="text-xs text-[var(--text-muted)] mt-0.5">{a.nbMois} mois avec données · {a.nbDecaissements} opération(s)</p>
+                  <p className="text-xs text-[var(--text-muted)] mt-0.5">{a.nbMois} mois · {a.nbDecaissements} opération(s)</p>
                 </div>
                 <button onClick={() => { setSuppAnnee(a.annee); setSuppMois(null); setConfirmText(''); setSuppResult(''); }}
                   className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-xl text-xs font-semibold transition-all">
@@ -615,17 +544,13 @@ export default function ParametresPage() {
               <div className="relative bg-[var(--surface)] rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-4">
                 <h3 className="font-bold text-red-600 text-lg">⚠️ Confirmer la suppression</h3>
                 <p className="text-sm text-[var(--text)]">
-                  {suppMois
-                    ? `Vous allez supprimer les données de ${['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'][suppMois]} ${suppAnnee}.`
-                    : `Vous allez supprimer TOUTES les données de l'année ${suppAnnee}.`}
+                  {suppMois ? `Supprimer ${['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'][suppMois]} ${suppAnnee}.` : `Supprimer TOUTES les données de ${suppAnnee}.`}
                 </p>
-                <p className="text-sm font-semibold text-[var(--text)]">
-                  Tapez <span className="text-red-500 font-bold">{suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}</span> :
-                </p>
+                <p className="text-sm font-semibold text-[var(--text)]">Tapez <span className="text-red-500 font-bold">{suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}</span> :</p>
                 <input type="text" value={confirmText} onChange={e => setConfirmText(e.target.value)}
                   placeholder={suppMois ? `${suppAnnee}/${suppMois}` : String(suppAnnee)}
                   className="w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-red-400 outline-none" />
-                {suppResult && <p className="text-sm text-green-600 dark:text-green-400 font-medium">{suppResult}</p>}
+                {suppResult && <p className="text-sm text-green-600 font-medium">{suppResult}</p>}
                 <div className="flex gap-2 justify-end">
                   <button onClick={() => { setSuppAnnee(null); setConfirmText(''); }}
                     className="px-4 py-2 rounded-xl text-sm border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-50 dark:hover:bg-dark-card transition-all">Annuler</button>
@@ -636,8 +561,7 @@ export default function ParametresPage() {
                       const url = suppMois ? `/api/donnees?annee=${suppAnnee}&mois=${suppMois}` : `/api/donnees?annee=${suppAnnee}`;
                       const res = await fetch(url, { method: 'DELETE' });
                       const d = await res.json();
-                      setSuppResult(d.message ?? 'Supprimé');
-                      setSuppLoading(false); setConfirmText('');
+                      setSuppResult(d.message ?? 'Supprimé'); setSuppLoading(false); setConfirmText('');
                       chargerOnglet('donnees');
                       setTimeout(() => { setSuppAnnee(null); setSuppResult(''); }, 2000);
                     }}
@@ -651,41 +575,38 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* ── ONGLET IMPORT ── */}
+      {/* ── IMPORT ── */}
       {activeTab === 'import' && (
         <div className="space-y-4">
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-6 transition-colors">
             <h3 className="font-semibold text-[var(--text)] mb-2">Importer depuis Excel</h3>
             <p className="text-sm text-[var(--text-muted)] mb-4">
-              Importez votre fichier <strong className="text-[var(--text)]">BUDGET_MENSUEL_OK.xlsx</strong>.
-              L'import lit les onglets{' '}
-              <code className="bg-slate-100 dark:bg-dark-card px-1 rounded text-xs">Suivi-2024</code>,{' '}
-              <code className="bg-slate-100 dark:bg-dark-card px-1 rounded text-xs">Suivi-2025</code>,{' '}
-              <code className="bg-slate-100 dark:bg-dark-card px-1 rounded text-xs">Suivi-2026</code>.
+              Fichier <strong className="text-[var(--text)]">BUDGET_MENSUEL_OK.xlsx</strong> — onglets
+              <code className="bg-slate-100 dark:bg-dark-card px-1 rounded text-xs mx-1">Suivi-2024</code>
+              <code className="bg-slate-100 dark:bg-dark-card px-1 rounded text-xs">Suivi-2025</code>
+              <code className="bg-slate-100 dark:bg-dark-card px-1 rounded text-xs mx-1">Suivi-2026</code>
             </p>
             <label className={clsx('flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-2xl cursor-pointer transition-all',
-              importing ? 'border-primary bg-primary/5 dark:bg-primary/10' : 'border-[var(--border)] bg-slate-50 dark:bg-dark-card hover:border-primary hover:bg-primary/5 dark:hover:bg-primary/10')}>
+              importing ? 'border-primary bg-primary/5' : 'border-[var(--border)] bg-slate-50 dark:bg-dark-card hover:border-primary hover:bg-primary/5')}>
               <Upload size={24} className={clsx('mb-2', importing ? 'text-primary animate-bounce' : 'text-[var(--text-muted)]')} />
-              <span className="text-sm font-medium text-[var(--text)]">{importing ? 'Import en cours...' : 'Cliquez pour sélectionner'}</span>
+              <span className="text-sm font-medium text-[var(--text)]">{importing ? 'Import en cours...' : 'Cliquer pour sélectionner'}</span>
               <span className="text-xs text-[var(--text-muted)] mt-1">.xlsx uniquement</span>
               <input type="file" accept=".xlsx,.xls" className="hidden" onChange={importerExcel} disabled={importing} />
             </label>
             {importResult && (
               <div className={clsx('mt-4 p-4 rounded-xl text-sm',
-                importResult.success ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800')}>
+                importResult.success ? 'bg-green-50 dark:bg-green-900/20 border border-green-200' : 'bg-red-50 dark:bg-red-900/20 border border-red-200')}>
                 {importResult.success ? (
                   <>
                     <p className="font-semibold text-green-700 dark:text-green-400 mb-2">✅ Import terminé</p>
                     {Object.entries(importResult.results ?? {}).map(([yr, res]: any) => (
                       <div key={yr} className="text-green-600 dark:text-green-400">
-                        <span className="font-medium">{yr}</span> : <span className="ml-1">{res.imported} ligne(s)</span>
-                        {res.skipped > 0 && <span className="ml-1 text-green-500">, {res.skipped} ignorée(s)</span>}
+                        <span className="font-medium">{yr}</span> : <span>{res.imported} ligne(s)</span>
+                        {res.skipped > 0 && <span className="ml-1">, {res.skipped} ignorée(s)</span>}
                       </div>
                     ))}
                   </>
-                ) : (
-                  <p className="text-red-600 dark:text-red-400">❌ {importResult.error}</p>
-                )}
+                ) : <p className="text-red-600 dark:text-red-400">❌ {importResult.error}</p>}
               </div>
             )}
           </div>

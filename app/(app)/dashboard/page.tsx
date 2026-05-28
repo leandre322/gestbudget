@@ -5,7 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
          CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import { TrendingUp, TrendingDown, Wallet, AlertTriangle,
          Shield, ChevronDown, ChevronRight, Building2, Pencil, X, Save,
-         ArrowDownCircle, ArrowUpCircle, Minus } from 'lucide-react';
+         ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
 import { useMois } from '../layout';
 import { formatFCFA, MOIS_COURTS, TYPE_LABELS, calculerScore, couleurScore, ORDRE_TYPES, LABEL_PREVISION } from '@/types';
 import { useToast } from '@/components/Toast';
@@ -194,7 +194,7 @@ function OngletGlobal({
 
   const { totalRevenus, totalDepenses, solde: soldeGlobal,
           evolutionAnnuelle, fondsRoulement, totalFonds,
-          totalAjouts, totalDecaissements, soldeNetDecaissements } = data;
+          totalAjouts, totalDecaissements } = data;
 
   const pctFonds  = fondsObjectif > 0 ? (fondsUrgence / fondsObjectif) * 100 : 0;
   const barColor  = pctFonds < 50 ? 'bg-red-500' : pctFonds < 80 ? 'bg-orange-400' : 'bg-green-500';
@@ -543,7 +543,7 @@ function OngletGlobal({
       {/* ══════════════════════════════════════════════════════════ */}
       <Separateur emoji="🔄" label="Ajouts & Décaissements — cumul" />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-2xl p-4 flex items-center gap-3">
           <ArrowUpCircle size={28} className="text-green-600 flex-shrink-0" />
           <div>
@@ -558,16 +558,7 @@ function OngletGlobal({
             <p className="text-xl font-bold text-red-600 dark:text-red-400">{formatFCFA(totalDecaissements)}</p>
           </div>
         </div>
-        <div className={clsx('rounded-2xl border p-4 flex items-center gap-3',
-          soldeNetDecaissements >= 0 ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800')}>
-          <Minus size={28} className={clsx('flex-shrink-0', soldeNetDecaissements >= 0 ? 'text-blue-600' : 'text-orange-500')} />
-          <div>
-            <p className={clsx('text-xs font-medium opacity-70', soldeNetDecaissements >= 0 ? 'text-blue-700 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400')}>Solde net fonds</p>
-            <p className={clsx('text-xl font-bold', soldeNetDecaissements >= 0 ? 'text-blue-700 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400')}>
-              {formatFCFA(soldeNetDecaissements)}
-            </p>
-          </div>
-        </div>
+
       </div>
 
       {/* ══════════════════════════════════════════════════════════ */}
@@ -778,7 +769,7 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
 
       {/* Ajouts & Décaissements de l'année */}
       <Separateur emoji="🔄" label={`Ajouts & Décaissements — ${anneeSelect}`} />
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-2xl p-4 flex items-center gap-3">
           <ArrowUpCircle size={28} className="text-green-600 flex-shrink-0" />
           <div>
@@ -793,16 +784,7 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
             <p className="text-xl font-bold text-red-600 dark:text-red-400">{formatFCFA(decStats.totalDecaissements)}</p>
           </div>
         </div>
-        <div className={clsx('rounded-2xl border p-4 flex items-center gap-3',
-          decStats.soldeNet >= 0 ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800')}>
-          <Minus size={28} className={clsx('flex-shrink-0', decStats.soldeNet >= 0 ? 'text-blue-600' : 'text-orange-500')} />
-          <div>
-            <p className={clsx('text-xs font-medium opacity-70', decStats.soldeNet >= 0 ? 'text-blue-700 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400')}>Solde net fonds</p>
-            <p className={clsx('text-xl font-bold', decStats.soldeNet >= 0 ? 'text-blue-700 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400')}>
-              {formatFCFA(decStats.soldeNet)}
-            </p>
-          </div>
-        </div>
+
       </div>
 
       {/* Graphiques */}

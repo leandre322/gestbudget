@@ -16,6 +16,41 @@ function serial(obj: any): any {
   return obj;
 }
 
+// ── Helper : upsert budget mensuel (ajoute ou soustrait au montantReel) ──────
+async function upsertBudgetMensuel(
+  userId: string, anneeId: string, categorieId: string,
+  mois: number, montant: bigint, action: 'add' | 'subtract'
+) {
+  const existing = await prisma.budgetMensuel.findFirst({
+    where: { userId, anneeId, categorieId, mois },
+  });
+  if (existing) {
+    const current = BigInt(Number(existing.montantReel ?? 0));
+    const newVal  = action === 'add' ? current + montant : current - montant;
+    await prisma.budgetMensuel.update({
+      where: { id: existing.id },
+      data:  { montantReel: newVal < BigInt(0) ? BigInt(0) : newVal, updatedAt: new Date() },
+    });
+  } else if (action === 'add') {
+    await prisma.budgetMensuel.create({
+      data: { userId, anneeId, categorieId, mois, montantAnticipe: BigInt(0), montantReel: montant },
+    });
+  }
+}
+
+// ── Helper : trouver ou créer l'enregistrement Annee ─────────────────────────
+async function getOrCreateAnnee(userId: string, annee: number) {
+  let anneeRec = await prisma.annee.findUnique({
+    where: { userId_annee: { userId, annee } },
+  });
+  if (!anneeRec) {
+    anneeRec = await prisma.annee.create({
+      data: { userId, annee },
+    });
+  }
+  return anneeRec;
+}
+
 // GET /api/decaissements?annee=2026
 export async function GET(req: NextRequest) {
   try {
@@ -24,7 +59,7 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const anneeParam = searchParams.get('annee');
-    const annee = anneeParam ? parseInt(anneeParam) : null;
+    const annee      = anneeParam ? parseInt(anneeParam) : null;
 
     const comptes = await prisma.compteFonds.findMany({
       where:   { userId: session.user.id, isActive: true },
@@ -46,109 +81,164 @@ export async function GET(req: NextRequest) {
       where:   whereClause,
       include: { repartitions: { include: { compte: true } } },
       orderBy: { dateOperation: 'desc' },
-      take:    100, // Limiter à 100 pour la perf
+      take:    200,
     });
 
-    return NextResponse.json(serial({
-      comptes,
-      decaissements,
-      anneeId: anneeRec?.id ?? null,
-    }));
+    return NextResponse.json(serial({ comptes, decaissements, anneeId: anneeRec?.id ?? null }));
   } catch (e: any) {
     console.error('GET /api/decaissements:', e?.message);
     return NextResponse.json({ error: e?.message ?? 'Erreur interne' }, { status: 500 });
   }
 }
 
-// POST /api/decaissements — Créer + impacter les soldes
+// POST /api/decaissements
 export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const {
-      anneeId, description, dateOperation,
-      montantTotal, repartitions, notes,
-      typeMouvement,
-      // ── Nouveaux champs pour impact soldes ──
-      compteId,      // fond ciblé (pour mise à jour soldeActuel)
-      banqueId,      // banque impactée (optionnel)
-      impacterBanque,// boolean
+      description, dateOperation, notes, typeMouvement,
+      montantTotal,   // optionnel — impacte "Autres revenus" (ajout) ou "Autre dépense 1" (retrait)
+      compteId,       // fond ciblé — impacte soldeActuel + catégorie epargne_autre du mois
+      banqueId,       // banque — impacte solde bancaire + catégorie epargne_precaution du mois (optionnel)
+      montantFond,    // montant sur le fond (peut différer de montantTotal)
+      montantBanque,  // montant sur la banque (optionnel)
+      impacterBanque,
     } = await req.json();
 
-    if (!description || !dateOperation || !montantTotal) {
-      return NextResponse.json({ error: 'Champs obligatoires manquants' }, { status: 400 });
+    if (!description || !dateOperation) {
+      return NextResponse.json({ error: 'Description et date obligatoires' }, { status: 400 });
     }
 
-    const montantBigInt  = BigInt(Math.round(Number(montantTotal)));
-    const mouvType       = typeMouvement ?? 'retrait';
-    const isAjout        = mouvType === 'ajout';
+    const mouvType   = typeMouvement ?? 'retrait';
+    const isAjout    = mouvType === 'ajout';
 
-    // ── 1. Créer le décaissement ──────────────────────────────────────────
+    // Montants
+    const mtTotal  = montantTotal  ? BigInt(Math.round(Number(montantTotal)))  : BigInt(0);
+    const mtFond   = montantFond   ? BigInt(Math.round(Number(montantFond)))   : BigInt(0);
+    const mtBanque = montantBanque ? BigInt(Math.round(Number(montantBanque))) : BigInt(0);
+
+    // Montant à stocker dans decaissements (le plus grand des deux, ou total si fourni)
+    const mtDecaissement = mtTotal > BigInt(0) ? mtTotal : mtFond > BigInt(0) ? mtFond : mtBanque;
+
+    // Date → mois/année
+    const opDate  = new Date(dateOperation);
+    const opMois  = opDate.getMonth() + 1;
+    const opAnnee = opDate.getFullYear();
+
+    // ── 1. Créer le décaissement ─────────────────────────────────────────
     const dec = await prisma.decaissement.create({
       data: {
         userId:        session.user.id,
-        anneeId:       anneeId ?? null,
+        anneeId:       null, // sera mis à jour après
         description,
-        dateOperation: new Date(dateOperation),
-        montantTotal:  montantBigInt,
+        dateOperation: opDate,
+        montantTotal:  mtDecaissement,
         notes:         notes ?? null,
         typeMouvement: mouvType,
       },
     });
 
-    // ── 2. Créer les répartitions par compte fond ─────────────────────────
-    if (repartitions && Object.keys(repartitions).length > 0) {
-      const reps = Object.entries(repartitions as Record<string, string>)
-        .filter(([_, v]) => parseInt(v) > 0)
-        .map(([cid, montant]) => ({
-          decaissementId: dec.id,
-          compteId:       cid,
-          montant:        BigInt(parseInt(montant)),
-        }));
-      if (reps.length > 0) {
-        await prisma.decaissementCompte.createMany({ data: reps });
+    // ── 2. Trouver/créer l'année ─────────────────────────────────────────
+    const anneeRec = await getOrCreateAnnee(session.user.id, opAnnee);
+
+    // Mettre à jour anneeId du décaissement
+    await prisma.decaissement.update({
+      where: { id: dec.id },
+      data:  { anneeId: anneeRec.id },
+    });
+
+    // ── 3. Impact "Autres revenus" ou "Autre dépense 1" ──────────────────
+    if (mtTotal > BigInt(0)) {
+      const catNomRecherche = isAjout ? 'Autres revenus' : 'Autre dépense';
+      const catTypeRecherche = isAjout ? 'revenu' : 'depense_occasionnelle';
+
+      const catImpact = await prisma.categorie.findFirst({
+        where: {
+          userId:   session.user.id,
+          type:     catTypeRecherche,
+          isActive: true,
+          nom:      { contains: catNomRecherche, mode: 'insensitive' },
+        },
+      });
+
+      if (catImpact) {
+        await upsertBudgetMensuel(session.user.id, anneeRec.id, catImpact.id, opMois, mtTotal, 'add');
       }
     }
 
-    // ── 3. Mettre à jour le solde du CompteFonds ciblé ───────────────────
-    if (compteId) {
-      // Vérifier que le compte appartient à l'utilisateur
+    // ── 4. Impact fond de fonctionnement ─────────────────────────────────
+    if (compteId && mtFond > BigInt(0)) {
+      // 4a. Mettre à jour soldeActuel du fond
       const compte = await prisma.compteFonds.findFirst({
-        where: { id: compteId, userId: session.user.id },
-        select: { soldeActuel: true },
+        where:  { id: compteId, userId: session.user.id },
+        select: { soldeActuel: true, nom: true },
       });
       if (compte) {
-        const soldeActuel = BigInt(Number(compte.soldeActuel ?? 0));
-        const newSolde    = isAjout
-          ? soldeActuel + montantBigInt
-          : soldeActuel - montantBigInt;
-
+        const solde    = BigInt(Number(compte.soldeActuel ?? 0));
+        const newSolde = isAjout ? solde + mtFond : solde - mtFond;
         await prisma.compteFonds.update({
           where: { id: compteId },
           data:  { soldeActuel: newSolde < BigInt(0) ? BigInt(0) : newSolde, updatedAt: new Date() },
         });
+
+        // Créer répartition
+        await prisma.decaissementCompte.create({
+          data: { decaissementId: dec.id, compteId, montant: mtFond },
+        });
+
+        // 4b. Impact catégorie epargne_autre liée dans budget mensuel
+        // Priorité : liaison compteFondsId, sinon matching par nom
+        const catFond = await prisma.categorie.findFirst({
+          where: { userId: session.user.id, compteFondsId: compteId, isActive: true, type: 'epargne_autre' },
+        }) ?? await prisma.categorie.findFirst({
+          where: {
+            userId: session.user.id, isActive: true, type: 'epargne_autre',
+            nom: { contains: compte.nom, mode: 'insensitive' },
+          },
+        });
+
+        if (catFond) {
+          await upsertBudgetMensuel(
+            session.user.id, anneeRec.id, catFond.id, opMois, mtFond,
+            isAjout ? 'add' : 'subtract'
+          );
+        }
       }
     }
 
-    // ── 4. Mettre à jour le solde bancaire (optionnel, flux inverse) ──────
-    // Ajout fond  → argent sort de la banque (banque diminue)
-    // Retrait fond → argent revient en banque (banque augmente)
-    if (impacterBanque && banqueId) {
+    // ── 5. Impact banque ─────────────────────────────────────────────────
+    if (impacterBanque && banqueId && mtBanque > BigInt(0)) {
       const banque = await prisma.banque.findFirst({
-        where: { id: banqueId, userId: session.user.id },
-        select: { solde: true },
+        where:  { id: banqueId, userId: session.user.id },
+        select: { solde: true, nomBanque: true },
       });
       if (banque) {
-        const soldeBanque = BigInt(Number(banque.solde ?? 0));
-        const newSoldeBanque = isAjout
-          ? soldeBanque - montantBigInt  // ajout fond = sortie banque
-          : soldeBanque + montantBigInt; // retrait fond = entrée banque
-
+        const solde       = BigInt(Number(banque.solde ?? 0));
+        // Ajout fond = argent quitte la banque ; Retrait fond = argent entre en banque
+        const newSolde    = isAjout ? solde - mtBanque : solde + mtBanque;
         await prisma.banque.update({
           where: { id: banqueId },
-          data:  { solde: newSoldeBanque < BigInt(0) ? BigInt(0) : newSoldeBanque, updatedAt: new Date() },
+          data:  { solde: newSolde < BigInt(0) ? BigInt(0) : newSolde, updatedAt: new Date() },
         });
+
+        // 5b. Impact catégorie epargne_precaution dans budget mensuel
+        const catBanque = await prisma.categorie.findFirst({
+          where: {
+            userId: session.user.id, isActive: true, type: 'epargne_precaution',
+            nom: { contains: banque.nomBanque, mode: 'insensitive' },
+          },
+        }) ?? await prisma.categorie.findFirst({
+          where: { userId: session.user.id, isActive: true, type: 'epargne_precaution' },
+        });
+
+        if (catBanque) {
+          await upsertBudgetMensuel(
+            session.user.id, anneeRec.id, catBanque.id, opMois, mtBanque,
+            isAjout ? 'subtract' : 'add'
+          );
+        }
       }
     }
 
@@ -159,8 +249,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// DELETE /api/decaissements?id=xxx
-// Note : la suppression annule le mouvement sur les soldes
+// DELETE /api/decaissements?id=xxx — supprime et annule l'impact sur les soldes
 export async function DELETE(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -169,7 +258,6 @@ export async function DELETE(req: NextRequest) {
     const id = new URL(req.url).searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
 
-    // Récupérer le décaissement avant suppression pour annuler l'impact
     const dec = await prisma.decaissement.findFirst({
       where:   { id, userId: session.user.id },
       include: { repartitions: true },
@@ -188,11 +276,8 @@ export async function DELETE(req: NextRequest) {
       if (compte) {
         const repMontant  = BigInt(Number(rep.montant ?? 0));
         const soldeActuel = BigInt(Number(compte.soldeActuel ?? 0));
-        // Inverser : si c'était un ajout, on soustrait ; si retrait, on ajoute
-        const newSolde    = isAjout
-          ? soldeActuel - repMontant
-          : soldeActuel + repMontant;
-
+        // Inverser le mouvement
+        const newSolde    = isAjout ? soldeActuel - repMontant : soldeActuel + repMontant;
         await prisma.compteFonds.update({
           where: { id: rep.compteId },
           data:  { soldeActuel: newSolde < BigInt(0) ? BigInt(0) : newSolde, updatedAt: new Date() },
@@ -200,10 +285,7 @@ export async function DELETE(req: NextRequest) {
       }
     }
 
-    // ── Supprimer le décaissement (cascade sur repartitions) ─────────────
-    await prisma.decaissement.delete({
-      where: { id, userId: session.user.id },
-    });
+    await prisma.decaissement.delete({ where: { id, userId: session.user.id } });
 
     return NextResponse.json({ success: true });
   } catch (e: any) {

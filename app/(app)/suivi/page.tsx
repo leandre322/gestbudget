@@ -13,6 +13,13 @@ import { formatFCFA, MOIS_LABELS, ORDRE_TYPES, TYPE_LABELS,
          LABEL_PREVISION, LABEL_REEL, LABEL_ECART, LABEL_EXEC } from '@/types';
 import { clsx } from 'clsx';
 
+// ── Bloquer les caractères non numériques ─────────────────────────────────────
+const onlyNumbers = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const allowed = ['Backspace','Delete','Tab','Escape','Enter','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'];
+  if (allowed.includes(e.key) || e.ctrlKey || e.metaKey) return;
+  if (!/^\d$/.test(e.key)) e.preventDefault();
+};
+
 type Lignes      = Record<string, { anticipe: string; reel: string }>;
 type LigneBanque = { id: string; banqueId: string; anticipe: number; reel: string };
 
@@ -31,25 +38,17 @@ function normaliser(s: string): string {
     .replace(/\s+/g, ' ');                             // espaces multiples → un seul
 }
 
-// ── Correspondance catégorie → CompteFonds ───────────────────────────────────
-// Priorité 1 : compteFondsId en base (liaison explicite dans Paramètres)
-// Priorité 2 : matching par nom normalisé (fallback automatique)
-function trouverCompte(cat: any, comptes: any[]): any | null {
-  if (!comptes.length) return null;
-  if (cat.compteFondsId) {
-    const direct = comptes.find(c => c.id === cat.compteFondsId);
-    if (direct) return direct;
-  }
-  return trouverCompteParNom(cat.nom, comptes);
-}
-
+// ── Correspondance catégorie → CompteFonds par nom (Option A) ────────────────
 function trouverCompteParNom(catNom: string, comptes: any[]): any | null {
   if (!catNom || !comptes.length) return null;
   const cat = normaliser(catNom);
+  // 1. Correspondance exacte normalisée
   let match = comptes.find(c => normaliser(c.nom) === cat);
   if (match) return match;
+  // 2. Le nom du fond est contenu dans la catégorie
   match = comptes.find(c => cat.includes(normaliser(c.nom)));
   if (match) return match;
+  // 3. La catégorie est contenue dans le nom du fond
   match = comptes.find(c => normaliser(c.nom).includes(cat));
   return match ?? null;
 }
@@ -257,7 +256,7 @@ export default function SuiviPage() {
       const diff   = newVal - oldVal;
 
       if (diff !== 0) {
-        const compte = trouverCompte(cat, comptes);
+        const compte = trouverCompteParNom(cat.nom, comptes);
         if (compte) {
           await fetch(`/api/comptes?id=${compte.id}`, {
             method:  'PUT',
@@ -553,6 +552,7 @@ export default function SuiviPage() {
                                   </td>
                                   <td className="px-3 py-2">
                                     <input type="number" value={lb.reel} onChange={e => updateLigneBanque(lb.id, 'reel', e.target.value)}
+                                      onKeyDown={onlyNumbers}
                                       placeholder="0"
                                       className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" />
                                   </td>
@@ -596,7 +596,7 @@ export default function SuiviPage() {
                                 const ecar = reel - ant;
                                 const pct  = ant > 0 ? (reel / ant) * 100 : 0;
                                 const over = !isRevenu && ant > 0 && reel > ant;
-                                const fondLie = isEpAutre ? trouverCompte(cat, comptes) : null;
+                                const fondLie = isEpAutre ? trouverCompteParNom(cat.nom, comptes) : null;
                                 const ecarColor = isRevenu
                                   ? reel > ant ? 'text-green-500' : reel < ant ? 'text-red-500' : 'text-[var(--text-muted)]'
                                   : ecar > 0   ? 'text-red-500'  : ecar < 0   ? 'text-green-500' : 'text-[var(--text-muted)]';
@@ -622,12 +622,12 @@ export default function SuiviPage() {
                                     </td>
                                     <td className="px-3 py-2">
                                       <input type="number" value={lignes[cat.id]?.anticipe ?? ''}
-                                        onChange={e => handleChange(cat.id, 'anticipe', e.target.value)} placeholder="0"
+                                        onChange={e => handleChange(cat.id, 'anticipe', e.target.value)} onKeyDown={onlyNumbers} placeholder="0"
                                         className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" />
                                     </td>
                                     <td className="px-3 py-2">
                                       <input type="number" value={lignes[cat.id]?.reel ?? ''}
-                                        onChange={e => handleChange(cat.id, 'reel', e.target.value)} placeholder="0"
+                                        onChange={e => handleChange(cat.id, 'reel', e.target.value)} onKeyDown={onlyNumbers} placeholder="0"
                                         className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" />
                                     </td>
                                     <td className={clsx('px-4 py-2.5 text-right text-sm font-medium', ecarColor)}>
