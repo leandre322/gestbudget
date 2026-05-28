@@ -124,25 +124,68 @@ export default function SuiviPage() {
       const db  = await resBanques.json();
       const bqs = db.banques ?? [];
       setBanques(bqs);
-      const key = `lignes-banque-${annee}-${mois}`;
+      // ── Initialiser lignesBanque depuis DB (source de vérité) ──────────────
+      // On lit montantReel des catégories epargne_precaution en DB
+      // pour rester cohérent avec le Dashboard qui lit la même source
+      const catsPrecaution   = d.categories.filter((c: any) => c.type === 'epargne_precaution');
+      const totalAnticipe    = catsPrecaution.reduce((s: number, c: any) => {
+        const b = d.budget.find((b: any) => b.categorieId === c.id);
+        return s + (b?.montantAnticipe ?? 0);
+      }, 0);
+      const anticipeParLigne = bqs.length > 0 ? Math.round(totalAnticipe / Math.min(2, bqs.length)) : 0;
+
       try {
-        const sv = localStorage.getItem(key);
+        // Essayer de reconstruire depuis localStorage (préserve les saisies non-sauvegardées)
+        const key = `lignes-banque-${annee}-${mois}`;
+        const sv  = localStorage.getItem(key);
         if (sv) {
-          setLignesBanque(JSON.parse(sv));
+          const parsed: LigneBanque[] = JSON.parse(sv);
+          // Vérifier que les valeurs localStorage sont cohérentes avec DB
+          // Si reel localStorage = '' mais DB a une valeur → prendre DB
+          const merged = parsed.map((lb: LigneBanque, idx: number) => {
+            const catPrec = catsPrecaution[idx];
+            const dbReel  = catPrec
+              ? String(d.budget.find((b: any) => b.categorieId === catPrec.id)?.montantReel || '')
+              : '';
+            return {
+              ...lb,
+              // Priorité : localStorage si saisi, sinon DB
+              reel: (lb.reel && parseInt(lb.reel) > 0) ? lb.reel : dbReel,
+            };
+          });
+          setLignesBanque(merged);
         } else {
-          const catsPrecaution   = d.categories.filter((c: any) => c.type === 'epargne_precaution');
-          const totalAnticipe    = catsPrecaution.reduce((s: number, c: any) => {
-            const b = d.budget.find((b: any) => b.categorieId === c.id);
-            return s + (b?.montantAnticipe ?? 0);
-          }, 0);
-          const anticipeParLigne = bqs.length > 0 ? Math.round(totalAnticipe / Math.min(2, bqs.length)) : 0;
-          setLignesBanque([
-            { id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: anticipeParLigne, reel: '' },
-            { id: `lb-${Date.now()}-2`, banqueId: bqs[1]?.id ?? '', anticipe: anticipeParLigne, reel: '' },
-          ]);
+          // Pas de localStorage → construire depuis DB + banques
+          const lignesInitiales: LigneBanque[] = bqs.map((bq: any, idx: number) => {
+            const catPrec = catsPrecaution[idx];
+            const dbReel  = catPrec
+              ? String(d.budget.find((b: any) => b.categorieId === catPrec.id)?.montantReel || '')
+              : '';
+            return {
+              id:        `lb-${Date.now()}-${idx + 1}`,
+              banqueId:  bq.id ?? '',
+              anticipe:  anticipeParLigne,
+              reel:      dbReel,  // ← depuis DB, pas ''
+            };
+          });
+          // Garantir au moins 2 lignes
+          if (lignesInitiales.length === 0) {
+            lignesInitiales.push({ id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: 0, reel: '' });
+          }
+          setLignesBanque(lignesInitiales);
         }
       } catch {
-        setLignesBanque([{ id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: 0, reel: '' }]);
+        // Fallback minimal depuis DB
+        const lignesFallback: LigneBanque[] = catsPrecaution.slice(0, bqs.length).map((cat: any, idx: number) => ({
+          id:       `lb-${Date.now()}-${idx + 1}`,
+          banqueId: bqs[idx]?.id ?? '',
+          anticipe: anticipeParLigne,
+          reel:     String(d.budget.find((b: any) => b.categorieId === cat.id)?.montantReel || ''),
+        }));
+        setLignesBanque(lignesFallback.length > 0
+          ? lignesFallback
+          : [{ id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: 0, reel: '' }]
+        );
       }
     }
 
