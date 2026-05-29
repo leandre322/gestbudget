@@ -1,22 +1,22 @@
-﻿import { NextRequest, NextResponse } from ''next/server'';
-import { getServerSession } from ''next-auth'';
-import { authOptions } from ''@/lib/auth'';
-import prisma from ''@/lib/prisma'';
-import { TypeCategorie } from ''@prisma/client'';
+﻿import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import prisma from '@/lib/prisma';
+import { TypeCategorie } from '@prisma/client';
 
 // GET /api/categories
 export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: ''Non authentifiÃ©'' }, { status: 401 });
+    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifiÃ©' }, { status: 401 });
 
     // Essayer avec la relation banque (nÃ©cessite la colonne banque_id en DB)
-    // Fallback sans la relation si la colonne n''existe pas encore
+    // Fallback sans la relation si la colonne n'existe pas encore
     let categories: any[];
     try {
       categories = await prisma.categorie.findMany({
         where:   { userId: session.user.id },
-        orderBy: { ordre: ''asc'' },
+        orderBy: { ordre: 'asc' },
         include: {
           compteFonds: { select: { id: true, nom: true } },
           banque:      { select: { id: true, nomBanque: true } },
@@ -24,10 +24,10 @@ export async function GET(req: NextRequest) {
       });
     } catch (includeErr: any) {
       // Fallback : colonne banque_id probablement absente en DB
-      console.warn(''GET /api/categories: banque relation failed, falling back:'', includeErr?.message?.substring(0, 100));
+      console.warn('GET /api/categories: banque relation failed, falling back:', includeErr?.message?.substring(0, 100));
       categories = await prisma.categorie.findMany({
         where:   { userId: session.user.id },
-        orderBy: { ordre: ''asc'' },
+        orderBy: { ordre: 'asc' },
         include: {
           compteFonds: { select: { id: true, nom: true } },
         },
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: ''Non authentifiÃ©'' }, { status: 401 });
+    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifiÃ©' }, { status: 401 });
 
     const { nom, type, sousType, ordre, compteFondsId, banqueId } = await req.json();
 
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: ''Non authentifiÃ©'' }, { status: 401 });
+    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifiÃ©' }, { status: 401 });
 
     const { id, nom, type, sousType, ordre, isActive, compteFondsId, banqueId } = await req.json();
 
@@ -101,12 +101,12 @@ export async function PUT(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: ''Non authentifiÃ©'' }, { status: 401 });
+    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifiÃ©' }, { status: 401 });
 
-    const id = new URL(req.url).searchParams.get(''id'');
-    if (!id) return NextResponse.json({ error: ''ID manquant'' }, { status: 400 });
+    const id = new URL(req.url).searchParams.get('id');
+    if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
 
-    // DÃ©sactiver plutÃ´t que supprimer (prÃ©serve l''historique)
+    // DÃ©sactiver plutÃ´t que supprimer (prÃ©serve l'historique)
     await prisma.categorie.update({
       where: { id, userId: session.user.id },
       data:  { isActive: false },
