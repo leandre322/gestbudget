@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Plus, Pencil, Trash2, Check, X, Upload, Save, Link, Link2Off } from 'lucide-react';
+import { Plus, Pencil, Trash2, Check, X, Upload, Save, Link, Link2Off, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import { TYPE_LABELS, ORDRE_TYPES, formatFCFA } from '@/types';
 import { clsx } from 'clsx';
 
@@ -45,6 +45,16 @@ export default function ParametresPage() {
   const [savedTaux,     setSavedTaux]     = useState(false);
   const [savingLien,    setSavingLien]    = useState<string|null>(null);
   const [savingBanqueLien, setSavingBanqueLien] = useState<string|null>(null);
+  // Collapsible category groups (all collapsed by default)
+  const [catGroupsOpen,   setCatGroupsOpen]   = useState<Record<string,boolean>>({});
+  const toggleCatGroup = (type: string) =>
+    setCatGroupsOpen(p => ({ ...p, [type]: !p[type] }));
+  const ouvrirTousCats = () => {
+    const n: Record<string,boolean> = {};
+    ORDRE_TYPES.forEach(t => { n[t] = true; });
+    setCatGroupsOpen(n);
+  };
+  const plierTousCats = () => setCatGroupsOpen({});
 
   // isDirty : vrai dès que l'utilisateur modifie revenuRef ou tauxRef
   // → empêche le rechargement depuis DB d'écraser les modifications en cours
@@ -223,7 +233,11 @@ export default function ParametresPage() {
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="spinner scale-150" /></div>;
 
-  const catsByType  = ORDRE_TYPES.map(type => ({ type, cats: categories.filter(c => c.type === type) })).filter(g => g.cats.length > 0);
+  // Afficher uniquement les catégories actives (isActive=true)
+  const catsByType  = ORDRE_TYPES.map(type => ({
+    type,
+    cats: categories.filter(c => c.type === type && c.isActive),
+  })).filter(g => g.cats.length > 0);
   const fondsActifs = comptes.filter(c => c.isActive);
   const inputCls    = "w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none transition-all";
 
@@ -317,12 +331,22 @@ export default function ParametresPage() {
             </div>
           </div>
 
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center flex-wrap gap-2">
             <p className="text-sm text-[var(--text-muted)]">{categories.filter(c => c.isActive).length} catégories actives</p>
-            <button onClick={() => setShowNewCat(!showNewCat)}
-              className="flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white rounded-xl px-3.5 py-2 text-sm font-medium transition-all">
-              <Plus size={14} />Ajouter
-            </button>
+            <div className="flex items-center gap-2">
+              <button onClick={plierTousCats}
+                className="flex items-center gap-1 border border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] rounded-xl px-3 py-1.5 text-xs font-medium transition-all hover:bg-slate-50 dark:hover:bg-dark-card">
+                <ChevronsUpDown size={12} />Tout plier
+              </button>
+              <button onClick={ouvrirTousCats}
+                className="flex items-center gap-1 border border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] rounded-xl px-3 py-1.5 text-xs font-medium transition-all hover:bg-slate-50 dark:hover:bg-dark-card">
+                <ChevronsDownUp size={12} />Tout déplier
+              </button>
+              <button onClick={() => setShowNewCat(!showNewCat)}
+                className="flex items-center gap-1.5 bg-primary hover:bg-primary-dark text-white rounded-xl px-3.5 py-2 text-sm font-medium transition-all">
+                <Plus size={14} />Ajouter
+              </button>
+            </div>
           </div>
 
           {showNewCat && (
@@ -351,10 +375,15 @@ export default function ParametresPage() {
 
           {catsByType.map(({ type, cats }) => (
             <div key={type} className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
-              <div className="px-4 py-2.5 bg-slate-50 dark:bg-dark-card border-b border-[var(--border)] flex items-center justify-between">
-                <div>
+              <div
+                className="px-4 py-2.5 bg-slate-50 dark:bg-dark-card border-b border-[var(--border)] flex items-center justify-between cursor-pointer hover:bg-slate-100 dark:hover:bg-dark-card/80 transition-colors select-none"
+                onClick={() => toggleCatGroup(type)}>
+                <div className="flex items-center gap-2">
+                  {catGroupsOpen[type]
+                    ? <ChevronDown size={14} className="text-[var(--text-muted)] flex-shrink-0" />
+                    : <ChevronRight size={14} className="text-[var(--text-muted)] flex-shrink-0" />}
                   <span className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wide">{TYPE_LABELS[type as keyof typeof TYPE_LABELS]}</span>
-                  <span className="ml-2 text-xs text-[var(--text-muted)] opacity-60">({cats.length})</span>
+                  <span className="text-xs text-[var(--text-muted)] opacity-60">({cats.length})</span>
                 </div>
                 <div className="flex items-center gap-3">
                   {(tauxRef[type as GrandeCategorie] ?? 0) > 0 && (
@@ -365,11 +394,12 @@ export default function ParametresPage() {
                   {type === 'epargne_autre' && fondsActifs.length > 0 && (
                     <span className="text-xs text-[var(--text-muted)] flex items-center gap-1"><Link size={10} />Fond lié</span>
                   )}
-                  {type === 'epargne_investissement' && banques.length > 0 && (
+                  {(type === 'epargne_investissement' || type === 'epargne_precaution') && banques.length > 0 && (
                     <span className="text-xs text-[var(--text-muted)] flex items-center gap-1">🏦 Banque liée</span>
                   )}
                 </div>
               </div>
+              {catGroupsOpen[type] && (
               <div className="divide-y divide-[var(--border)]">
                 {cats.map((cat: any) => (
                   <div key={cat.id} className={clsx('px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors', !cat.isActive && 'opacity-40')}>
@@ -403,7 +433,7 @@ export default function ParametresPage() {
                           </div>
                         )}
                         {/* ── Dropdown liaison banque (epargne_investissement uniquement) ── */}
-                        {type === 'epargne_investissement' && cat.isActive && (
+                        {(type === 'epargne_investissement' || type === 'epargne_precaution') && cat.isActive && (
                           <div className="flex items-center gap-1.5 flex-shrink-0">
                             {savingBanqueLien === cat.id ? (
                               <span className="text-xs text-primary animate-pulse">Liaison...</span>
@@ -437,6 +467,7 @@ export default function ParametresPage() {
                   </div>
                 ))}
               </div>
+              )}
             </div>
           ))}
         </div>
