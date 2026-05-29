@@ -83,7 +83,11 @@ export default function SuiviPage() {
   const expandAllGroups   = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = true;  }); setGroupsOpen(n); };
   const collapseAllGroups = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = false; }); setGroupsOpen(n); };
 
-  const timerRef            = useRef<NodeJS.Timeout>();
+  const timerRef            = useRef<NodeJS.Timeout | null>(null);
+  // ── sauvegarderRef : toujours pointer vers la dernière version de sauvegarder ──
+  // Évite le bug de stale closure : le timer scheduleSave capturerait sinon
+  // l'ancienne version de sauvegarder (avec les anciens lignes) → écrase les nouvelles valeurs
+  const sauvegarderRef = useRef<() => Promise<void>>(async () => {});
   const moisCourantReel     = new Date().getMonth() + 1;
   const anneeCouranteReelle = new Date().getFullYear();
 
@@ -108,9 +112,12 @@ export default function SuiviPage() {
     const init: Lignes = {};
     for (const cat of d.categories) {
       const b = d.budget.find((b: any) => b.categorieId === cat.id);
+      // Note : on utilise !== undefined/null pour gérer 0 correctement (0 est falsy!)
       init[cat.id] = {
-        anticipe: b?.montantAnticipe ? String(b.montantAnticipe) : '',
-        reel:     b?.montantReel     ? String(b.montantReel)     : '',
+        anticipe: (b?.montantAnticipe != null && b.montantAnticipe !== 0)
+          ? String(b.montantAnticipe) : '',
+        reel:     (b?.montantReel     != null && b.montantReel     !== 0)
+          ? String(b.montantReel)     : '',
       };
     }
     setLignes(init);
@@ -231,7 +238,8 @@ export default function SuiviPage() {
 
   const scheduleSave = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => sauvegarder(), 30000);
+    // Utiliser sauvegarderRef.current → toujours la dernière version avec les derniers lignes
+    timerRef.current = setTimeout(() => { sauvegarderRef.current(); }, 30_000);
   };
 
   const handleChange = (catId: string, field: 'anticipe'|'reel', val: string) => {
@@ -241,6 +249,9 @@ export default function SuiviPage() {
   };
 
   const sauvegarder = async () => {
+    // ── Annuler le timer auto-save pour éviter double-save ──────────────────
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+
     if (!data?.anneeId) {
       toast.error('Aucune année sélectionnée — rechargez la page');
       return;
@@ -258,6 +269,11 @@ export default function SuiviPage() {
         lignesComplet[cat.id] = { anticipe: '0', reel: '0' };
       }
     }
+
+    // Log pour debug (visible dans console navigateur)
+    const nonZeroEntries = Object.entries(lignesComplet)
+      .filter(([_, v]) => parseInt(v.reel) !== 0 || parseInt(v.anticipe) !== 0);
+    console.log(`💾 Save ${mois}/${data.anneeId}: ${nonZeroEntries.length} lignes non-nulles`);
 
     const res = await fetch('/api/budget', {
       method:  'PUT',
@@ -354,6 +370,10 @@ export default function SuiviPage() {
       toast.success('Suivi mensuel sauvegardé ✓');
       (window as any).__setSaveStatus?.('saved');
 
+      // ── Recharger depuis DB pour garantir la cohérence (y compris les 0) ────────────
+      // Ne pas se fier au state local — la DB est la source de vérité
+      await charger();
+
       // ── Mettre à jour data.budget pour TOUTES les catégories (y compris nouvelles) ──
       // Important : les catégories jamais sauvegardées ne sont pas dans prev.budget
       // → on les ajoute pour que charger() ne les écrase pas lors d'un rechargement
@@ -361,11 +381,16 @@ export default function SuiviPage() {
         if (!prev?.budget) return prev;
         const existingIds = new Set(prev.budget.map((b: any) => b.categorieId));
         // Mettre à jour les entrées existantes
-        const updatedBudget = prev.budget.map((b: any) => ({
-          ...b,
-          montantAnticipe: parseInt(lignes[b.categorieId]?.anticipe ?? '') || b.montantAnticipe,
-          montantReel:     parseInt(lignes[b.categorieId]?.reel     ?? '') || b.montantReel,
-        }));
+        const updatedBudget = prev.budget.map((b: any) => {
+          const newAnt  = lignes[b.categorieId]?.anticipe;
+          const newReel = lignes[b.categorieId]?.reel;
+          return {
+            ...b,
+            // Utiliser la nouvelle valeur MÊME si elle est 0 (parseInt('0') = 0, valide!)
+            montantAnticipe: newAnt  !== undefined ? (parseInt(newAnt)  || 0) : b.montantAnticipe,
+            montantReel:     newReel !== undefined ? (parseInt(newReel) || 0) : b.montantReel,
+          };
+        });
         // Ajouter les nouvelles catégories qui n'avaient pas d'entrée DB
         const cats = prev.categories ?? [];
         for (const [catId, vals] of Object.entries(lignes as Record<string, { anticipe: string; reel: string }>)) {
@@ -398,6 +423,13 @@ export default function SuiviPage() {
       (window as any).__setSaveStatus?.('error');
     }
   };
+
+  // ── Sync sauvegarderRef → toujours pointer vers la version courante ──────
+  // Sans ça, le timer scheduleSave garde une référence stale (anciens lignes)
+  // et peut écraser une valeur sauvegardée manuellement (ex: 18000 écrase 0)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { sauvegarderRef.current = sauvegarder; });
+
 
   const copierMoisPrecedent = async () => {
     const pm = mois === 1 ? 12 : mois - 1;
