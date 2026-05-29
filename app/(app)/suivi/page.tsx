@@ -407,43 +407,41 @@ export default function SuiviPage() {
   const ajouterLigneBanque   = () => setLignesBanque(prev => [...prev, { id: `lb-${Date.now()}`, banqueId: banques[0]?.id ?? '', anticipe: 0, reel: '' }]);
   const supprimerLigneBanque = (id: string) => setLignesBanque(prev => prev.filter(l => l.id !== id));
 
-  // updateLigneBanque : met à jour lignesBanque, puis sync lignes[catPrec] séparément
+  // updateLigneBanque — version PROPRE sans anti-pattern React
+  // Appelle setLignes et setLignesBanque en top-level, jamais l'un dans l'autre
   const updateLigneBanque = (id: string, field: keyof LigneBanque, val: any) => {
     // 1. Mettre à jour lignesBanque
     setLignesBanque(prev => prev.map(l => l.id === id ? { ...l, [field]: val } : l));
 
-    // 2. Si champ 'reel' modifié → sync lignes[catPrec] (appel séparé, pas dans le callback)
+    // 2. Si champ 'reel' modifié → sync lignes[catPrec] en top-level
     if (field === 'reel') {
       const cats = data?.categories ?? [];
       const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
-      if (catsPrecaution.length > 0) {
-        // Reconstruire lignesBanque avec la nouvelle valeur pour calculer le sync
-        setLignesBanque(prevBanque => {
-          const next = prevBanque.map(l => l.id === id ? { ...l, reel: val } : l);
-          // Calculer les nouveaux réels par catPrec
-          const newReels: Record<string, string> = {};
-          catsPrecaution.forEach((cat: any, idx: number) => {
-            const lb = next[idx];
-            newReels[cat.id] = lb ? (lb.reel || '0') : '0';
-          });
-          // Surplus si plus de lignes que de catégories
-          if (next.length > catsPrecaution.length && catsPrecaution.length > 0) {
-            const lastCat = catsPrecaution[catsPrecaution.length - 1];
-            const surplus = next.slice(catsPrecaution.length)
-              .reduce((s: number, lb: any) => s + (parseInt(lb.reel) || 0), 0);
-            newReels[lastCat.id] = String((parseInt(newReels[lastCat.id] || '0')) + surplus);
-          }
-          // Sync lignes SÉPARÉMENT (pas dans ce callback)
-          setLignes(prevLignes => {
-            const synced = { ...prevLignes };
-            Object.entries(newReels).forEach(([catId, reel]) => {
-              synced[catId] = { anticipe: prevLignes[catId]?.anticipe ?? '0', reel };
-            });
-            return synced;
-          });
-          return next;
+      if (catsPrecaution.length === 0) return;
+
+      // Calculer la liste banque mise à jour (appliquer le changement explicitement)
+      const updatedBanque = lignesBanque.map(l => l.id === id ? { ...l, reel: String(val) } : l);
+
+      // Mettre à jour lignes[catPrec] en top-level (pas dans un autre callback)
+      setLignes(prev => {
+        const synced = { ...prev }; // Inclut TOUTES les catégories (epargne_investissement etc.)
+        catsPrecaution.forEach((cat: any, idx: number) => {
+          const lb = updatedBanque[idx];
+          synced[cat.id] = {
+            anticipe: prev[cat.id]?.anticipe ?? '0',
+            reel:     lb ? (String(lb.reel) || '0') : '0',
+          };
         });
-      }
+        // Surplus : sommer dans la dernière catégorie precaution
+        if (updatedBanque.length > catsPrecaution.length && catsPrecaution.length > 0) {
+          const lastCat = catsPrecaution[catsPrecaution.length - 1];
+          const surplus = updatedBanque.slice(catsPrecaution.length)
+            .reduce((s: number, lb: any) => s + (parseInt(lb.reel) || 0), 0);
+          const current = parseInt(synced[lastCat.id]?.reel || '0');
+          synced[lastCat.id] = { ...synced[lastCat.id], reel: String(current + surplus) };
+        }
+        return synced; // Toutes les autres catégories (epargne_investissement...) sont préservées
+      });
     }
   };
 
@@ -816,15 +814,41 @@ export default function SuiviPage() {
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
           <h3 className="font-semibold text-[var(--text)] mb-3 text-sm">🥧 Répartition dépenses ce mois</h3>
           {donutData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie data={donutData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" paddingAngle={2}>
-                  {donutData.map((_: any, i: number) => <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />)}
-                </Pie>
-                <Tooltip formatter={(v: number) => formatFCFA(v)} />
-                <Legend iconType="circle" iconSize={8} />
-              </PieChart>
-            </ResponsiveContainer>
+            <>
+              <ResponsiveContainer width="100%" height={150}>
+                <PieChart>
+                  <Pie data={donutData} cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value" paddingAngle={2}>
+                    {donutData.map((_: any, i: number) => <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip formatter={(v: number) => formatFCFA(v)} />
+                </PieChart>
+              </ResponsiveContainer>
+              {/* Légende triée par montant décroissant */}
+              <div className="mt-2 space-y-1 max-h-32 overflow-y-auto pr-1">
+                {donutData
+                  .map((item: any, origIdx: number) => ({ ...item, origIdx }))
+                  .sort((a: any, b: any) => (b.value as number) - (a.value as number))
+                  .map((item: any) => {
+                    const total = donutData.reduce((s: number, d: any) => s + (d.value as number), 0);
+                    const pct = total > 0 ? ((item.value as number) / total * 100).toFixed(1) : '0';
+                    return (
+                      <div key={item.origIdx} className="flex items-center gap-1.5 text-xs">
+                        <div className="w-2 h-2 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: DONUT_COLORS[item.origIdx % DONUT_COLORS.length] }} />
+                        <span className="flex-1 truncate text-[var(--text)]">{item.name}</span>
+                        <span className="text-[var(--text-muted)] w-9 text-right flex-shrink-0">{pct}%</span>
+                        <span className="font-semibold text-[var(--text)] w-24 text-right flex-shrink-0">
+                          {formatFCFA(item.value as number)}
+                        </span>
+                      </div>
+                    );
+                  })}
+              </div>
+              <div className="mt-2 pt-2 border-t border-[var(--border)] flex justify-between text-xs font-bold">
+                <span className="text-[var(--text-muted)]">Total</span>
+                <span className="text-[var(--text)]">{formatFCFA(donutData.reduce((s: number, d: any) => s + (d.value as number), 0))}</span>
+              </div>
+            </>
           ) : (
             <div className="h-40 flex items-center justify-center text-[var(--text-muted)] text-sm">Aucune dépense ce mois</div>
           )}

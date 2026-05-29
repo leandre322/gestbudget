@@ -512,7 +512,7 @@ function OngletGlobal({ moisCourant, anneeCourante, budgetMois, loadingMois }: {
                 text:solde>=0?'text-green-700 dark:text-green-400':'text-red-600 dark:text-red-400',
                 icon:Wallet, sparkColor:solde>=0?'#10B981':'#EF4444', sparkData:sparklines.solde },
             ].map(k => (
-              <div key={k.titre} className={clsx('rounded-2xl border p-4 flex flex-col gap-1 transition-colors', k.bg)}>
+              <div key={k.titre} className={clsx('rounded-2xl border p-3.5 flex flex-col gap-0.5 transition-colors', k.bg)}>
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-medium opacity-60">{k.titre}</p>
                   <div className="flex items-center gap-1">
@@ -525,13 +525,11 @@ function OngletGlobal({ moisCourant, anneeCourante, budgetMois, loadingMois }: {
                     )}
                   </div>
                 </div>
-                <p className={clsx('text-xl font-bold', k.text)}>{formatFCFA(k.val)}</p>
+                <p className={clsx('text-lg font-bold', k.text)}>{formatFCFA(k.val)}</p>
                 <p className="text-xs opacity-55">Prévision : {formatFCFA(k.ant)}</p>
                 {/* Mini sparkline */}
                 {k.sparkData.length >= 2 && (
-                  <div className="mt-1 pt-1 border-t border-current border-opacity-10">
-                    <Sparkline data={k.sparkData} color={k.sparkColor} />
-                  </div>
+                  <Sparkline data={k.sparkData} color={k.sparkColor} height={18} width={60} />
                 )}
               </div>
             ))}
@@ -672,7 +670,7 @@ function OngletGlobal({ moisCourant, anneeCourante, budgetMois, loadingMois }: {
         ].map(k => (
           <div key={k.label} className={clsx('rounded-2xl border p-4 transition-colors', k.bg)}>
             <div className="flex items-center justify-between mb-2"><p className="text-xs font-medium opacity-60">{k.label}</p><k.icon size={15} className="opacity-40" /></div>
-            <p className={clsx('text-xl font-bold', k.text)}>{formatFCFA(k.val)}</p>
+            <p className={clsx('text-lg font-bold', k.text)}>{formatFCFA(k.val)}</p>
           </div>
         ))}
         <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 transition-colors">
