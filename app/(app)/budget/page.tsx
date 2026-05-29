@@ -8,7 +8,9 @@ import { formatFCFA, ORDRE_TYPES, TYPE_LABELS, MOIS_LABELS, LABEL_PREVISION } fr
 import { clsx } from 'clsx';
 import { useMois } from '../layout';
 
-const TYPES_OUVERTS = ['revenu', 'epargne_precaution'];
+// Tout plié par défaut — déplier via le bouton "Tout déplier"
+const TYPES_OUVERTS: string[] = [];
+
 const MOIS_NOMS = ['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 
 export default function BudgetPage() {
@@ -63,8 +65,8 @@ export default function BudgetPage() {
   };
 
   const copierVersProchainMois = async () => {
-    const nm    = mois === 12 ? 1        : mois + 1;
-    const na    = mois === 12 ? annee + 1 : annee;
+    const nm = mois === 12 ? 1        : mois + 1;
+    const na = mois === 12 ? annee + 1 : annee;
     const ok = window.confirm(
       `Copier le budget vers ${MOIS_NOMS[nm]} ${na} ?\nCela remplacera les prévisions existantes de ce mois.`
     );
@@ -140,11 +142,10 @@ export default function BudgetPage() {
         </div>
       </div>
 
-      {/* Tableau centré */}
+      {/* Tableau */}
       <div className="max-w-3xl mx-auto w-full">
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
 
-          {/* En-tête */}
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
