@@ -124,25 +124,75 @@ export default function SuiviPage() {
       const db  = await resBanques.json();
       const bqs = db.banques ?? [];
       setBanques(bqs);
-      const key = `lignes-banque-${annee}-${mois}`;
+      // ── Initialiser lignesBanque + lignes[catPrec] depuis DB (source de vérité) ──
+      const catsPrecaution   = d.categories.filter((c: any) => c.type === 'epargne_precaution');
+      const totalAnticipe    = catsPrecaution.reduce((s: number, c: any) => {
+        const b = d.budget.find((b: any) => b.categorieId === c.id);
+        return s + (b?.montantAnticipe ?? 0);
+      }, 0);
+      const anticipeParLigne = bqs.length > 0 ? Math.round(totalAnticipe / Math.min(2, bqs.length)) : 0;
+
+      // Helper : sync lignes[catPrec] depuis une liste de lignesBanque
+      const syncLignesFromBanque = (lbs: LigneBanque[], prevLignes: Record<string, { anticipe: string; reel: string }>) => {
+        const synced = { ...prevLignes };
+        catsPrecaution.forEach((cat: any, idx: number) => {
+          const lb = lbs[idx];
+          synced[cat.id] = {
+            anticipe: prevLignes[cat.id]?.anticipe ?? '0',
+            reel:     lb ? (lb.reel || '0') : '0',
+          };
+        });
+        if (lbs.length > catsPrecaution.length && catsPrecaution.length > 0) {
+          const lastCat = catsPrecaution[catsPrecaution.length - 1];
+          const surplus = lbs.slice(catsPrecaution.length).reduce((s: number, lb: any) => s + (parseInt(lb.reel) || 0), 0);
+          const current = parseInt(synced[lastCat.id]?.reel || '0');
+          synced[lastCat.id] = { ...synced[lastCat.id], reel: String(current + surplus) };
+        }
+        return synced;
+      };
+
       try {
-        const sv = localStorage.getItem(key);
+        const key = `lignes-banque-${annee}-${mois}`;
+        const sv  = localStorage.getItem(key);
         if (sv) {
-          setLignesBanque(JSON.parse(sv));
+          // localStorage existe — merger avec valeurs DB (DB prioritaire si localStorage vide)
+          const parsed: LigneBanque[] = JSON.parse(sv);
+          const merged = parsed.map((lb: LigneBanque, idx: number) => {
+            const catPrec = catsPrecaution[idx];
+            const dbReel  = catPrec
+              ? String(d.budget.find((b: any) => b.categorieId === catPrec.id)?.montantReel || '')
+              : '';
+            return { ...lb, reel: (lb.reel && parseInt(lb.reel) > 0) ? lb.reel : dbReel };
+          });
+          setLignesBanque(merged);
+          setLignes(prev => syncLignesFromBanque(merged, prev));
         } else {
-          const catsPrecaution   = d.categories.filter((c: any) => c.type === 'epargne_precaution');
-          const totalAnticipe    = catsPrecaution.reduce((s: number, c: any) => {
-            const b = d.budget.find((b: any) => b.categorieId === c.id);
-            return s + (b?.montantAnticipe ?? 0);
-          }, 0);
-          const anticipeParLigne = bqs.length > 0 ? Math.round(totalAnticipe / Math.min(2, bqs.length)) : 0;
-          setLignesBanque([
-            { id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: anticipeParLigne, reel: '' },
-            { id: `lb-${Date.now()}-2`, banqueId: bqs[1]?.id ?? '', anticipe: anticipeParLigne, reel: '' },
-          ]);
+          // Construire depuis banques + valeurs DB
+          const ts = Date.now();
+          const lignesInit: LigneBanque[] = bqs.map((bq: any, idx: number) => {
+            const catPrec = catsPrecaution[idx];
+            const dbReel  = catPrec
+              ? String(d.budget.find((b: any) => b.categorieId === catPrec.id)?.montantReel || '')
+              : '';
+            return { id: `lb-${ts}-${idx + 1}`, banqueId: bq.id ?? '', anticipe: anticipeParLigne, reel: dbReel };
+          });
+          if (lignesInit.length === 0) {
+            lignesInit.push({ id: `lb-${ts}-1`, banqueId: bqs[0]?.id ?? '', anticipe: 0, reel: '' });
+          }
+          setLignesBanque(lignesInit);
+          setLignes(prev => syncLignesFromBanque(lignesInit, prev));
         }
       } catch {
-        setLignesBanque([{ id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: 0, reel: '' }]);
+        const ts = Date.now();
+        const fallback: LigneBanque[] = catsPrecaution.slice(0, Math.max(bqs.length, 1)).map((cat: any, idx: number) => ({
+          id:       `lb-${ts}-${idx + 1}`,
+          banqueId: bqs[idx]?.id ?? '',
+          anticipe: anticipeParLigne,
+          reel:     String(d.budget.find((b: any) => b.categorieId === cat.id)?.montantReel || ''),
+        }));
+        if (fallback.length === 0) fallback.push({ id: `lb-${ts}-1`, banqueId: bqs[0]?.id ?? '', anticipe: 0, reel: '' });
+        setLignesBanque(fallback);
+        setLignes(prev => syncLignesFromBanque(fallback, prev));
       }
     }
 
@@ -203,17 +253,32 @@ export default function SuiviPage() {
     const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
 
     // 2. Répercuter banques → catégories epargne_precaution en DB
-    if (catsPrecaution.length > 0 && lignesBanque.some(lb => parseInt(lb.reel) > 0)) {
+    // ── Toujours mettre à jour TOUTES les catsPrecaution (source de vérité DB) ──
+    if (catsPrecaution.length > 0) {
       const newLignesPrecaution = { ...lignes };
+
+      // Calculer le réel par catégorie precaution depuis lignesBanque
       catsPrecaution.forEach((cat: any, idx: number) => {
-        const lb = lignesBanque[idx];
-        if (lb) {
-          newLignesPrecaution[cat.id] = {
-            anticipe: lignes[cat.id]?.anticipe ?? '0',
-            reel:     lb.reel || '0',
-          };
-        }
+        const lb = lignesBanque[idx]; // undefined si moins de banques que de catégories
+        newLignesPrecaution[cat.id] = {
+          anticipe: lignes[cat.id]?.anticipe ?? '0',
+          reel:     lb ? (lb.reel || '0') : '0', // 0 si pas de lignesBanque → efface les valeurs stale
+        };
       });
+
+      // Si plus de lignesBanque que de catégories precaution : sommer le surplus dans la dernière
+      if (lignesBanque.length > catsPrecaution.length && catsPrecaution.length > 0) {
+        const lastCat  = catsPrecaution[catsPrecaution.length - 1];
+        const surplus  = lignesBanque
+          .slice(catsPrecaution.length)
+          .reduce((s: number, lb: any) => s + (parseInt(lb.reel) || 0), 0);
+        const current  = parseInt(newLignesPrecaution[lastCat.id]?.reel || '0');
+        newLignesPrecaution[lastCat.id] = {
+          ...newLignesPrecaution[lastCat.id],
+          reel: String(current + surplus),
+        };
+      }
+
       await fetch('/api/budget', {
         method:  'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -333,10 +398,42 @@ export default function SuiviPage() {
     charger();
   };
 
-  const ajouterLigneBanque    = () => setLignesBanque(prev => [...prev, { id: `lb-${Date.now()}`, banqueId: banques[0]?.id ?? '', anticipe: 0, reel: '' }]);
-  const supprimerLigneBanque  = (id: string) => setLignesBanque(prev => prev.filter(l => l.id !== id));
-  const updateLigneBanque     = (id: string, field: keyof LigneBanque, val: any) =>
-    setLignesBanque(prev => prev.map(l => l.id === id ? { ...l, [field]: val } : l));
+  const ajouterLigneBanque = () => setLignesBanque(prev => [...prev, { id: `lb-${Date.now()}`, banqueId: banques[0]?.id ?? '', anticipe: 0, reel: '' }]);
+  const supprimerLigneBanque = (id: string) => setLignesBanque(prev => prev.filter(l => l.id !== id));
+
+  // ── updateLigneBanque : met à jour lignesBanque ET lignes[catPrec] en sync ──
+  // Garantit que KPI Suivi = KPI Dashboard (même source : lignes ↔ DB)
+  const updateLigneBanque = (id: string, field: keyof LigneBanque, val: any) => {
+    setLignesBanque(prev => {
+      const next = prev.map(l => l.id === id ? { ...l, [field]: val } : l);
+      // Si le champ modifié est 'reel', mettre à jour lignes[catPrec] correspondant
+      if (field === 'reel') {
+        const cats = data?.categories ?? [];
+        const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
+        // Recalculer le total par catPrec depuis next
+        setLignes(prevLignes => {
+          const newLignes = { ...prevLignes };
+          catsPrecaution.forEach((cat: any, idx: number) => {
+            const lb = next[idx];
+            newLignes[cat.id] = {
+              anticipe: prevLignes[cat.id]?.anticipe ?? '0',
+              reel:     lb ? (lb.reel || '0') : '0',
+            };
+          });
+          // Surplus : sommer dans la dernière catégorie
+          if (next.length > catsPrecaution.length && catsPrecaution.length > 0) {
+            const lastCat = catsPrecaution[catsPrecaution.length - 1];
+            const surplus = next.slice(catsPrecaution.length)
+              .reduce((s: number, lb: any) => s + (parseInt(lb.reel) || 0), 0);
+            const current = parseInt(newLignes[lastCat.id]?.reel || '0');
+            newLignes[lastCat.id] = { ...newLignes[lastCat.id], reel: String(current + surplus) };
+          }
+          return newLignes;
+        });
+      }
+      return next;
+    });
+  };
 
   if (loading) return (
     <div className="flex items-center justify-center h-64"><div className="spinner scale-150" /></div>
@@ -355,10 +452,10 @@ export default function SuiviPage() {
   const revAnt  = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
   const revReel = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
 
-  const epAutreAnt  = cats.filter((c: any) => c.type?.startsWith('epargne') && c.type !== 'epargne_precaution').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
-  const epAutreReel = cats.filter((c: any) => c.type?.startsWith('epargne') && c.type !== 'epargne_precaution').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
-  const epAnt  = epAutreAnt  + totalAnticipePrecaution;
-  const epReel = epAutreReel + totalReelBanques;
+  // ── Épargne totale depuis lignes (précaution synchronisé via updateLigneBanque) ──
+  // Source unique = lignes (miroir DB) → même résultat que Dashboard
+  const epAnt  = cats.filter((c: any) => c.type?.startsWith('epargne')).reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
+  const epReel = cats.filter((c: any) => c.type?.startsWith('epargne')).reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
 
   const depAnt  = cats.filter((c: any) => c.type?.startsWith('depense') || c.type === 'remboursement_dette').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
   const depReel = cats.filter((c: any) => c.type?.startsWith('depense') || c.type === 'remboursement_dette').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
