@@ -11,6 +11,9 @@ import { useTheme } from '@/lib/theme';
 import { InactivityWarning } from '@/lib/inactivity';
 import { clsx } from 'clsx';
 import { ToastProvider } from '@/components/Toast';
+import PWARegister from '@/components/PWARegister';
+// Dans le body, avant </ThemeProvider> :
+<PWARegister />
 
 interface MoisCtx { mois: number; annee: number; setMois: (m: number) => void; setAnnee: (a: number) => void; }
 export const MoisContext = createContext<MoisCtx>({ mois: 1, annee: 2026, setMois: () => {}, setAnnee: () => {} });

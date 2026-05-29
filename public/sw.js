@@ -1,1 +1,162 @@
-if(!self.define){let e,t={};const s=(s,a)=>(s=new URL(s+".js",a).href,t[s]||new Promise(t=>{if("document"in self){const e=document.createElement("script");e.src=s,e.onload=t,document.head.appendChild(e)}else e=s,importScripts(s),t()}).then(()=>{let e=t[s];if(!e)throw new Error(`Module ${s} didn’t register its module`);return e}));self.define=(a,n)=>{const i=e||("document"in self?document.currentScript.src:"")||location.href;if(t[i])return;let c={};const r=e=>s(e,i),o={module:{uri:i},exports:c,require:r};t[i]=Promise.all(a.map(e=>o[e]||r(e))).then(e=>(n(...e),c))}}define(["./workbox-4754cb34"],function(e){"use strict";importScripts(),self.skipWaiting(),e.clientsClaim(),e.precacheAndRoute([{url:"/_next/app-build-manifest.json",revision:"f48e11480e366262f736b6b36453d30b"},{url:"/_next/static/9B_2FyCXDh7WhJ42tryta/_buildManifest.js",revision:"a0ae24e7f29dd3809ab75b5dd91a79dc"},{url:"/_next/static/9B_2FyCXDh7WhJ42tryta/_ssgManifest.js",revision:"b6652df95db52feb4daf4eca35380933"},{url:"/_next/static/chunks/23-aacc9bc3d99f031c.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/48-64d0fbcd00dfedd0.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/712-9e1042b6f6ac925c.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/790-f2df305bab842f0d.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/849-5f5796d682a5d130.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/915-94a59fb7d45d40ed.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/(app)/budget/page-134bcb6b63a81b6f.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/(app)/dashboard/page-a54e92a124c1bb25.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/(app)/decaissements/page-ab4f122822af3071.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/(app)/layout-121161df7c27309a.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/(app)/parametres/page-dab3f8a3f8e03712.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/(app)/recapitulatif/page-4fd5a66c8c036de4.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/(app)/suivi/page-d6a88f7246aa5239.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/(auth)/forgot-password/page-68bbadefbddd1880.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/(auth)/layout-3b5f0b11a971ccec.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/(auth)/login/page-9cc1080331d9fdbc.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/(auth)/register/layout-d978a6a8b3de5acd.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/(auth)/register/page-032c59443c44c755.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/_not-found/page-0733618207879e5e.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/layout-25394a58da6265c3.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/app/page-845a01365f4ecac7.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/fd9d1056-2497aec44d8497b0.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/framework-00a8ba1a63cfdc9e.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/main-219cd19a18a23c45.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/main-app-56b41fedd68ed257.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/pages/_app-037b5d058bd9a820.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/pages/_error-6ae619510b1539d6.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/chunks/polyfills-78c92fac7aa8fdd8.js",revision:"79330112775102f91e1010318bae2bd3"},{url:"/_next/static/chunks/webpack-4ebfcd0abd2e4b97.js",revision:"9B_2FyCXDh7WhJ42tryta"},{url:"/_next/static/css/60025773fb37fc7d.css",revision:"60025773fb37fc7d"},{url:"/favicon.svg",revision:"47aad2b96dffde09e65581f2868b0b96"},{url:"/manifest.json",revision:"c0a7468d2ec3be68a287834e42089a95"}],{ignoreURLParametersMatching:[]}),e.cleanupOutdatedCaches(),e.registerRoute("/",new e.NetworkFirst({cacheName:"start-url",plugins:[{cacheWillUpdate:async({request:e,response:t,event:s,state:a})=>t&&"opaqueredirect"===t.type?new Response(t.body,{status:200,statusText:"OK",headers:t.headers}):t}]}),"GET"),e.registerRoute(/^https:\/\/fonts\.(?:gstatic)\.com\/.*/i,new e.CacheFirst({cacheName:"google-fonts-webfonts",plugins:[new e.ExpirationPlugin({maxEntries:4,maxAgeSeconds:31536e3})]}),"GET"),e.registerRoute(/^https:\/\/fonts\.(?:googleapis)\.com\/.*/i,new e.StaleWhileRevalidate({cacheName:"google-fonts-stylesheets",plugins:[new e.ExpirationPlugin({maxEntries:4,maxAgeSeconds:604800})]}),"GET"),e.registerRoute(/\.(?:eot|otf|ttc|ttf|woff|woff2|font.css)$/i,new e.StaleWhileRevalidate({cacheName:"static-font-assets",plugins:[new e.ExpirationPlugin({maxEntries:4,maxAgeSeconds:604800})]}),"GET"),e.registerRoute(/\.(?:jpg|jpeg|gif|png|svg|ico|webp)$/i,new e.StaleWhileRevalidate({cacheName:"static-image-assets",plugins:[new e.ExpirationPlugin({maxEntries:64,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\/_next\/image\?url=.+$/i,new e.StaleWhileRevalidate({cacheName:"next-image",plugins:[new e.ExpirationPlugin({maxEntries:64,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\.(?:mp3|wav|ogg)$/i,new e.CacheFirst({cacheName:"static-audio-assets",plugins:[new e.RangeRequestsPlugin,new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\.(?:mp4)$/i,new e.CacheFirst({cacheName:"static-video-assets",plugins:[new e.RangeRequestsPlugin,new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\.(?:js)$/i,new e.StaleWhileRevalidate({cacheName:"static-js-assets",plugins:[new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\.(?:css|less)$/i,new e.StaleWhileRevalidate({cacheName:"static-style-assets",plugins:[new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\/_next\/data\/.+\/.+\.json$/i,new e.StaleWhileRevalidate({cacheName:"next-data",plugins:[new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\.(?:json|xml|csv)$/i,new e.NetworkFirst({cacheName:"static-data-assets",plugins:[new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(({url:e})=>{if(!(self.origin===e.origin))return!1;const t=e.pathname;return!t.startsWith("/api/auth/")&&!!t.startsWith("/api/")},new e.NetworkFirst({cacheName:"apis",networkTimeoutSeconds:10,plugins:[new e.ExpirationPlugin({maxEntries:16,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(({url:e})=>{if(!(self.origin===e.origin))return!1;return!e.pathname.startsWith("/api/")},new e.NetworkFirst({cacheName:"others",networkTimeoutSeconds:10,plugins:[new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(({url:e})=>!(self.origin===e.origin),new e.NetworkFirst({cacheName:"cross-origin",networkTimeoutSeconds:10,plugins:[new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:3600})]}),"GET")});
+// GestBudget — Service Worker PWA
+// Stratégie : Cache-first pour les assets statiques,
+//             Network-first pour les API, offline fallback pour les pages
+
+const CACHE_NAME    = 'gestbudget-v1';
+const OFFLINE_URL   = '/offline';
+
+// Assets à précacher au install
+const PRECACHE_URLS = [
+  '/',
+  '/dashboard',
+  '/suivi',
+  '/budget',
+  '/ajout-retrait-fonds',
+  '/parametres',
+  '/offline',
+];
+
+// ── Install : précacher les pages principales ─────────────────────────────────
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) =>
+      cache.addAll(PRECACHE_URLS).catch(() => {
+        // Certaines pages peuvent ne pas exister encore — ignorer
+      })
+    ).then(() => self.skipWaiting())
+  );
+});
+
+// ── Activate : supprimer les anciens caches ───────────────────────────────────
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys
+          .filter((key) => key !== CACHE_NAME)
+          .map((key) => caches.delete(key))
+      )
+    ).then(() => self.clients.claim())
+  );
+});
+
+// ── Fetch : stratégie intelligente par type de ressource ─────────────────────
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+  const url = new URL(request.url);
+
+  // Ignorer les requêtes non-GET et les extensions Chrome
+  if (request.method !== 'GET') return;
+  if (url.protocol === 'chrome-extension:') return;
+
+  // 1. API → Network-first (les données doivent être fraîches)
+  if (url.pathname.startsWith('/api/')) {
+    event.respondWith(networkFirst(request));
+    return;
+  }
+
+  // 2. Assets statiques (_next/static) → Cache-first
+  if (url.pathname.startsWith('/_next/static/')) {
+    event.respondWith(cacheFirst(request));
+    return;
+  }
+
+  // 3. Pages HTML → Network-first avec fallback offline
+  if (request.headers.get('accept')?.includes('text/html')) {
+    event.respondWith(networkFirstWithOffline(request));
+    return;
+  }
+
+  // 4. Images, polices → Cache-first
+  event.respondWith(cacheFirst(request));
+});
+
+// ── Stratégies ───────────────────────────────────────────────────────────────
+
+async function cacheFirst(request) {
+  const cached = await caches.match(request);
+  if (cached) return cached;
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch {
+    return new Response('', { status: 503, statusText: 'Service Unavailable' });
+  }
+}
+
+async function networkFirst(request) {
+  try {
+    const response = await fetch(request);
+    // Mettre en cache les réponses API réussies (pour offline)
+    if (response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch {
+    const cached = await caches.match(request);
+    return cached ?? new Response(
+      JSON.stringify({ error: 'Hors ligne — données non disponibles' }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+}
+
+async function networkFirstWithOffline(request) {
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    // Fallback offline
+    const offlinePage = await caches.match(OFFLINE_URL);
+    return offlinePage ?? new Response(
+      '<h1>GestBudget</h1><p>Vous êtes hors ligne. Reconnectez-vous pour accéder à votre budget.</p>',
+      { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+    );
+  }
+}
+
+// ── Background sync — Tentative de resynchronisation ────────────────────────
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'sync-budget') {
+    event.waitUntil(syncBudget());
+  }
+});
+
+async function syncBudget() {
+  // Placeholder pour la synchronisation offline future
+  console.log('[SW] Background sync triggered');
+}
+
+// ── Push notifications ────────────────────────────────────────────────────────
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+  const data = event.data.json();
+  event.waitUntil(
+    self.registration.showNotification(data.title ?? 'GestBudget', {
+      body:    data.body ?? '',
+      icon:    '/icons/icon-192.png',
+      badge:   '/icons/icon-72.png',
+      tag:     data.tag ?? 'gestbudget',
+      data:    data.url ? { url: data.url } : undefined,
+      actions: data.url ? [{ action: 'open', title: 'Ouvrir' }] : [],
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  if (event.notification.data?.url) {
+    event.waitUntil(clients.openWindow(event.notification.data.url));
+  }
+});
