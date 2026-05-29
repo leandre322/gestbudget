@@ -2,81 +2,385 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Variables light ─────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════
+   GESTBUDGET — DARK LUXURY GLASSMORPHISM
+   Accent : Bleu électrique #3B82F6 + Or #F59E0B
+   Modes  : Light Glass (option C) + Dark Luxury
+   P9     : CSS Variables uniquement — zéro valeur codée en dur
+            dans les composants
+═══════════════════════════════════════════════════════════════════ */
+
+/* ── 1. DESIGN TOKENS ──────────────────────────────────────────── */
 :root {
-  --primary:       #1E40AF;
-  --primary-light: #3B82F6;
-  --primary-dark:  #1E3A8A;
+  /* Brand */
+  --primary:       #3B82F6;
+  --primary-light: #60A5FA;
+  --primary-dark:  #2563EB;
+  --gold:          #F59E0B;
+  --gold-light:    #FCD34D;
+  --gold-dark:     #D97706;
   --success:       #10B981;
   --warning:       #F59E0B;
   --danger:        #EF4444;
-  --bg:            #F8FAFC;
-  --surface:       #FFFFFF;
+
+  /* Light mode — verre dépoli subtil (Option A) */
+  --bg:            transparent;
+  --surface:       rgba(255, 255, 255, 0.72);
+  --card:          rgba(255, 255, 255, 0.88);
   --text:          #1E293B;
   --text-muted:    #64748B;
-  --border:        #E2E8F0;
-  --card:          #FFFFFF;
+  --border:        rgba(99, 102, 241, 0.16);
+
+  /* Glow light */
+  --glow-primary:  rgba(59, 130, 246, 0.20);
+  --glow-gold:     rgba(245, 158, 11, 0.18);
+
+  /* Blur levels */
+  --blur-sm:  blur(6px) saturate(130%);
+  --blur-md:  blur(12px) saturate(150%);
+  --blur-lg:  blur(20px) saturate(160%);
+
+  /* Shadows */
+  --shadow-glass:  0 4px 24px rgba(99,102,241,0.10), inset 0 1px 0 rgba(255,255,255,0.80);
+  --shadow-hover:  0 8px 32px rgba(59,130,246,0.22), inset 0 1px 0 rgba(255,255,255,0.70);
+  --shadow-glow:   0 0 24px rgba(59,130,246,0.18);
+  --shadow-gold:   0 0 24px rgba(245,158,11,0.18);
+
+  /* Sidebar */
+  --sidebar-bg:    rgba(255, 255, 255, 0.65);
+  --sidebar-w:     16rem;
 }
 
-/* ── Variables dark ──────────────────────── */
 .dark {
-  --bg:         #0F172A;
-  --surface:    #1E293B;
-  --card:       #253347;
-  --text:       #E2E8F0;
-  --text-muted: #94A3B8;
-  --border:     #334155;
+  /* Dark luxury */
+  --bg:            transparent;
+  --surface:       rgba(14, 22, 42, 0.68);
+  --card:          rgba(20, 30, 55, 0.75);
+  --text:          #E2E8F0;
+  --text-muted:    #94A3B8;
+  --border:        rgba(148, 163, 184, 0.10);
+
+  /* Glow dark */
+  --glow-primary:  rgba(59, 130, 246, 0.30);
+  --glow-gold:     rgba(245, 158, 11, 0.25);
+
+  /* Shadows dark */
+  --shadow-glass:  0 8px 32px rgba(0,0,0,0.50), inset 0 1px 0 rgba(255,255,255,0.05);
+  --shadow-hover:  0 12px 40px rgba(59,130,246,0.32), inset 0 1px 0 rgba(255,255,255,0.07);
+  --shadow-glow:   0 0 32px rgba(59,130,246,0.30);
+  --shadow-gold:   0 0 32px rgba(245,158,11,0.25);
+
+  /* Sidebar dark */
+  --sidebar-bg:    rgba(10, 16, 32, 0.80);
 }
 
-* { box-sizing: border-box; }
+/* ── 2. BACKGROUNDS ────────────────────────────────────────────── */
 
-body {
-  background-color: var(--bg);
-  color: var(--text);
-  transition: background-color 0.3s ease, color 0.3s ease;
+/* Base html — toujours visible car body = transparent */
+html {
+  min-height: 100%;
+  background:
+    radial-gradient(ellipse 80% 60% at 5% 0%,   rgba(99,102,241,0.13) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 50% at 100% 100%, rgba(139,92,246,0.09) 0%, transparent 55%),
+    linear-gradient(145deg, #EEF2FF 0%, #E0E7FF 45%, #EDE9FE 100%);
+  background-attachment: fixed;
 }
 
-/* ── Scrollbar ───────────────────────────── */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
-.dark ::-webkit-scrollbar-thumb { background: #475569; }
-
-/* ── Animations ──────────────────────────── */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
+/* Dark luxury base */
+html.dark {
+  background: linear-gradient(160deg, #060914 0%, #0B0F1C 55%, #060B14 100%);
+  background-attachment: fixed;
 }
-.animate-fadeIn { animation: fadeIn 0.25s ease forwards; }
 
-@keyframes spin { to { transform: rotate(360deg); } }
-.spinner {
-  width: 20px; height: 20px;
-  border: 2px solid #E2E8F0;
-  border-top-color: var(--primary);
+/* Aurora animée — P2 */
+html.dark::before,
+html.dark::after {
+  content: '';
+  position: fixed;
   border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-  display: inline-block;
+  pointer-events: none;
+  z-index: 0;
+  will-change: transform, opacity;
 }
-.dark .spinner { border-color: #334155; border-top-color: #3B82F6; }
 
-/* ── Collapse animation ──────────────────── */
-.collapse-content {
-  overflow: hidden;
-  transition: max-height 0.3s ease, opacity 0.3s ease;
+/* Orbe bleu électrique */
+html.dark::before {
+  top:    -25vh;
+  left:   -15vw;
+  width:  65vw;
+  height: 65vh;
+  background: radial-gradient(ellipse, rgba(59,130,246,0.16) 0%, transparent 65%);
+  animation: aurora-1 28s ease-in-out infinite alternate;
 }
-.collapse-content.collapsed { max-height: 0; opacity: 0; }
-.collapse-content.expanded  { max-height: 9999px; opacity: 1; }
 
-/* ── Inputs dark mode ────────────────────── */
-.dark input, .dark select, .dark textarea {
+/* Orbe or */
+html.dark::after {
+  bottom: -20vh;
+  right:  -12vw;
+  width:  55vw;
+  height: 55vh;
+  background: radial-gradient(ellipse, rgba(245,158,11,0.10) 0%, transparent 65%);
+  animation: aurora-2 35s ease-in-out infinite alternate-reverse;
+}
+
+/* Body transparent — laisse html montrer ses gradients */
+body {
+  background:   transparent !important;
+  color:        var(--text);
+  transition:   color 0.3s ease;
+  position:     relative;
+}
+
+/* Le contenu au-dessus des orbes */
+body > * { position: relative; z-index: 1; }
+
+/* ── 3. GLASSMORPHISM — APPLICATION AUTOMATIQUE ────────────────── */
+/* P1 Targets: tous les panels/cartes (rounded-2xl + surface/card bg) */
+
+/* Toutes les rounded-2xl avec fond semi-transparent → verre */
+.dark .rounded-2xl,
+.dark .rounded-3xl {
+  backdrop-filter:         var(--blur-md);
+  -webkit-backdrop-filter: var(--blur-md);
+}
+
+/* Light mode — verre léger */
+.rounded-2xl,
+.rounded-3xl {
+  backdrop-filter:         var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
+}
+
+/* Box-shadow glass sur les panels principaux */
+.dark .bg-\[var\(--surface\)\],
+.dark .bg-\[var\(--card\)\] {
+  box-shadow: var(--shadow-glass);
+  border-color: var(--border) !important;
+}
+
+.bg-\[var\(--surface\)\],
+.bg-\[var\(--card\)\] {
+  box-shadow: var(--shadow-glass);
+}
+
+/* ── 4. SIDEBAR GLASS ──────────────────────────────────────────── */
+.sidebar-glass {
+  background:              var(--sidebar-bg);
+  backdrop-filter:         var(--blur-lg);
+  -webkit-backdrop-filter: var(--blur-lg);
+  border-right: 1px solid var(--border);
+  box-shadow: 4px 0 32px rgba(0,0,0,0.12);
+}
+.dark .sidebar-glass {
+  box-shadow: 4px 0 32px rgba(0,0,0,0.40);
+}
+
+/* Item actif sidebar — P4 glow */
+.sidebar-item-active {
+  box-shadow: 0 0 16px var(--glow-primary), inset 0 1px 0 rgba(255,255,255,0.08);
+  border: 1px solid rgba(59,130,246,0.20);
+}
+.dark .sidebar-item-active {
+  box-shadow: 0 0 20px var(--glow-primary), inset 0 1px 0 rgba(255,255,255,0.05);
+  border: 1px solid rgba(59,130,246,0.25);
+}
+
+/* ── 5. INPUT / SELECT GLASS — P5 ──────────────────────────────── */
+input, select, textarea {
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+/* Focus: bordure lumineuse primary */
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 3px var(--glow-primary),
+              inset 0 1px 0 rgba(255,255,255,0.10);
+}
+
+.dark input,
+.dark select,
+.dark textarea {
   background-color: var(--card);
-  border-color: var(--border);
-  color: var(--text);
+  border-color:     var(--border);
+  color:            var(--text);
+  backdrop-filter:  blur(4px);
 }
 .dark input::placeholder { color: var(--text-muted); }
 
-/* ── Remove number input arrows ──────────── */
+/* ── 6. TOPBAR GLASS ───────────────────────────────────────────── */
+header.sticky,
+header.fixed {
+  backdrop-filter:         var(--blur-md);
+  -webkit-backdrop-filter: var(--blur-md);
+}
+.dark header.sticky,
+.dark header.fixed {
+  background: rgba(6, 10, 20, 0.75) !important;
+  border-bottom-color: rgba(148,163,184,0.08) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04),
+              0 4px 20px rgba(0,0,0,0.30);
+}
+
+/* ── 7. HOVER GLOW SUR LES CARTES KPI — P1 ────────────────────── */
+.dark .rounded-2xl.border:hover {
+  transition: box-shadow 0.3s ease, transform 0.2s ease;
+}
+
+/* Glow coloré selon le type */
+.dark .border-blue-200:hover,
+.dark .border-blue-800:hover  { box-shadow: 0 0 28px rgba(59,130,246,0.22), var(--shadow-glass); }
+.dark .border-green-200:hover,
+.dark .border-green-800:hover { box-shadow: 0 0 28px rgba(16,185,129,0.22), var(--shadow-glass); }
+.dark .border-red-200:hover,
+.dark .border-red-800:hover   { box-shadow: 0 0 28px rgba(239,68,68,0.20), var(--shadow-glass); }
+.dark .border-purple-200:hover,
+.dark .border-purple-800:hover{ box-shadow: 0 0 28px rgba(139,92,246,0.22), var(--shadow-glass); }
+.dark .border-amber-200:hover,
+.dark .border-amber-800:hover { box-shadow: 0 0 28px rgba(245,158,11,0.20), var(--shadow-glass); }
+
+/* ── 8. BUTTONS ────────────────────────────────────────────────── */
+.dark button.bg-primary,
+.dark button[class*="bg-primary"],
+.dark a[class*="bg-primary"] {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+  box-shadow: 0 4px 16px var(--glow-primary);
+  border: 1px solid rgba(255,255,255,0.10);
+}
+.dark button.bg-primary:hover,
+.dark button[class*="bg-primary"]:hover {
+  box-shadow: 0 6px 24px var(--glow-primary);
+  transform: translateY(-1px);
+}
+
+/* ── 9. SCROLLBAR LUXURY ───────────────────────────────────────── */
+::-webkit-scrollbar        { width: 4px; height: 4px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  {
+  background:    rgba(99,102,241,0.30);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(99,102,241,0.55);
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(59,130,246,0.25);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(59,130,246,0.50);
+}
+
+/* ── 10. ANIMATIONS ────────────────────────────────────────────── */
+
+/* Aurora orbes */
+@keyframes aurora-1 {
+  0%   { transform: translate(0,   0)   scale(1.00); opacity: 0.8; }
+  33%  { transform: translate(4%,  -3%) scale(1.06); opacity: 1.0; }
+  66%  { transform: translate(-3%, 4%)  scale(0.96); opacity: 0.9; }
+  100% { transform: translate(2%,  2%)  scale(1.03); opacity: 0.8; }
+}
+@keyframes aurora-2 {
+  0%   { transform: translate(0,    0)  scale(1.00); opacity: 0.7; }
+  40%  { transform: translate(-4%, -4%) scale(1.05); opacity: 0.9; }
+  80%  { transform: translate(3%,  -2%) scale(0.95); opacity: 1.0; }
+  100% { transform: translate(-2%,  3%) scale(1.02); opacity: 0.7; }
+}
+
+/* P3 Fade-up entrée des composants */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+.animate-fadeIn { animation: fadeUp 0.30s ease forwards; }
+
+/* Entrée décalée pour les grilles de KPI — P3 */
+@keyframes fadeUpStagger {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+.stagger-1 { animation: fadeUpStagger 0.35s ease 0.05s  both; }
+.stagger-2 { animation: fadeUpStagger 0.35s ease 0.10s  both; }
+.stagger-3 { animation: fadeUpStagger 0.35s ease 0.15s  both; }
+.stagger-4 { animation: fadeUpStagger 0.35s ease 0.20s  both; }
+.stagger-5 { animation: fadeUpStagger 0.35s ease 0.25s  both; }
+
+/* Glow pulsé sur les icônes actives */
+@keyframes glow-pulse {
+  0%, 100% { filter: drop-shadow(0 0 6px rgba(59,130,246,0.6)); }
+  50%      { filter: drop-shadow(0 0 12px rgba(59,130,246,1.0)); }
+}
+.animate-glow { animation: glow-pulse 2.5s ease-in-out infinite; }
+
+/* Spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  width: 20px; height: 20px;
+  border:           2px solid rgba(99,102,241,0.20);
+  border-top-color: var(--primary);
+  border-radius:    50%;
+  animation:        spin 0.65s linear infinite;
+  display:          inline-block;
+}
+.dark .spinner {
+  border-color:     rgba(255,255,255,0.08);
+  border-top-color: var(--primary-light);
+}
+
+/* ── 11. UTILITIES ─────────────────────────────────────────────── */
+
+/* Glass card utilitaire (en plus de l'auto-apply) */
+.glass {
+  background:              var(--surface);
+  backdrop-filter:         var(--blur-md);
+  -webkit-backdrop-filter: var(--blur-md);
+  border:                  1px solid var(--border);
+  box-shadow:              var(--shadow-glass);
+}
+
+/* Gold gradient text */
+.text-gold {
+  background:          linear-gradient(135deg, var(--gold-light), var(--gold-dark));
+  -webkit-background-clip: text;
+  background-clip:     text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Gradient divider */
+.divider-glass {
+  height:     1px;
+  background: linear-gradient(90deg, transparent, var(--border), transparent);
+  border:     none;
+  margin:     0;
+}
+
+/* Remove number input arrows */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 input[type="number"] { -moz-appearance: textfield; }
+
+/* Collapse */
+.collapse-content { overflow: hidden; transition: max-height 0.3s ease, opacity 0.3s ease; }
+.collapse-content.collapsed { max-height: 0; opacity: 0; }
+.collapse-content.expanded  { max-height: 9999px; opacity: 1; }
+
+/* ── 12. PERFORMANCE — P10 ─────────────────────────────────────── */
+/* Désactiver les animations pour les utilisateurs sensibles */
+@media (prefers-reduced-motion: reduce) {
+  html.dark::before,
+  html.dark::after       { animation: none; }
+  .animate-fadeIn        { animation: none; opacity: 1; }
+  .stagger-1,.stagger-2,
+  .stagger-3,.stagger-4,
+  .stagger-5             { animation: none; opacity: 1; }
+  .animate-glow          { animation: none; }
+  *                      { transition-duration: 0.01ms !important; }
+}
+
+/* Réduire le blur sur GPU faibles (hint) */
+@media (max-resolution: 1dppx) {
+  .dark .rounded-2xl,
+  .dark .rounded-3xl {
+    backdrop-filter:         blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+}

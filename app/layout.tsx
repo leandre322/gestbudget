@@ -9,13 +9,13 @@ export const metadata: Metadata = {
   appleWebApp: { capable: true, statusBarStyle: 'default', title: 'GestBudget' },
 };
 
-export const viewport: Viewport = { themeColor: '#1E40AF' };
+export const viewport: Viewport = { themeColor: '#3B82F6' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr" suppressHydrationWarning>
       <head>
-        {/* Script inline pour éviter le flash au chargement */}
+        {/* Évite le flash de couleur au chargement */}
         <script dangerouslySetInnerHTML={{ __html: `
           (function() {
             try {
@@ -30,7 +30,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
       </head>
-      <body className="font-sans antialiased bg-[var(--bg)] text-[var(--text)]">
+      {/*
+        ⚠️ PAS de bg-[var(--bg)] ici — body est transparent pour
+        laisser l'aurora de <html> se voir à travers les surfaces glass.
+        La couleur de fond vient de globals.css (html background).
+      */}
+      <body className="font-sans antialiased text-[var(--text)]">
         <ThemeProvider>
           {children}
         </ThemeProvider>
