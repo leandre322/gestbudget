@@ -402,6 +402,34 @@ export default function ParametresPage() {
                             )}
                           </div>
                         )}
+                        {/* ── Dropdown liaison banque (epargne_investissement uniquement) ── */}
+                        {type === 'epargne_investissement' && cat.isActive && (
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            {savingBanqueLien === cat.id ? (
+                              <span className="text-xs text-primary animate-pulse">Liaison...</span>
+                            ) : (
+                              <>
+                                <select
+                                  value={cat.banqueId ?? ''}
+                                  onChange={e => sauvegarderBanqueLien(cat.id, e.target.value || null)}
+                                  className={clsx(
+                                    'text-xs border rounded-lg px-2 py-1 outline-none transition-all',
+                                    cat.banqueId
+                                      ? 'border-blue-400/40 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium'
+                                      : 'border-[var(--border)] bg-[var(--card)] text-[var(--text-muted)]'
+                                  )}>
+                                  <option value="">— Non liée —</option>
+                                  {banques.map((b: any) => (
+                                    <option key={b.id} value={b.id}>{b.nomBanque}</option>
+                                  ))}
+                                </select>
+                                {cat.banqueId
+                                  ? <span title="Banque liée" className="text-blue-500 text-xs">🏦</span>
+                                  : <span title="Aucune banque liée" className="opacity-30 text-xs">🏦</span>}
+                              </>
+                            )}
+                          </div>
+                        )}
                         <button onClick={() => setEditCat(cat)} className="text-slate-300 dark:text-slate-600 hover:text-primary transition-colors"><Pencil size={13} /></button>
                         {cat.isActive && <button onClick={() => supprimerCat(cat.id)} className="text-slate-300 dark:text-slate-600 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>}
                       </>
