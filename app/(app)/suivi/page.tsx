@@ -249,10 +249,20 @@ export default function SuiviPage() {
     (window as any).__setSaveStatus?.('saving');
 
     // 1. Sauvegarder le budget
+    // S'assurer que TOUTES les catégories actives sont dans lignes
+    // (y compris epargne_investissement, depense_occasionnelle, etc.)
+    const allCats = data?.categories ?? [];
+    const lignesComplet = { ...lignes };
+    for (const cat of allCats) {
+      if (!lignesComplet[cat.id]) {
+        lignesComplet[cat.id] = { anticipe: '0', reel: '0' };
+      }
+    }
+
     const res = await fetch('/api/budget', {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes }),
+      body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes: lignesComplet }),
     });
 
     const cats           = data?.categories ?? [];
@@ -261,7 +271,7 @@ export default function SuiviPage() {
     // 2. Répercuter banques → catégories epargne_precaution en DB
     // ── Toujours mettre à jour TOUTES les catsPrecaution (source de vérité DB) ──
     if (catsPrecaution.length > 0) {
-      const newLignesPrecaution = { ...lignes };
+      const newLignesPrecaution = { ...lignesComplet };
 
       // Calculer le réel par catégorie precaution depuis lignesBanque
       catsPrecaution.forEach((cat: any, idx: number) => {
@@ -344,23 +354,47 @@ export default function SuiviPage() {
       toast.success('Suivi mensuel sauvegardé ✓');
       (window as any).__setSaveStatus?.('saved');
 
-      // ── Mettre à jour la référence DB locale après sauvegarde ───────────
-      // Évite les doublons si l'utilisateur re-sauvegarde sans recharger
+      // ── Mettre à jour data.budget pour TOUTES les catégories (y compris nouvelles) ──
+      // Important : les catégories jamais sauvegardées ne sont pas dans prev.budget
+      // → on les ajoute pour que charger() ne les écrase pas lors d'un rechargement
       setData((prev: any) => {
         if (!prev?.budget) return prev;
-        return {
-          ...prev,
-          budget: prev.budget.map((b: any) => ({
-            ...b,
-            montantAnticipe: parseInt(lignes[b.categorieId]?.anticipe) || b.montantAnticipe,
-            montantReel:     parseInt(lignes[b.categorieId]?.reel)     || b.montantReel,
-          })),
-        };
+        const existingIds = new Set(prev.budget.map((b: any) => b.categorieId));
+        // Mettre à jour les entrées existantes
+        const updatedBudget = prev.budget.map((b: any) => ({
+          ...b,
+          montantAnticipe: parseInt(lignes[b.categorieId]?.anticipe ?? '') || b.montantAnticipe,
+          montantReel:     parseInt(lignes[b.categorieId]?.reel     ?? '') || b.montantReel,
+        }));
+        // Ajouter les nouvelles catégories qui n'avaient pas d'entrée DB
+        const cats = prev.categories ?? [];
+        for (const [catId, vals] of Object.entries(lignes as Record<string, { anticipe: string; reel: string }>)) {
+          if (!existingIds.has(catId)) {
+            const ant  = parseInt(vals.anticipe) || 0;
+            const reel = parseInt(vals.reel)     || 0;
+            if (ant > 0 || reel > 0) {
+              const cat = cats.find((c: any) => c.id === catId);
+              updatedBudget.push({
+                categorieId:     catId,
+                categorie:       cat ?? { id: catId, nom: '', type: '' },
+                montantAnticipe: ant,
+                montantReel:     reel,
+              });
+            }
+          }
+        }
+        return { ...prev, budget: updatedBudget };
       });
 
       setTimeout(() => { setSaved(false); (window as any).__setSaveStatus?.('idle'); }, 3000);
     } else {
-      toast.error('Erreur lors de la sauvegarde');
+      try {
+        const errBody = await res.clone().json();
+        console.error('❌ PUT /api/budget error:', errBody);
+        toast.error(`Erreur sauvegarde : ${errBody.error ?? res.status}`);
+      } catch {
+        toast.error(`Erreur sauvegarde HTTP ${res.status}`);
+      }
       (window as any).__setSaveStatus?.('error');
     }
   };
