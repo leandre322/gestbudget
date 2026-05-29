@@ -370,6 +370,36 @@ export default function SuiviPage() {
       toast.success('Suivi mensuel sauvegardé ✓');
       (window as any).__setSaveStatus?.('saved');
 
+      // ── Épargne Investissement → banque liée (delta) ───────────────────────────────
+      // Si une catégorie epargne_investissement a une banqueId liée,
+      // on met à jour le solde de la banque du delta (newReel - oldReel)
+      // Direction : épargne sauvée → banque += delta (l'épargne alimente la banque)
+      const catsInvest = (data?.categories ?? [])
+        .filter((c: any) => c.type === 'epargne_investissement' && c.banqueId);
+
+      for (const cat of catsInvest) {
+        const newReel  = parseInt(lignesComplet[cat.id]?.reel  || '0') || 0;
+        // data.budget contient les ANCIENNES valeurs (avant ce PUT)
+        const prevReel = Number(
+          (data?.budget ?? []).find((b: any) => b.categorieId === cat.id)?.montantReel ?? 0
+        );
+        const delta = newReel - prevReel;
+
+        if (delta !== 0 && cat.banqueId) {
+          await fetch(`/api/banques?id=${cat.banqueId}`, {
+            method:  'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action:  delta > 0 ? 'increment' : 'decrement',
+              montant: Math.abs(delta),
+            }),
+          });
+          console.log(
+            `💰 ${cat.nom} : delta ${delta > 0 ? '+' : ''}${delta} → banque ${cat.banqueId}`
+          );
+        }
+      }
+
       // ── Recharger depuis DB pour garantir la cohérence (y compris les 0) ────────────
       // Ne pas se fier au state local — la DB est la source de vérité
       await charger();

@@ -44,6 +44,7 @@ export default function ParametresPage() {
   const [savingTaux,    setSavingTaux]    = useState(false);
   const [savedTaux,     setSavedTaux]     = useState(false);
   const [savingLien,    setSavingLien]    = useState<string|null>(null);
+  const [savingBanqueLien, setSavingBanqueLien] = useState<string|null>(null);
 
   // isDirty : vrai dès que l'utilisateur modifie revenuRef ou tauxRef
   // → empêche le rechargement depuis DB d'écraser les modifications en cours
@@ -135,6 +136,24 @@ export default function ParametresPage() {
       }
     } catch (e) { console.error('sauvegarderTaux error:', e); }
     finally { setSavingTaux(false); }
+  };
+
+  // Liaison catégorie → Banque (pour epargne_investissement)
+  const sauvegarderBanqueLien = async (catId: string, banqueId: string | null) => {
+    setSavingBanqueLien(catId);
+    try {
+      await fetch('/api/categories', {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ id: catId, banqueId }),
+      });
+      setCategories(prev => prev.map(c =>
+        c.id === catId
+          ? { ...c, banqueId, banque: banqueId ? banques.find((b: any) => b.id === banqueId) : null }
+          : c
+      ));
+    } catch (e) { console.error('sauvegarderBanqueLien error:', e); }
+    finally { setSavingBanqueLien(null); }
   };
 
   // Liaison catégorie → CompteFonds
@@ -345,6 +364,9 @@ export default function ParametresPage() {
                   )}
                   {type === 'epargne_autre' && fondsActifs.length > 0 && (
                     <span className="text-xs text-[var(--text-muted)] flex items-center gap-1"><Link size={10} />Fond lié</span>
+                  )}
+                  {type === 'epargne_investissement' && banques.length > 0 && (
+                    <span className="text-xs text-[var(--text-muted)] flex items-center gap-1">🏦 Banque liée</span>
                   )}
                 </div>
               </div>

@@ -3,28 +3,31 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 
-function n(v: any) { return typeof v === 'bigint' ? Number(v) : (Number(v) || 0); }
+function serial(obj: any): any {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'bigint') return Number(obj);
+  if (obj instanceof Date) return obj.toISOString();
+  if (Array.isArray(obj)) return obj.map(serial);
+  if (typeof obj === 'object') {
+    const r: any = {};
+    for (const k of Object.keys(obj)) r[k] = serial(obj[k]);
+    return r;
+  }
+  return obj;
+}
 
-// GET /api/banques — Liste des banques configurées
+// GET /api/banques
 export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const banques = await prisma.banque.findMany({
-      where: { userId: session.user.id, isActive: true, mois: null },
+      where:   { userId: session.user.id },
       orderBy: { ordre: 'asc' },
     });
 
-    return NextResponse.json({
-      banques: banques.map(b => ({
-        id:        b.id,
-        nomBanque: b.nomBanque,
-        solde:     n(b.solde),
-        ordre:     b.ordre,
-        isActive:  b.isActive,
-      })),
-    });
+    return NextResponse.json(serial({ banques }));
   } catch (e: any) {
     return NextResponse.json({ error: e?.message }, { status: 500 });
   }
@@ -36,88 +39,90 @@ export async function POST(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
-    const { nomBanque, soldeInitial } = await req.json();
-    if (!nomBanque) return NextResponse.json({ error: 'Nom requis' }, { status: 400 });
-
-    const count = await prisma.banque.count({
-      where: { userId: session.user.id, mois: null },
-    });
+    const { nomBanque, typeCompte, soldeInitial, ordre } = await req.json();
 
     const banque = await prisma.banque.create({
       data: {
         userId:    session.user.id,
-        nomBanque,
+        nomBanque: nomBanque ?? 'Nouvelle banque',
+        typeCompte: typeCompte ?? null,
         solde:     BigInt(soldeInitial ?? 0),
-        ordre:     count,
-        mois:      null,
-        anneeId:   null,
+        ordre:     ordre ?? 0,
       },
     });
 
-    return NextResponse.json({ success: true, id: banque.id }, { status: 201 });
+    return NextResponse.json(serial({ success: true, banque }), { status: 201 });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message }, { status: 500 });
   }
 }
 
-// PUT /api/banques?id=xxx — Modifier ou incrémenter/décrémenter solde
+// PUT /api/banques?id=xxx — Modifier une banque
+// Body options :
+//   { nomBanque: string }                          → renommer
+//   { action: 'set',       montant: number }       → fixer le solde
+//   { action: 'increment', montant: number }       → solde += montant
+//   { action: 'decrement', montant: number }       → solde -= montant (plancher 0)
+//   { solde: number }                              → fixer le solde (alias de set)
 export async function PUT(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const id = new URL(req.url).searchParams.get('id');
-    if (!id) return NextResponse.json({ error: 'ID requis' }, { status: 400 });
+    if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
 
     const body = await req.json();
+    const { action, montant, nomBanque, solde: soldeDirect } = body;
 
-    // Vérifier que la banque appartient à l'utilisateur
-    const banque = await prisma.banque.findFirst({
-      where: { id, userId: session.user.id },
+    // Vérifier propriété
+    const existing = await prisma.banque.findFirst({
+      where:  { id, userId: session.user.id },
+      select: { solde: true },
     });
-    if (!banque) return NextResponse.json({ error: 'Banque introuvable' }, { status: 404 });
+    if (!existing) return NextResponse.json({ error: 'Introuvable' }, { status: 404 });
 
-    let updateData: any = {};
+    const updateData: any = { updatedAt: new Date() };
 
-    if (body.action === 'increment') {
-      // Incrémenter le solde
-      updateData.solde = banque.solde + BigInt(body.montant ?? 0);
-    } else if (body.action === 'decrement') {
-      // Décrémenter le solde
-      updateData.solde = banque.solde - BigInt(body.montant ?? 0);
-    } else if (body.action === 'set') {
-      // Remplacer le solde
-      updateData.solde = BigInt(body.montant ?? 0);
-    } else {
-      // Mise à jour du nom
-      if (body.nomBanque) updateData.nomBanque = body.nomBanque;
-      if (body.solde !== undefined) updateData.solde = BigInt(body.solde);
+    if (nomBanque !== undefined) {
+      updateData.nomBanque = nomBanque;
     }
 
-    const updated = await prisma.banque.update({
+    if (action === 'set' || soldeDirect !== undefined) {
+      const val = action === 'set' ? montant : soldeDirect;
+      updateData.solde = BigInt(Math.round(Number(val ?? 0)));
+    } else if (action === 'increment') {
+      const current = BigInt(Number(existing.solde ?? 0));
+      const inc     = BigInt(Math.round(Number(montant ?? 0)));
+      updateData.solde = current + inc;
+    } else if (action === 'decrement') {
+      const current = BigInt(Number(existing.solde ?? 0));
+      const dec     = BigInt(Math.round(Number(montant ?? 0)));
+      const next    = current - dec;
+      updateData.solde = next < BigInt(0) ? BigInt(0) : next;
+    }
+
+    const banque = await prisma.banque.update({
       where: { id },
-      data:  { ...updateData, updatedAt: new Date() },
+      data:  updateData,
     });
 
-    return NextResponse.json({ success: true, solde: n(updated.solde) });
+    return NextResponse.json(serial({ success: true, banque }));
   } catch (e: any) {
     return NextResponse.json({ error: e?.message }, { status: 500 });
   }
 }
 
-// DELETE /api/banques?id=xxx — Désactiver une banque
+// DELETE /api/banques?id=xxx
 export async function DELETE(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const id = new URL(req.url).searchParams.get('id');
-    if (!id) return NextResponse.json({ error: 'ID requis' }, { status: 400 });
+    if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
 
-    await prisma.banque.updateMany({
-      where: { id, userId: session.user.id },
-      data:  { isActive: false },
-    });
+    await prisma.banque.delete({ where: { id, userId: session.user.id } });
 
     return NextResponse.json({ success: true });
   } catch (e: any) {

@@ -244,7 +244,11 @@ function OngletGlobal({ moisCourant, anneeCourante, budgetMois, loadingMois }: {
   const [loading,     setLoading]     = useState(true);
   const [modalType,   setModalType]   = useState<string|null>(null);
   const [modalVals,   setModalVals]   = useState<Record<string,string>>({});
-  const [savingModal, setSavingModal] = useState(false);
+  const [savingModal,  setSavingModal]  = useState(false);
+  // ── Édition directe d'un fond (P7/P8) ──
+  const [editFond,     setEditFond]     = useState<{ id: string; nom: string; soldeActuel: number } | null>(null);
+  const [editFondVal,  setEditFondVal]  = useState('');
+  const [savingFond,   setSavingFond]   = useState(false);
   // Sparklines : 6 derniers mois
   const [sparklines, setSparklines]   = useState<{
     revenus: number[]; depenses: number[]; epargne: number[]; solde: number[];
@@ -335,6 +339,68 @@ function OngletGlobal({ moisCourant, anneeCourante, budgetMois, loadingMois }: {
     .filter((b: any) => b.categorie?.type?.startsWith('depense') && b.montantAnticipe > 0 && b.montantReel > b.montantAnticipe)
     .map((b: any) => b.categorie?.nom);
 
+  // ── P7 : Confirmation + P8 : mise à jour optimiste ────────────────────────
+  const sauvegarderFond = async () => {
+    if (!editFond) return;
+    const newSolde = parseInt(editFondVal) || 0;
+    const delta    = Math.abs(newSolde - editFond.soldeActuel);
+
+    // P7 : confirmation si écart > 100 000 FCFA
+    if (delta > 100_000) {
+      const ok = window.confirm(
+        `Modifier le solde de "${editFond.nom}" ?
+` +
+        `  Actuel : ${formatFCFA(editFond.soldeActuel)}
+` +
+        `  Nouveau : ${formatFCFA(newSolde)}
+` +
+        `  Écart : ${formatFCFA(delta)}`
+      );
+      if (!ok) return;
+    }
+
+    setSavingFond(true);
+
+    // P8 : mise à jour optimiste (avant réponse API)
+    setData((prev: any) => {
+      if (!prev?.fondsRoulement) return prev;
+      return {
+        ...prev,
+        fondsRoulement: prev.fondsRoulement.map((f: any) =>
+          f.id === editFond.id ? { ...f, soldeActuel: newSolde } : f
+        ),
+      };
+    });
+
+    try {
+      const res = await fetch(`/api/comptes?id=${editFond.id}`, {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ action: 'set', montant: newSolde }),
+      });
+      if (res.ok) {
+        toast.success(`${editFond.nom} mis à jour ✓`);
+        setEditFond(null);
+      } else {
+        // P8 : rollback si erreur
+        const err = await res.json();
+        toast.error(`Erreur : ${err.error ?? 'Inconnue'}`);
+        setData((prev: any) => {
+          if (!prev?.fondsRoulement) return prev;
+          return {
+            ...prev,
+            fondsRoulement: prev.fondsRoulement.map((f: any) =>
+              f.id === editFond.id ? { ...f, soldeActuel: editFond.soldeActuel } : f
+            ),
+          };
+        });
+      }
+    } catch {
+      toast.error('Erreur réseau');
+    }
+    setSavingFond(false);
+  };
+
   const ouvrirModal = (type: string) => {
     const init: Record<string,string> = {};
     if (type === 'urgence') { init['revenu'] = String(revenuRef); init['nMois'] = String(nMoisUrgence); }
@@ -392,6 +458,69 @@ function OngletGlobal({ moisCourant, anneeCourante, budgetMois, loadingMois }: {
 
   return (
     <div className="space-y-5">
+
+      {/* ── Modal Édition Fond (Option A : correction directe) ── */}
+      {editFond && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setEditFond(null)} />
+          <div className="relative bg-[var(--surface)] rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+            {/* Gradient top */}
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
+            <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-[var(--text)]">✏️ Corriger le solde</h3>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">{editFond.nom}</p>
+              </div>
+              <button onClick={() => setEditFond(null)} className="text-[var(--text-muted)] hover:text-[var(--text)] p-1">✕</button>
+            </div>
+            <div className="p-5 space-y-4">
+              {/* Solde actuel */}
+              <div className="bg-slate-50 dark:bg-dark-card rounded-xl p-3 flex justify-between items-center">
+                <span className="text-xs text-[var(--text-muted)]">Solde actuel</span>
+                <span className="font-bold text-[var(--text)]">{formatFCFA(editFond.soldeActuel)}</span>
+              </div>
+              {/* Nouveau solde */}
+              <div>
+                <label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">
+                  Nouveau solde (FCFA)
+                </label>
+                <input
+                  type="number"
+                  value={editFondVal}
+                  onChange={e => setEditFondVal(e.target.value)}
+                  placeholder={String(editFond.soldeActuel)}
+                  autoFocus
+                  className="w-full text-right border border-[var(--border)] rounded-xl px-3 py-2.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
+                />
+              </div>
+              {/* Aperçu écart */}
+              {editFondVal && (
+                <div className={clsx('flex justify-between text-sm rounded-lg px-3 py-2',
+                  (parseInt(editFondVal)||0) >= editFond.soldeActuel
+                    ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
+                    : 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400')}>
+                  <span>Écart</span>
+                  <span className="font-semibold">
+                    {(parseInt(editFondVal)||0) >= editFond.soldeActuel ? '+' : ''}
+                    {formatFCFA((parseInt(editFondVal)||0) - editFond.soldeActuel)}
+                  </span>
+                </div>
+              )}
+              {/* Actions */}
+              <div className="flex gap-2">
+                <button onClick={() => setEditFond(null)}
+                  className="flex-1 py-2.5 rounded-xl text-sm border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-50 dark:hover:bg-dark-card transition-all">
+                  Annuler
+                </button>
+                <button onClick={sauvegarderFond} disabled={savingFond || !editFondVal}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold bg-primary hover:bg-primary-dark text-white transition-all disabled:opacity-60">
+                  <Save size={14} />{savingFond ? 'Sauvegarde...' : 'Corriger'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal ── */}
       <DashboardModal isOpen={modalType !== null} onClose={() => setModalType(null)}
@@ -570,8 +699,17 @@ function OngletGlobal({ moisCourant, anneeCourante, budgetMois, loadingMois }: {
         {(fondsRoulement??[]).length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {(fondsRoulement??[]).map((f: any) => (
-              <div key={f.id} className="bg-slate-50 dark:bg-dark-card rounded-xl p-3">
-                <p className="text-xs text-[var(--text-muted)] font-semibold truncate mb-2">{f.nom}</p>
+              <div key={f.id} className="bg-slate-50 dark:bg-dark-card rounded-xl p-3 relative group">
+                {/* Crayon édition — Option A */}
+                <button
+                  onClick={() => { setEditFond({ id: f.id, nom: f.nom, soldeActuel: f.soldeActuel }); setEditFondVal(String(f.soldeActuel)); }}
+                  title="Corriger le solde"
+                  className="absolute top-2 right-2 p-1 rounded-lg opacity-0 group-hover:opacity-100
+                    hover:bg-white dark:hover:bg-dark-surface text-[var(--text-muted)] hover:text-primary
+                    transition-all duration-150">
+                  <Pencil size={12} />
+                </button>
+                <p className="text-xs text-[var(--text-muted)] font-semibold truncate mb-2 pr-5">{f.nom}</p>
                 <p className="text-base font-bold text-primary">{formatFCFA(f.soldeActuel)}</p>
                 <p className="text-xs text-[var(--text-muted)] mb-2">Solde actuel</p>
                 <div className="space-y-1 pt-2 border-t border-[var(--border)]">

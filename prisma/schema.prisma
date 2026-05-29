@@ -97,6 +97,11 @@ model Categorie {
   compteFondsId String?       @map("compte_fonds_id")
   compteFonds   CompteFonds?  @relation(fields: [compteFondsId], references: [id], onDelete: SetNull)
 
+  // ── Liaison vers Banque (epargne_investissement uniquement) ──
+  // Quand le réel est saisi dans Suivi, la banque liée est mise à jour (delta)
+  banqueId      String?       @map("banque_id")
+  banque        Banque?       @relation("CategorieBanque", fields: [banqueId], references: [id], onDelete: SetNull)
+
   user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   budgetMensuel BudgetMensuel[]
 
@@ -184,6 +189,8 @@ model Banque {
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   annee Annee? @relation(fields: [anneeId], references: [id], onDelete: SetNull)
+  // Catégories liées (epargne_investissement)
+  categories Categorie[] @relation("CategorieBanque")
 
   @@map("banques")
 }

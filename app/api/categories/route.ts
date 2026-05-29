@@ -13,11 +13,11 @@ export async function GET(req: NextRequest) {
     const categories = await prisma.categorie.findMany({
       where:   { userId: session.user.id },
       orderBy: { ordre: 'asc' },
-      // Inclure le fond lié pour affichage dans Suivi et Paramètres
       include: {
-        compteFonds: {
-          select: { id: true, nom: true },
-        },
+        // Fond de fonctionnement lié (epargne_autre)
+        compteFonds: { select: { id: true, nom: true } },
+        // Banque liée (epargne_investissement)
+        banque: { select: { id: true, nomBanque: true } },
       },
     });
 
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
-    const { nom, type, sousType, ordre, compteFondsId } = await req.json();
+    const { nom, type, sousType, ordre, compteFondsId, banqueId } = await req.json();
 
     const cat = await prisma.categorie.create({
       data: {
@@ -42,8 +42,8 @@ export async function POST(req: NextRequest) {
         type:         type as TypeCategorie,
         sousType:     sousType ?? null,
         ordre:        ordre ?? 0,
-        // Liaison fond (optionnel, pertinent pour epargne_autre)
         compteFondsId: compteFondsId ?? null,
+        banqueId:     banqueId ?? null,
       },
     });
 
@@ -59,21 +59,20 @@ export async function PUT(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
-    const { id, nom, type, sousType, ordre, isActive, compteFondsId } = await req.json();
+    const { id, nom, type, sousType, ordre, isActive, compteFondsId, banqueId } = await req.json();
 
     const cat = await prisma.categorie.update({
       where: { id, userId: session.user.id },
       data: {
-        nom,
-        type:     type as TypeCategorie,
-        sousType,
-        ordre,
-        isActive,
-        // null = délier ; undefined = ne pas toucher
-        // On passe explicitement null pour déliage, sinon la valeur fournie
-        ...(compteFondsId !== undefined
-          ? { compteFondsId: compteFondsId || null }
-          : {}),
+        ...(nom       !== undefined ? { nom }       : {}),
+        ...(type      !== undefined ? { type: type as TypeCategorie } : {}),
+        ...(sousType  !== undefined ? { sousType }  : {}),
+        ...(ordre     !== undefined ? { ordre }     : {}),
+        ...(isActive  !== undefined ? { isActive }  : {}),
+        // Liaison fond (null = délier explicitement)
+        ...(compteFondsId !== undefined ? { compteFondsId: compteFondsId || null } : {}),
+        // Liaison banque (null = délier explicitement)
+        ...(banqueId !== undefined ? { banqueId: banqueId || null } : {}),
       },
     });
 
