@@ -256,14 +256,17 @@ function OngletGlobal({ moisCourant, anneeCourante, budgetMois, loadingMois }: {
       fetch('/api/banques').then(r => r.json()),
       // Recharger budgetMois directement pour le mois courant (source de vérité)
       fetch(`/api/budget?annee=${anneeCourante}&mois=${moisCourant}`).then(r => r.json()),
-    ]).then(([global, bqs, budgetFrais]) => {
+      // Charger catégories pour connaître les liaisons banque → type
+      fetch('/api/categories').then(r => r.json()),
+    ]).then(([global, bqs, budgetFrais, catsData]) => {
       // Utiliser budgetFrais (rechargé pour ce mois) pour les KPIs Mois Courant
       // → garantit la cohérence avec Suivi mensuel (même source API)
       const budgetMoisFrais = budgetFrais?.budget ?? [];
+      const allCategories   = catsData?.categories ?? [];
       setData({
         ...global,
-        // Surcharger budgetMois avec les données fraîches
         _budgetMoisFrais: budgetMoisFrais,
+        _categories: allCategories,
         evolutionAnnuelle:     global.evolutionAnnuelle     ?? [],
         fondsRoulement:        global.fondsRoulement        ?? [],
         comptes:               global.comptes               ?? [],
@@ -318,11 +321,16 @@ function OngletGlobal({ moisCourant, anneeCourante, budgetMois, loadingMois }: {
   // (même source que Suivi mensuel) → garantit la cohérence Dashboard ↔ Suivi
   const budgetSource = data?._budgetMoisFrais ?? budgetMois;
 
+  // ── tot() : UNIQUEMENT les catégories actives (isActive=true) ────────────
+  // Suivi n'affiche que les catégories actives → Dashboard doit faire pareil
+  // Sans ce filtre, les catégories inactives (ex: Tontine désactivée) seraient
+  // comptées dans le Dashboard mais pas dans Suivi → divergence KPIs
   const tot = (type: string, f: 'montantAnticipe'|'montantReel') =>
     budgetSource.filter((b: any) =>
-      type==='epargne' ? b.categorie?.type?.startsWith('epargne') :
-      type==='depense' ? (b.categorie?.type?.startsWith('depense') || b.categorie?.type==='remboursement_dette') :
-      b.categorie?.type === type
+      b.categorie?.isActive !== false &&  // exclure catégories inactives
+      (type==='epargne' ? b.categorie?.type?.startsWith('epargne') :
+       type==='depense' ? (b.categorie?.type?.startsWith('depense') || b.categorie?.type==='remboursement_dette') :
+       b.categorie?.type === type)
     ).reduce((s: number, b: any) => s + b[f], 0);
 
   const revenus  = { reel: tot('revenu','montantReel'),  ant: tot('revenu','montantAnticipe')  };
@@ -611,16 +619,44 @@ function OngletGlobal({ moisCourant, anneeCourante, budgetMois, loadingMois }: {
             <button onClick={() => ouvrirModal('banques')} className="p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card transition-colors"><Pencil size={13} className="text-[var(--text-muted)]" /></button>
           </div>
         </div>
-        {banques.length > 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
-            {banques.map((b: any) => (
-              <div key={b.id} className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3">
-                <p className="text-xs text-[var(--text-muted)] font-medium truncate">{b.nomBanque}</p>
-                <p className="text-base font-bold text-primary mt-1">{formatFCFA(b.solde??0)}</p>
-              </div>
-            ))}
-          </div>
-        ) : (
+        {(() => {
+          // Séparer banques précaution vs investissement selon les liaisons catégories
+          const cats = data?._categories ?? [];
+          const banquesInvestIds = new Set(
+            cats.filter((c: any) => c.type === 'epargne_investissement' && c.banqueId)
+                .map((c: any) => c.banqueId)
+          );
+          const banquesPrecaution = banques.filter((b: any) => !banquesInvestIds.has(b.id));
+          const banquesInvest     = banques.filter((b: any) => banquesInvestIds.has(b.id));
+          return (
+            <>
+              {banquesPrecaution.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
+                  {banquesPrecaution.map((b: any) => (
+                    <div key={b.id} className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3">
+                      <p className="text-xs text-[var(--text-muted)] font-medium truncate">{b.nomBanque}</p>
+                      <p className="text-base font-bold text-primary mt-1">{formatFCFA(b.solde??0)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {banquesInvest.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-[var(--border)]">
+                  <p className="text-xs text-[var(--text-muted)] mb-2">🔗 Compte lié (épargne investissement)</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {banquesInvest.map((b: any) => (
+                      <div key={b.id} className="bg-green-50 dark:bg-green-900/20 rounded-xl p-3">
+                        <p className="text-xs text-[var(--text-muted)] font-medium truncate">{b.nomBanque}</p>
+                        <p className="text-base font-bold text-green-700 dark:text-green-400 mt-1">{formatFCFA(b.solde??0)}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          );
+        })()}
+        {banques.length === 0 && (
           <p className="text-sm text-[var(--text-muted)] py-2">Aucune banque configurée. <a href="/parametres" className="text-primary underline">Ajouter dans Paramètres → Banques</a></p>
         )}
         <div className="pt-3 border-t border-[var(--border)] flex justify-between">
