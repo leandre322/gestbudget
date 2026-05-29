@@ -4,6 +4,18 @@ import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { TypeCategorie } from '@prisma/client';
 
+function serial(obj: any): any {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'bigint') return Number(obj);
+  if (Array.isArray(obj)) return obj.map(serial);
+  if (typeof obj === 'object') {
+    const r: any = {};
+    for (const k of Object.keys(obj)) r[k] = serial(obj[k]);
+    return r;
+  }
+  return obj;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -13,7 +25,7 @@ export async function GET(req: NextRequest) {
       orderBy: { ordre: 'asc' },
       include: { compteFonds: { select: { id: true, nom: true } } },
     });
-    return NextResponse.json({ categories });
+    return NextResponse.json(serial({ categories }));
   } catch (e: any) {
     console.error('GET /api/categories:', e?.message);
     return NextResponse.json({ error: e?.message }, { status: 500 });
