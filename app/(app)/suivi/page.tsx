@@ -124,7 +124,7 @@ export default function SuiviPage() {
       const db  = await resBanques.json();
       const bqs = db.banques ?? [];
       setBanques(bqs);
-      // ── Initialiser lignesBanque + lignes[catPrec] depuis DB (source de vérité) ──
+      // ── Init lignesBanque + lignes[catPrec] depuis DB ───────────────────────
       const catsPrecaution   = d.categories.filter((c: any) => c.type === 'epargne_precaution');
       const totalAnticipe    = catsPrecaution.reduce((s: number, c: any) => {
         const b = d.budget.find((b: any) => b.categorieId === c.id);
@@ -132,67 +132,70 @@ export default function SuiviPage() {
       }, 0);
       const anticipeParLigne = bqs.length > 0 ? Math.round(totalAnticipe / Math.min(2, bqs.length)) : 0;
 
-      // Helper : sync lignes[catPrec] depuis une liste de lignesBanque
-      const syncLignesFromBanque = (lbs: LigneBanque[], prevLignes: Record<string, { anticipe: string; reel: string }>) => {
-        const synced = { ...prevLignes };
-        catsPrecaution.forEach((cat: any, idx: number) => {
-          const lb = lbs[idx];
-          synced[cat.id] = {
-            anticipe: prevLignes[cat.id]?.anticipe ?? '0',
-            reel:     lb ? (lb.reel || '0') : '0',
-          };
-        });
-        if (lbs.length > catsPrecaution.length && catsPrecaution.length > 0) {
-          const lastCat = catsPrecaution[catsPrecaution.length - 1];
-          const surplus = lbs.slice(catsPrecaution.length).reduce((s: number, lb: any) => s + (parseInt(lb.reel) || 0), 0);
-          const current = parseInt(synced[lastCat.id]?.reel || '0');
-          synced[lastCat.id] = { ...synced[lastCat.id], reel: String(current + surplus) };
-        }
-        return synced;
-      };
+      // Récupérer les réels DB par catégorie précaution (source de vérité)
+      const dbReelByCatId: Record<string, string> = {};
+      catsPrecaution.forEach((cat: any) => {
+        const bBudget = d.budget.find((b: any) => b.categorieId === cat.id);
+        dbReelByCatId[cat.id] = String(bBudget?.montantReel || '');
+      });
 
       try {
         const key = `lignes-banque-${annee}-${mois}`;
         const sv  = localStorage.getItem(key);
+        let finalLignesBanque: LigneBanque[];
+
         if (sv) {
-          // localStorage existe — merger avec valeurs DB (DB prioritaire si localStorage vide)
           const parsed: LigneBanque[] = JSON.parse(sv);
-          const merged = parsed.map((lb: LigneBanque, idx: number) => {
+          // Merger : garder localStorage si > 0, sinon prendre DB
+          finalLignesBanque = parsed.map((lb: LigneBanque, idx: number) => {
             const catPrec = catsPrecaution[idx];
-            const dbReel  = catPrec
-              ? String(d.budget.find((b: any) => b.categorieId === catPrec.id)?.montantReel || '')
-              : '';
+            const dbReel  = catPrec ? (dbReelByCatId[catPrec.id] ?? '') : '';
             return { ...lb, reel: (lb.reel && parseInt(lb.reel) > 0) ? lb.reel : dbReel };
           });
-          setLignesBanque(merged);
-          setLignes(prev => syncLignesFromBanque(merged, prev));
         } else {
           // Construire depuis banques + valeurs DB
-          const ts = Date.now();
-          const lignesInit: LigneBanque[] = bqs.map((bq: any, idx: number) => {
+          finalLignesBanque = bqs.map((bq: any, idx: number) => {
             const catPrec = catsPrecaution[idx];
-            const dbReel  = catPrec
-              ? String(d.budget.find((b: any) => b.categorieId === catPrec.id)?.montantReel || '')
-              : '';
-            return { id: `lb-${ts}-${idx + 1}`, banqueId: bq.id ?? '', anticipe: anticipeParLigne, reel: dbReel };
+            return {
+              id:        `lb-${Date.now()}-${idx + 1}`,
+              banqueId:  bq.id ?? '',
+              anticipe:  anticipeParLigne,
+              reel:      catPrec ? (dbReelByCatId[catPrec.id] ?? '') : '',
+            };
           });
-          if (lignesInit.length === 0) {
-            lignesInit.push({ id: `lb-${ts}-1`, banqueId: bqs[0]?.id ?? '', anticipe: 0, reel: '' });
+          if (finalLignesBanque.length === 0) {
+            finalLignesBanque = [{ id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: 0, reel: '' }];
           }
-          setLignesBanque(lignesInit);
-          setLignes(prev => syncLignesFromBanque(lignesInit, prev));
         }
+
+        setLignesBanque(finalLignesBanque);
+
+        // ── Sync lignes[catPrec] depuis finalLignesBanque (SÉPARÉ de setLignesBanque) ──
+        setLignes(prev => {
+          const synced = { ...prev };
+          catsPrecaution.forEach((cat: any, idx: number) => {
+            const lb = finalLignesBanque[idx];
+            synced[cat.id] = {
+              anticipe: prev[cat.id]?.anticipe ?? '0',
+              reel:     lb ? (lb.reel || '0') : '0',
+            };
+          });
+          return synced;
+        });
+
       } catch {
-        const ts = Date.now();
-        const fallback: LigneBanque[] = catsPrecaution.slice(0, Math.max(bqs.length, 1)).map((cat: any, idx: number) => ({
-          id:       `lb-${ts}-${idx + 1}`,
-          banqueId: bqs[idx]?.id ?? '',
-          anticipe: anticipeParLigne,
-          reel:     String(d.budget.find((b: any) => b.categorieId === cat.id)?.montantReel || ''),
-        }));
-        if (fallback.length === 0) fallback.push({ id: `lb-${ts}-1`, banqueId: bqs[0]?.id ?? '', anticipe: 0, reel: '' });
+        const fallback: LigneBanque[] = [
+          { id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: anticipeParLigne, reel: catsPrecaution[0] ? (dbReelByCatId[catsPrecaution[0]?.id] ?? '') : '' },
+          { id: `lb-${Date.now()}-2`, banqueId: bqs[1]?.id ?? '', anticipe: anticipeParLigne, reel: catsPrecaution[1] ? (dbReelByCatId[catsPrecaution[1]?.id] ?? '') : '' },
+        ];
         setLignesBanque(fallback);
-        setLignes(prev => syncLignesFromBanque(fallback, prev));
+        setLignes(prev => {
+          const synced = { ...prev };
+          catsPrecaution.forEach((cat: any, idx: number) => {
+            synced[cat.id] = { anticipe: prev[cat.id]?.anticipe ?? '0', reel: dbReelByCatId[cat.id] ?? '0' };
+          });
+          return synced;
+        });
       }
     }
 
@@ -238,7 +241,10 @@ export default function SuiviPage() {
   };
 
   const sauvegarder = async () => {
-    if (!data?.anneeId) return;
+    if (!data?.anneeId) {
+      toast.error('Aucune année sélectionnée — rechargez la page');
+      return;
+    }
     setSaving(true);
     (window as any).__setSaveStatus?.('saving');
 
@@ -398,41 +404,47 @@ export default function SuiviPage() {
     charger();
   };
 
-  const ajouterLigneBanque = () => setLignesBanque(prev => [...prev, { id: `lb-${Date.now()}`, banqueId: banques[0]?.id ?? '', anticipe: 0, reel: '' }]);
+  const ajouterLigneBanque   = () => setLignesBanque(prev => [...prev, { id: `lb-${Date.now()}`, banqueId: banques[0]?.id ?? '', anticipe: 0, reel: '' }]);
   const supprimerLigneBanque = (id: string) => setLignesBanque(prev => prev.filter(l => l.id !== id));
 
-  // ── updateLigneBanque : met à jour lignesBanque ET lignes[catPrec] en sync ──
-  // Garantit que KPI Suivi = KPI Dashboard (même source : lignes ↔ DB)
+  // updateLigneBanque : met à jour lignesBanque, puis sync lignes[catPrec] séparément
   const updateLigneBanque = (id: string, field: keyof LigneBanque, val: any) => {
-    setLignesBanque(prev => {
-      const next = prev.map(l => l.id === id ? { ...l, [field]: val } : l);
-      // Si le champ modifié est 'reel', mettre à jour lignes[catPrec] correspondant
-      if (field === 'reel') {
-        const cats = data?.categories ?? [];
-        const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
-        // Recalculer le total par catPrec depuis next
-        setLignes(prevLignes => {
-          const newLignes = { ...prevLignes };
+    // 1. Mettre à jour lignesBanque
+    setLignesBanque(prev => prev.map(l => l.id === id ? { ...l, [field]: val } : l));
+
+    // 2. Si champ 'reel' modifié → sync lignes[catPrec] (appel séparé, pas dans le callback)
+    if (field === 'reel') {
+      const cats = data?.categories ?? [];
+      const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
+      if (catsPrecaution.length > 0) {
+        // Reconstruire lignesBanque avec la nouvelle valeur pour calculer le sync
+        setLignesBanque(prevBanque => {
+          const next = prevBanque.map(l => l.id === id ? { ...l, reel: val } : l);
+          // Calculer les nouveaux réels par catPrec
+          const newReels: Record<string, string> = {};
           catsPrecaution.forEach((cat: any, idx: number) => {
             const lb = next[idx];
-            newLignes[cat.id] = {
-              anticipe: prevLignes[cat.id]?.anticipe ?? '0',
-              reel:     lb ? (lb.reel || '0') : '0',
-            };
+            newReels[cat.id] = lb ? (lb.reel || '0') : '0';
           });
-          // Surplus : sommer dans la dernière catégorie
+          // Surplus si plus de lignes que de catégories
           if (next.length > catsPrecaution.length && catsPrecaution.length > 0) {
             const lastCat = catsPrecaution[catsPrecaution.length - 1];
             const surplus = next.slice(catsPrecaution.length)
               .reduce((s: number, lb: any) => s + (parseInt(lb.reel) || 0), 0);
-            const current = parseInt(newLignes[lastCat.id]?.reel || '0');
-            newLignes[lastCat.id] = { ...newLignes[lastCat.id], reel: String(current + surplus) };
+            newReels[lastCat.id] = String((parseInt(newReels[lastCat.id] || '0')) + surplus);
           }
-          return newLignes;
+          // Sync lignes SÉPARÉMENT (pas dans ce callback)
+          setLignes(prevLignes => {
+            const synced = { ...prevLignes };
+            Object.entries(newReels).forEach(([catId, reel]) => {
+              synced[catId] = { anticipe: prevLignes[catId]?.anticipe ?? '0', reel };
+            });
+            return synced;
+          });
+          return next;
         });
       }
-      return next;
-    });
+    }
   };
 
   if (loading) return (
@@ -452,8 +464,8 @@ export default function SuiviPage() {
   const revAnt  = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
   const revReel = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
 
-  // ── Épargne totale depuis lignes (précaution synchronisé via updateLigneBanque) ──
-  // Source unique = lignes (miroir DB) → même résultat que Dashboard
+  // Épargne = toute l'épargne depuis lignes (source unique, miroir DB)
+  // lignes[catPrec] est initialisé depuis DB dans charger()
   const epAnt  = cats.filter((c: any) => c.type?.startsWith('epargne')).reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
   const epReel = cats.filter((c: any) => c.type?.startsWith('epargne')).reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
 
