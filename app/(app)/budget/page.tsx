@@ -248,6 +248,7 @@ export default function BudgetPage() {
 
       {/* ── P6 : Bannière verrouillage ─────────────────────────── */}
       {locked && (
+        <div className="max-w-4xl mx-auto w-full">
         <div className="flex items-center justify-between gap-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3">
           <div className="flex items-center gap-2.5">
             <Lock size={15} className="text-amber-600 dark:text-amber-400 flex-shrink-0" />
@@ -266,10 +267,11 @@ export default function BudgetPage() {
             <LockOpen size={12} />Déverrouiller
           </button>
         </div>
+        </div>
       )}
 
       {/* ── En-tête ─────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="max-w-4xl mx-auto w-full flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-[var(--text)]">
             Budget Prévisionnel de{' '}
@@ -328,6 +330,7 @@ export default function BudgetPage() {
 
       {/* ── P2 : Bandeau cohérence globale ─────────────────────── */}
       {revRef > 0 && (
+        <div className="max-w-4xl mx-auto w-full">
         <div className={clsx(
           'rounded-2xl border p-4 space-y-3 transition-colors',
           soldeAnt >= 0
@@ -335,7 +338,7 @@ export default function BudgetPage() {
             : 'bg-red-50 dark:bg-red-900/15 border-red-200 dark:border-red-800'
         )}>
           {/* KPIs ligne */}
-          <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-2">
               {soldeAnt >= 0
                 ? <TrendingUp size={16} className="text-green-600 dark:text-green-400" />
@@ -344,7 +347,7 @@ export default function BudgetPage() {
                 {soldeAnt >= 0 ? '✓ Budget équilibré' : '⚠️ Budget déficitaire'}
               </span>
             </div>
-            <div className="flex items-center gap-5 flex-wrap text-sm">
+            <div className="flex items-center gap-4 flex-wrap text-sm">
               {/* Revenus vs ref */}
               <div className="text-center">
                 <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wide">Revenus prévus</p>
@@ -401,6 +404,7 @@ export default function BudgetPage() {
                        pctSorties !== null && pctSorties > 90  ? 'bg-amber-400' : 'bg-green-500'} />
             </div>
           )}
+        </div>
         </div>
       )}
 
