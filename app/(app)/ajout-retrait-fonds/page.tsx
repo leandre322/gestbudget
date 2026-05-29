@@ -26,6 +26,7 @@ export default function AjoutRetraitFondsPage() {
   const [loading,    setLoading]    = useState(true);
   const [saving,     setSaving]     = useState(false);
   const [suppId,     setSuppId]     = useState<string|null>(null);
+  const [activeTab,  setActiveTab]  = useState<'form'|'historique'>('form');
 
   const today = new Date().toISOString().split('T')[0];
   const [type,           setType]           = useState<Mouvement>('ajout');
@@ -135,11 +136,32 @@ export default function AjoutRetraitFondsPage() {
   return (
     <div className="space-y-6 animate-fadeIn max-w-3xl mx-auto">
 
-      {/* En-tête */}
+      {/* En-tête + Onglets */}
       <div>
         <h1 className="text-2xl font-bold text-[var(--text)]">Ajout / Retrait — Fonds</h1>
         <p className="text-[var(--text-muted)] text-sm">Gérez les mouvements sur vos fonds de fonctionnement</p>
       </div>
+
+      {/* Onglets */}
+      <div className="flex gap-1 bg-slate-100 dark:bg-dark-card rounded-xl p-1 w-fit border border-[var(--border)]">
+        {([['form','➕ Nouveau mouvement'],['historique','📋 Historique']] as const).map(([tab, label]) => (
+          <button key={tab} onClick={() => setActiveTab(tab)}
+            className={clsx('px-4 py-2 rounded-lg text-sm font-medium transition-all',
+              activeTab === tab
+                ? 'bg-[var(--surface)] text-primary shadow-sm'
+                : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>
+            {label}
+            {tab === 'historique' && historique.length > 0 && (
+              <span className="ml-1.5 text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-semibold">
+                {historique.length}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Onglet Formulaire ── */}
+      {activeTab === 'form' && (<>
 
       {/* KPIs — sans solde net */}
       <div className="grid grid-cols-2 gap-3">
@@ -304,7 +326,10 @@ export default function AjoutRetraitFondsPage() {
         </button>
       </div>
 
-      {/* Historique */}
+      </>)} {/* end form tab */}
+
+      {/* ── Onglet Historique ── */}
+      {activeTab === 'historique' && (
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
         <div className="px-5 py-3 border-b border-[var(--border)] bg-slate-50 dark:bg-dark-card flex items-center justify-between">
           <h3 className="font-semibold text-[var(--text)]">Historique des mouvements</h3>
@@ -342,6 +367,7 @@ export default function AjoutRetraitFondsPage() {
           </div>
         )}
       </div>
+      )} {/* end historique tab */}
     </div>
   );
 }

@@ -23,7 +23,7 @@ const onlyNumbers = (e: React.KeyboardEvent<HTMLInputElement>) => {
 type Lignes      = Record<string, { anticipe: string; reel: string }>;
 type LigneBanque = { id: string; banqueId: string; anticipe: number; reel: string };
 
-const TYPES_OUVERTS_PAR_DEFAUT = ['revenu', 'epargne_precaution'];
+const TYPES_OUVERTS_PAR_DEFAUT: string[] = []; // Tout plié par défaut
 const MOIS_COURTS  = ['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
 const DONUT_COLORS = ['#1E40AF','#EF4444','#F59E0B','#10B981','#8B5CF6','#06B6D4','#F97316'];
 
@@ -668,7 +668,7 @@ export default function SuiviPage() {
                   const isRevenu       = type === 'revenu';
                   const isEpPrecaution = type === 'epargne_precaution';
                   const isEpAutre      = type === 'epargne_autre';
-                  const isOpen         = groupsOpen[type] !== false;
+                  const isOpen         = groupsOpen[type] === true;
 
                   let gAnt: number, gReel: number;
                   if (isEpPrecaution) {
@@ -794,9 +794,12 @@ export default function SuiviPage() {
                                       </div>
                                     </td>
                                     <td className="px-3 py-2">
-                                      <input type="number" value={lignes[cat.id]?.anticipe ?? ''}
-                                        onChange={e => handleChange(cat.id, 'anticipe', e.target.value)} onKeyDown={onlyNumbers} placeholder="0"
-                                        className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" />
+                                      {/* Prévision = lecture seule — modifiable dans Paramètres > Budget de référence */}
+                                      <div className="w-full text-right px-2 py-1.5 text-sm text-[var(--text-muted)] select-none">
+                                        {parseInt(lignes[cat.id]?.anticipe || '0') > 0
+                                          ? formatFCFA(parseInt(lignes[cat.id]?.anticipe))
+                                          : <span className="opacity-30">—</span>}
+                                      </div>
                                     </td>
                                     <td className="px-3 py-2">
                                       <input type="number" value={lignes[cat.id]?.reel ?? ''}

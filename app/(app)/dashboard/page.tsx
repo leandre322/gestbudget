@@ -740,7 +740,7 @@ function OngletRecap({ moisCourant }: { moisCourant: number }) {
   const [groupsOpen,   setGroupsOpen]   = useState<Record<string,boolean>>({});
   const [decStats,     setDecStats]     = useState({ totalAjouts:0, totalDecaissements:0 });
 
-  useEffect(() => { const def: Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{def[t]=true;});setGroupsOpen(def); }, []);
+  useEffect(() => { const def: Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{def[t]=false;});setGroupsOpen(def); }, []); // Tout plié par défaut
   const toggleGroup  = (t: string) => setGroupsOpen(p=>({...p,[t]:!p[t]}));
   const toutDeployer = () => { const n: Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{n[t]=true;});setGroupsOpen(n); };
   const toutPlier    = () => { const n: Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{n[t]=false;});setGroupsOpen(n); };
