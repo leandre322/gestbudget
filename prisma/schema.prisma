@@ -153,6 +153,14 @@ model Decaissement {
   montantTotal  BigInt   @default(0)
   notes         String?
   typeMouvement String   @default("retrait")
+  banqueId         String?
+  montantFond      BigInt   @default(0)
+  montantBanque    BigInt   @default(0)
+  soldeAvantFond   BigInt?
+  soldeApresFond   BigInt?
+  soldeAvantBanque BigInt?
+  soldeApresBanque BigInt?
+  banque           Banque?  @relation("DecaissementBanque", fields: [banqueId], references: [id])
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -193,6 +201,23 @@ model Banque {
   categories Categorie[] @relation("CategorieBanque")
 
   @@map("banques")
+  decaissements    Decaissement[]  @relation("DecaissementBanque")
+  mouvements       MouvementBanque[]
+}
+
+model MouvementBanque {
+  id             String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  userId         String
+  banqueId       String
+  typeMouvement  String
+  montant        BigInt   @default(0)
+  soldeAvant     BigInt   @default(0)
+  soldeApres     BigInt   @default(0)
+  motif          String?
+  dateOperation  DateTime @db.Date
+  createdAt      DateTime @default(now())
+  banque         Banque   @relation(fields: [banqueId], references: [id], onDelete: Cascade)
+  @@map("mouvements_banque")
 }
 
 model Parametres {

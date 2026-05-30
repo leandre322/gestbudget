@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 
+// ── Sérialisation BigInt/Date ─────────────────────────────────────────────────
 function serial(obj: any): any {
   if (obj === null || obj === undefined) return obj;
   if (typeof obj === 'bigint') return Number(obj);
@@ -16,279 +17,277 @@ function serial(obj: any): any {
   return obj;
 }
 
-// ── Helper : upsert budget mensuel (ajoute ou soustrait au montantReel) ──────
-async function upsertBudgetMensuel(
-  userId: string, anneeId: string, categorieId: string,
-  mois: number, montant: bigint, action: 'add' | 'subtract'
-) {
-  const existing = await prisma.budgetMensuel.findFirst({
-    where: { userId, anneeId, categorieId, mois },
-  });
-  if (existing) {
-    const current = BigInt(Number(existing.montantReel ?? 0));
-    const newVal  = action === 'add' ? current + montant : current - montant;
-    await prisma.budgetMensuel.update({
-      where: { id: existing.id },
-      data:  { montantReel: newVal < BigInt(0) ? BigInt(0) : newVal, updatedAt: new Date() },
-    });
-  } else if (action === 'add') {
-    await prisma.budgetMensuel.create({
-      data: { userId, anneeId, categorieId, mois, montantAnticipe: BigInt(0), montantReel: montant },
-    });
-  }
-}
-
-// ── Helper : trouver ou créer l'enregistrement Annee ─────────────────────────
-async function getOrCreateAnnee(userId: string, annee: number) {
-  let anneeRec = await prisma.annee.findUnique({
+// ── Trouver ou créer l'enregistrement Annee (dans transaction) ────────────────
+async function getOrCreateAnnee(tx: any, userId: string, annee: number) {
+  let rec = await tx.annee.findUnique({
     where: { userId_annee: { userId, annee } },
   });
-  if (!anneeRec) {
-    anneeRec = await prisma.annee.create({
-      data: { userId, annee },
-    });
-  }
-  return anneeRec;
+  if (!rec) rec = await tx.annee.create({ data: { userId, annee } });
+  return rec;
 }
 
-// GET /api/decaissements?annee=2026
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/decaissements?annee=2026&limit=100&offset=0
+// ─────────────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+    if (!session?.user?.id)
+      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const { searchParams } = new URL(req.url);
     const anneeParam = searchParams.get('annee');
-    const annee      = anneeParam ? parseInt(anneeParam) : null;
+    const limit  = Math.min(parseInt(searchParams.get('limit')  ?? '100'), 200);
+    const offset = parseInt(searchParams.get('offset') ?? '0');
 
-    const comptes = await prisma.compteFonds.findMany({
-      where:   { userId: session.user.id, isActive: true },
-      orderBy: { ordre: 'asc' },
-    });
+    // Filtre par année si fourni
+    const anneeRec = anneeParam
+      ? await prisma.annee.findUnique({
+          where: { userId_annee: { userId: session.user.id, annee: parseInt(anneeParam) } },
+        })
+      : null;
 
-    let anneeRec = null;
-    if (annee) {
-      anneeRec = await prisma.annee.findUnique({
-        where: { userId_annee: { userId: session.user.id, annee } },
-      });
-    }
+    const where = {
+      userId: session.user.id,
+      ...(anneeRec ? { anneeId: anneeRec.id } : {}),
+    };
 
-    const whereClause = anneeRec
-      ? { userId: session.user.id, anneeId: anneeRec.id }
-      : { userId: session.user.id };
+    const [decaissements, total] = await Promise.all([
+      prisma.decaissement.findMany({
+        where,
+        include: { repartitions: { include: { compte: true } } },
+        orderBy: { dateOperation: 'desc' },
+        take:    limit,
+        skip:    offset,
+      }),
+      prisma.decaissement.count({ where }),
+    ]);
 
-    const decaissements = await prisma.decaissement.findMany({
-      where:   whereClause,
-      include: { repartitions: { include: { compte: true } } },
-      orderBy: { dateOperation: 'desc' },
-      take:    200,
-    });
-
-    return NextResponse.json(serial({ comptes, decaissements, anneeId: anneeRec?.id ?? null }));
+    return NextResponse.json(serial({ decaissements, total, anneeId: anneeRec?.id ?? null }));
   } catch (e: any) {
     console.error('GET /api/decaissements:', e?.message);
     return NextResponse.json({ error: e?.message ?? 'Erreur interne' }, { status: 500 });
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/decaissements
+// Règle absolue : ne JAMAIS écrire dans budget_mensuel depuis cette route
+// Impact exclusif : comptes_fonds.soldeActuel et/ou banques.solde
+// ─────────────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+    if (!session?.user?.id)
+      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
+    const body = await req.json();
     const {
       description, dateOperation, notes, typeMouvement,
-      montantTotal,   // optionnel — impacte "Autres revenus" (ajout) ou "Autre dépense 1" (retrait)
-      compteId,       // fond ciblé — impacte soldeActuel + catégorie epargne_autre du mois
-      banqueId,       // banque — impacte solde bancaire + catégorie epargne_precaution du mois (optionnel)
-      montantFond,    // montant sur le fond (peut différer de montantTotal)
-      montantBanque,  // montant sur la banque (optionnel)
+      compteId, banqueId,
+      montantFond, montantBanque,
       impacterBanque,
-    } = await req.json();
+    } = body;
 
-    if (!description || !dateOperation) {
+    if (!description || !dateOperation)
       return NextResponse.json({ error: 'Description et date obligatoires' }, { status: 400 });
-    }
 
-    const mouvType   = typeMouvement ?? 'retrait';
-    const isAjout    = mouvType === 'ajout';
+    const mouvType = typeMouvement ?? 'retrait';
+    const isAjout  = mouvType === 'ajout';
 
-    // Montants
-    const mtTotal  = montantTotal  ? BigInt(Math.round(Number(montantTotal)))  : BigInt(0);
-    const mtFond   = montantFond   ? BigInt(Math.round(Number(montantFond)))   : BigInt(0);
-    const mtBanque = montantBanque ? BigInt(Math.round(Number(montantBanque))) : BigInt(0);
+    const mtFond   = BigInt(Math.round(Math.max(0, Number(montantFond)   || 0)));
+    const mtBanque = BigInt(Math.round(Math.max(0, Number(montantBanque) || 0)));
 
-    // Montant à stocker dans decaissements (le plus grand des deux, ou total si fourni)
-    const mtDecaissement = mtTotal > BigInt(0) ? mtTotal : mtFond > BigInt(0) ? mtFond : mtBanque;
+    if (mtFond === BigInt(0) && mtBanque === BigInt(0))
+      return NextResponse.json({ error: 'Saisissez au moins un montant' }, { status: 400 });
 
-    // Date → mois/année
     const opDate  = new Date(dateOperation);
-    const opMois  = opDate.getMonth() + 1;
     const opAnnee = opDate.getFullYear();
 
-    // ── 1. Créer le décaissement ─────────────────────────────────────────
-    const dec = await prisma.decaissement.create({
-      data: {
-        userId:        session.user.id,
-        anneeId:       null, // sera mis à jour après
-        description,
-        dateOperation: opDate,
-        montantTotal:  mtDecaissement,
-        notes:         notes ?? null,
-        typeMouvement: mouvType,
-      },
-    });
+    let result: any;
 
-    // ── 2. Trouver/créer l'année ─────────────────────────────────────────
-    const anneeRec = await getOrCreateAnnee(session.user.id, opAnnee);
+    try {
+      result = await prisma.$transaction(async (tx) => {
+        let soldeAvantFond:    bigint = BigInt(0);
+        let soldeApresFond:    bigint = BigInt(0);
+        let soldeAvantBanque:  bigint = BigInt(0);
+        let soldeApresBanque:  bigint = BigInt(0);
 
-    // Mettre à jour anneeId du décaissement
-    await prisma.decaissement.update({
-      where: { id: dec.id },
-      data:  { anneeId: anneeRec.id },
-    });
+        // ── 1. Impact sur le fond ───────────────────────────────────────
+        if (compteId && mtFond > BigInt(0)) {
+          const compte = await tx.compteFonds.findFirst({
+            where:  { id: compteId, userId: session.user.id },
+            select: { soldeActuel: true, nom: true },
+          });
+          if (!compte)
+            throw Object.assign(new Error('COMPTE_INTROUVABLE'), { code: 404 });
 
-    // ── 3. Impact "Autres revenus" ou "Autre dépense 1" ──────────────────
-    if (mtTotal > BigInt(0)) {
-      const catNomRecherche = isAjout ? 'Autres revenus' : 'Autre dépense';
-      const catTypeRecherche = isAjout ? 'revenu' : 'depense_occasionnelle';
+          soldeAvantFond = BigInt(Number(compte.soldeActuel ?? 0));
 
-      const catImpact = await prisma.categorie.findFirst({
-        where: {
-          userId:   session.user.id,
-          type:     catTypeRecherche,
-          isActive: true,
-          nom:      { contains: catNomRecherche, mode: 'insensitive' },
-        },
-      });
+          // Vérification solde insuffisant pour un retrait
+          if (!isAjout && soldeAvantFond < mtFond) {
+            throw Object.assign(new Error('SOLDE_INSUFFISANT'), {
+              code: 422,
+              details: `${compte.nom} : disponible ${Number(soldeAvantFond).toLocaleString('fr-FR')} FCFA, demandé ${Number(mtFond).toLocaleString('fr-FR')} FCFA`,
+            });
+          }
 
-      if (catImpact) {
-        await upsertBudgetMensuel(session.user.id, anneeRec.id, catImpact.id, opMois, mtTotal, 'add');
-      }
-    }
+          soldeApresFond = isAjout
+            ? soldeAvantFond + mtFond
+            : soldeAvantFond - mtFond;
 
-    // ── 4. Impact fond de fonctionnement ─────────────────────────────────
-    if (compteId && mtFond > BigInt(0)) {
-      // 4a. Mettre à jour soldeActuel du fond
-      const compte = await prisma.compteFonds.findFirst({
-        where:  { id: compteId, userId: session.user.id },
-        select: { soldeActuel: true, nom: true },
-      });
-      if (compte) {
-        const solde    = BigInt(Number(compte.soldeActuel ?? 0));
-        const newSolde = isAjout ? solde + mtFond : solde - mtFond;
-        await prisma.compteFonds.update({
-          where: { id: compteId },
-          data:  { soldeActuel: newSolde < BigInt(0) ? BigInt(0) : newSolde, updatedAt: new Date() },
-        });
+          await tx.compteFonds.update({
+            where: { id: compteId },
+            data:  { soldeActuel: soldeApresFond, updatedAt: new Date() },
+          });
+        }
 
-        // Créer répartition
-        await prisma.decaissementCompte.create({
-          data: { decaissementId: dec.id, compteId, montant: mtFond },
-        });
+        // ── 2. Impact sur la banque (mode transfert uniquement) ─────────
+        const doBanque = impacterBanque && banqueId && mtBanque > BigInt(0);
+        if (doBanque) {
+          const banque = await tx.banque.findFirst({
+            where:  { id: banqueId, userId: session.user.id },
+            select: { solde: true },
+          });
+          if (!banque)
+            throw Object.assign(new Error('BANQUE_INTROUVABLE'), { code: 404 });
 
-        // 4b. Impact catégorie epargne_autre liée dans budget mensuel
-        // Priorité : liaison compteFondsId, sinon matching par nom
-        const catFond = await prisma.categorie.findFirst({
-          where: { userId: session.user.id, compteFondsId: compteId, isActive: true, type: 'epargne_autre' },
-        }) ?? await prisma.categorie.findFirst({
-          where: {
-            userId: session.user.id, isActive: true, type: 'epargne_autre',
-            nom: { contains: compte.nom, mode: 'insensitive' },
+          soldeAvantBanque = BigInt(Number(banque.solde ?? 0));
+
+          // Logique transfert : ajout fond = argent quitte banque ; retrait fond = argent entre banque
+          const rawApres = isAjout
+            ? soldeAvantBanque - mtBanque
+            : soldeAvantBanque + mtBanque;
+          soldeApresBanque = rawApres < BigInt(0) ? BigInt(0) : rawApres;
+
+          await tx.banque.update({
+            where: { id: banqueId },
+            data:  { solde: soldeApresBanque, updatedAt: new Date() },
+          });
+        }
+
+        // ── 3. Créer l'enregistrement decaissement (historique) ─────────
+        const anneeRec = await getOrCreateAnnee(tx, session.user.id, opAnnee);
+
+        const dec = await tx.decaissement.create({
+          data: {
+            userId:          session.user.id,
+            anneeId:         anneeRec.id,
+            description,
+            dateOperation:   opDate,
+            // montantTotal conservé pour compat affichage existant
+            montantTotal:    mtFond > BigInt(0) ? mtFond : mtBanque,
+            // Nouveaux champs pour rollback complet
+            montantFond,
+            montantBanque:   doBanque ? mtBanque : BigInt(0),
+            banqueId:        doBanque ? banqueId : null,
+            notes:           notes ?? null,
+            typeMouvement:   mouvType,
+            soldeAvantFond:  soldeAvantFond  > BigInt(0) ? soldeAvantFond  : null,
+            soldeApresFond:  soldeApresFond  > BigInt(0) ? soldeApresFond  : null,
+            soldeAvantBanque: doBanque && soldeAvantBanque >= BigInt(0) ? soldeAvantBanque : null,
+            soldeApresBanque: doBanque                                   ? soldeApresBanque : null,
           },
         });
 
-        if (catFond) {
-          await upsertBudgetMensuel(
-            session.user.id, anneeRec.id, catFond.id, opMois, mtFond,
-            isAjout ? 'add' : 'subtract'
-          );
+        // ── 4. Répartition fond ────────────────────────────────────────
+        if (compteId && mtFond > BigInt(0)) {
+          await tx.decaissementCompte.create({
+            data: { decaissementId: dec.id, compteId, montant: mtFond },
+          });
         }
-      }
-    }
 
-    // ── 5. Impact banque ─────────────────────────────────────────────────
-    if (impacterBanque && banqueId && mtBanque > BigInt(0)) {
-      const banque = await prisma.banque.findFirst({
-        where:  { id: banqueId, userId: session.user.id },
-        select: { solde: true, nomBanque: true },
+        // ══ AUCUNE ÉCRITURE DANS budget_mensuel ══
+        // Le suivi mensuel et le dashboard Mois Courant ne sont JAMAIS
+        // impactés par les opérations Ajout/Retrait Fonds.
+
+        return dec;
       });
-      if (banque) {
-        const solde       = BigInt(Number(banque.solde ?? 0));
-        // Ajout fond = argent quitte la banque ; Retrait fond = argent entre en banque
-        const newSolde    = isAjout ? solde - mtBanque : solde + mtBanque;
-        await prisma.banque.update({
-          where: { id: banqueId },
-          data:  { solde: newSolde < BigInt(0) ? BigInt(0) : newSolde, updatedAt: new Date() },
-        });
-
-        // 5b. Impact catégorie epargne_precaution dans budget mensuel
-        const catBanque = await prisma.categorie.findFirst({
-          where: {
-            userId: session.user.id, isActive: true, type: 'epargne_precaution',
-            nom: { contains: banque.nomBanque, mode: 'insensitive' },
-          },
-        }) ?? await prisma.categorie.findFirst({
-          where: { userId: session.user.id, isActive: true, type: 'epargne_precaution' },
-        });
-
-        if (catBanque) {
-          await upsertBudgetMensuel(
-            session.user.id, anneeRec.id, catBanque.id, opMois, mtBanque,
-            isAjout ? 'subtract' : 'add'
-          );
-        }
-      }
+    } catch (txErr: any) {
+      if (txErr.message === 'SOLDE_INSUFFISANT')
+        return NextResponse.json({ error: txErr.details }, { status: 422 });
+      if (txErr.message === 'COMPTE_INTROUVABLE')
+        return NextResponse.json({ error: 'Compte introuvable' }, { status: 404 });
+      if (txErr.message === 'BANQUE_INTROUVABLE')
+        return NextResponse.json({ error: 'Banque introuvable' }, { status: 404 });
+      throw txErr;
     }
 
-    return NextResponse.json(serial({ success: true, id: dec.id }), { status: 201 });
+    return NextResponse.json(serial({ success: true, id: result.id }), { status: 201 });
   } catch (e: any) {
     console.error('POST /api/decaissements:', e?.message);
     return NextResponse.json({ error: e?.message ?? 'Erreur interne' }, { status: 500 });
   }
 }
 
-// DELETE /api/decaissements?id=xxx — supprime et annule l'impact sur les soldes
+// ─────────────────────────────────────────────────────────────────────────────
+// DELETE /api/decaissements?id=xxx
+// Rollback complet : fond + banque restaurés via transaction atomique
+// ─────────────────────────────────────────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+    if (!session?.user?.id)
+      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const id = new URL(req.url).searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
 
-    const dec = await prisma.decaissement.findFirst({
-      where:   { id, userId: session.user.id },
-      include: { repartitions: true },
-    });
-    if (!dec) return NextResponse.json({ error: 'Décaissement introuvable' }, { status: 404 });
-
-    const montantBigInt = BigInt(Number(dec.montantTotal ?? 0));
-    const isAjout       = dec.typeMouvement === 'ajout';
-
-    // ── Annuler l'impact sur les CompteFonds ─────────────────────────────
-    for (const rep of dec.repartitions) {
-      const compte = await prisma.compteFonds.findFirst({
-        where:  { id: rep.compteId, userId: session.user.id },
-        select: { soldeActuel: true },
+    await prisma.$transaction(async (tx) => {
+      const dec = await tx.decaissement.findFirst({
+        where:   { id, userId: session.user.id },
+        include: { repartitions: true },
       });
-      if (compte) {
-        const repMontant  = BigInt(Number(rep.montant ?? 0));
-        const soldeActuel = BigInt(Number(compte.soldeActuel ?? 0));
-        // Inverser le mouvement
-        const newSolde    = isAjout ? soldeActuel - repMontant : soldeActuel + repMontant;
-        await prisma.compteFonds.update({
+      if (!dec) throw Object.assign(new Error('NOT_FOUND'), { code: 404 });
+
+      const isAjout = dec.typeMouvement === 'ajout';
+
+      // ── Reverser l'impact sur les fonds ──────────────────────────────
+      for (const rep of dec.repartitions) {
+        const repMt = BigInt(Number(rep.montant ?? 0));
+        if (repMt === BigInt(0)) continue;
+
+        const compte = await tx.compteFonds.findFirst({
+          where:  { id: rep.compteId, userId: session.user.id },
+          select: { soldeActuel: true },
+        });
+        if (!compte) continue;
+
+        const solde = BigInt(Number(compte.soldeActuel ?? 0));
+        // Inverser : ajout → on soustrait ; retrait → on ajoute
+        const rawApres = isAjout ? solde - repMt : solde + repMt;
+        await tx.compteFonds.update({
           where: { id: rep.compteId },
-          data:  { soldeActuel: newSolde < BigInt(0) ? BigInt(0) : newSolde, updatedAt: new Date() },
+          data:  { soldeActuel: rawApres < BigInt(0) ? BigInt(0) : rawApres, updatedAt: new Date() },
         });
       }
-    }
 
-    await prisma.decaissement.delete({ where: { id, userId: session.user.id } });
+      // ── Reverser l'impact sur la banque ──────────────────────────────
+      const decAny    = dec as any;
+      const mtBanque  = BigInt(Number(decAny.montantBanque ?? 0));
+      if (decAny.banqueId && mtBanque > BigInt(0)) {
+        const banque = await tx.banque.findFirst({
+          where:  { id: decAny.banqueId, userId: session.user.id },
+          select: { solde: true },
+        });
+        if (banque) {
+          const solde = BigInt(Number(banque.solde ?? 0));
+          // Inverser le transfert : ajout fond avait soustrait banque → on rajoute
+          const rawApres = isAjout ? solde + mtBanque : solde - mtBanque;
+          await tx.banque.update({
+            where: { id: decAny.banqueId },
+            data:  { solde: rawApres < BigInt(0) ? BigInt(0) : rawApres, updatedAt: new Date() },
+          });
+        }
+      }
+
+      await tx.decaissement.delete({ where: { id } });
+    });
 
     return NextResponse.json({ success: true });
   } catch (e: any) {
+    if (e.message === 'NOT_FOUND')
+      return NextResponse.json({ error: 'Décaissement introuvable' }, { status: 404 });
     console.error('DELETE /api/decaissements:', e?.message);
     return NextResponse.json({ error: e?.message ?? 'Erreur interne' }, { status: 500 });
   }
