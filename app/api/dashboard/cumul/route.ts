@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
         AND (c."isActive" IS NULL OR c."isActive" = true)
     `;
 
-    const base = rows[0] ?? { totalRevenus: 0n, totalDepenses: 0n, totalEpargne: 0n };
+    const base = rows[0] ?? { totalRevenus: BigInt(0), totalDepenses: BigInt(0), totalEpargne: BigInt(0) };
 
     // ── Correctifs (ajustements manuels) ────────────────────────────────────
     let correctifs: any[] = [];
