@@ -135,6 +135,7 @@ model CompteFonds {
   ordre       Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  objectif    BigInt  @default(0)
 
   user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   repartitions DecaissementCompte[]
@@ -218,6 +219,16 @@ model MouvementBanque {
   createdAt      DateTime @default(now())
   banque         Banque   @relation(fields: [banqueId], references: [id], onDelete: Cascade)
   @@map("mouvements_banque")
+}
+
+model CorrectifKpi {
+  id        String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  userId    String
+  kpi       String
+  montant   BigInt
+  motif     String
+  createdAt DateTime @default(now())
+  @@map("correctifs_kpi")
 }
 
 model Parametres {

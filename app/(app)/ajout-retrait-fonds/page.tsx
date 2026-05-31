@@ -345,10 +345,6 @@ export default function AjoutRetraitFondsPage() {
   })();
 
   // ── KPIs depuis historique ────────────────────────────────────────────────
-  const kpiFondAjouts    = historique.filter(h => h.source !== 'banque' && h.typeMouvement === 'ajout').reduce((s,h) => s+h.montant, 0);
-  const kpiFondRetraits  = historique.filter(h => h.source !== 'banque' && h.typeMouvement === 'retrait').reduce((s,h) => s+h.montant, 0);
-  const kpiBanqueAjouts  = historique.filter(h => h.source === 'banque' && h.typeMouvement === 'ajout').reduce((s,h) => s+h.montant, 0);
-  const kpiBanqueRetraits= historique.filter(h => h.source === 'banque' && h.typeMouvement === 'retrait').reduce((s,h) => s+h.montant, 0);
 
   const formatDate = (d: string|Date) => {
     const dt = new Date(d);
@@ -403,25 +399,6 @@ export default function AjoutRetraitFondsPage() {
         <h1 className="text-2xl font-bold text-[var(--text)]">Ajout / Retrait — Fonds & Banques</h1>
         <p className="text-[var(--text-muted)] text-sm">Gérez les mouvements sur vos fonds et comptes bancaires</p>
       </div>
-
-      {/* ── KPIs 4 cartes ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {[
-          { emoji:'📂', label:'Fonds ajoutés',    val:kpiFondAjouts,    bg:'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800', text:'text-green-700 dark:text-green-400' },
-          { emoji:'📂', label:'Fonds retirés',    val:kpiFondRetraits,  bg:'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',         text:'text-red-600 dark:text-red-400' },
-          { emoji:'🏦', label:'Banques ajoutées', val:kpiBanqueAjouts,  bg:'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',      text:'text-blue-700 dark:text-blue-400' },
-          { emoji:'🏦', label:'Banques retirées', val:kpiBanqueRetraits,bg:'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800',text:'text-orange-600 dark:text-orange-400' },
-        ].map(k => (
-          <div key={k.label} className={clsx('rounded-2xl border p-4 flex items-center gap-3', k.bg)}>
-            <span className="text-xl flex-shrink-0">{k.emoji}</span>
-            <div>
-              <p className={clsx('text-xs opacity-70', k.text)}>{k.label}</p>
-              <p className={clsx('text-base font-bold', k.text)}>{formatFCFA(k.val)}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
       {/* ── Cartes fonds avec P6 + P7 ── */}
       {comptes.filter(c => c.isActive).length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">

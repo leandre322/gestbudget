@@ -3,9 +3,12 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 
+const MOIS_COURTS = ['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+
 function serial(obj: any): any {
   if (obj === null || obj === undefined) return obj;
   if (typeof obj === 'bigint') return Number(obj);
+  if (obj instanceof Date) return obj.toISOString();
   if (Array.isArray(obj)) return obj.map(serial);
   if (typeof obj === 'object') {
     const r: any = {};
@@ -16,115 +19,94 @@ function serial(obj: any): any {
 }
 
 // GET /api/comptes/evolution?id=xxx
-// Retourne l'évolution du solde d'un fond sur les 12 derniers mois
-// Données : contributions mensuelles (montantReel) + solde cumulatif
+// Retourne 12 mois de données de contribution pour un fond
 export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
+    if (!session?.user?.id)
       return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
-    }
 
-    const { searchParams } = new URL(req.url);
-    const compteId = searchParams.get('id');
-    if (!compteId) {
-      return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
-    }
+    const compteId = new URL(req.url).searchParams.get('id');
+    if (!compteId)
+      return NextResponse.json({ error: 'id manquant' }, { status: 400 });
 
-    // Vérifier que le compte appartient à l'utilisateur
+    const userId = session.user.id;
+
+    // ── Charger le fond ──────────────────────────────────────────────────────
     const compte = await prisma.compteFonds.findFirst({
-      where: { id: compteId, userId: session.user.id },
-      select: { id: true, nom: true, soldeActuel: true },
+      where:  { id: compteId, userId },
+      select: { id: true, nom: true, soldeActuel: true, objectif: true },
     });
-    if (!compte) {
+    if (!compte)
       return NextResponse.json({ error: 'Compte introuvable' }, { status: 404 });
-    }
 
-    // Trouver les catégories liées à ce fond
-    const catsLiees = await prisma.categorie.findMany({
-      where: { userId: session.user.id, compteFondsId: compteId },
-      select: { id: true, nom: true },
+    // ── Décaissements des 13 derniers mois ───────────────────────────────────
+    const depuis = new Date();
+    depuis.setDate(1);
+    depuis.setMonth(depuis.getMonth() - 12);
+    depuis.setHours(0, 0, 0, 0);
+
+    const decaissements = await prisma.decaissement.findMany({
+      where: {
+        userId,
+        dateOperation: { gte: depuis },
+        repartitions:  { some: { compteId } },
+      },
+      include: {
+        repartitions: {
+          where:  { compteId },
+          select: { montant: true },
+        },
+      },
+      orderBy: { dateOperation: 'asc' },
     });
 
-    if (catsLiees.length === 0) {
-      return NextResponse.json(serial({ compte, mois: [], catsLiees: [] }));
-    }
+    // ── Regrouper par mois ───────────────────────────────────────────────────
+    const parMois: Record<string, { ajouts: number; retraits: number }> = {};
+    decaissements.forEach(d => {
+      const dt  = new Date(d.dateOperation);
+      const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+      if (!parMois[key]) parMois[key] = { ajouts: 0, retraits: 0 };
+      const mt = d.repartitions.reduce((s, r) => s + Number(r.montant || 0), 0);
+      if (d.typeMouvement === 'ajout') parMois[key].ajouts  += mt;
+      else                             parMois[key].retraits += mt;
+    });
 
-    const catIds = catsLiees.map(c => c.id);
+    // ── Calculer le solde de départ (12 mois en arrière) ────────────────────
+    const totalNetPeriode = Object.values(parMois)
+      .reduce((s, m) => s + m.ajouts - m.retraits, 0);
+    let soldeCumulatif = Number(compte.soldeActuel ?? 0) - totalNetPeriode;
 
-    // Construire les 12 derniers mois
-    const now     = new Date();
-    const moisData: {
-      label: string;
-      mois: number;
-      annee: number;
-      contribution: number;
-      contributionAnticipee: number;
-    }[] = [];
-
-    const MOIS_COURTS = ['Jan','Fév','Mar','Avr','Mai','Jun',
-                         'Jul','Aoû','Sep','Oct','Nov','Déc'];
-
+    // ── Construire les 12 mois ────────────────────────────────────────────────
+    const moisArr = [];
     for (let i = 11; i >= 0; i--) {
-      const d    = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const mois = d.getMonth() + 1;
-      const annee = d.getFullYear();
+      const dt    = new Date();
+      dt.setDate(1);
+      dt.setMonth(dt.getMonth() - i);
+      const annee = dt.getFullYear();
+      const mois  = dt.getMonth() + 1;
+      const key   = `${annee}-${String(mois).padStart(2, '0')}`;
+      const m     = parMois[key] ?? { ajouts: 0, retraits: 0 };
+      const net   = m.ajouts - m.retraits;
+      soldeCumulatif += net;
 
-      // Trouver l'anneeId pour cette année
-      const anneeRec = await prisma.annee.findUnique({
-        where: { userId_annee: { userId: session.user.id, annee } },
-        select: { id: true },
-      });
-
-      let contribution         = 0;
-      let contributionAnticipee = 0;
-
-      if (anneeRec) {
-        const budgets = await prisma.budgetMensuel.findMany({
-          where: {
-            userId:      session.user.id,
-            anneeId:     anneeRec.id,
-            categorieId: { in: catIds },
-            mois,
-          },
-          select: { montantReel: true, montantAnticipe: true },
-        });
-
-        contribution          = budgets.reduce((s, b) => s + Number(b.montantReel ?? 0), 0);
-        contributionAnticipee = budgets.reduce((s, b) => s + Number(b.montantAnticipe ?? 0), 0);
-      }
-
-      moisData.push({
-        label:                `${MOIS_COURTS[mois - 1]} ${annee !== now.getFullYear() ? annee : ''}`.trim(),
-        mois,
+      moisArr.push({
+        label:                 MOIS_COURTS[mois],
         annee,
-        contribution,
-        contributionAnticipee,
+        mois,
+        contribution:          net,        // net = ajouts - retraits
+        contributionAnticipee: 0,          // pas disponible ici
+        soldeCumulatif,
+        ajouts:   m.ajouts,
+        retraits: m.retraits,
       });
     }
-
-    // Calculer le solde cumulatif progressif
-    // On part du solde actuel moins les contributions passées non incluses
-    const totalContrib = moisData.reduce((s, m) => s + m.contribution, 0);
-    let soldeRunning   = Number(compte.soldeActuel ?? 0);
-
-    // Reconstruire le cumul en partant du début (12 mois en arrière)
-    // Estimation : solde courant - somme des 12 mois = solde il y a 12 mois
-    const soldeDeparture = soldeRunning - totalContrib;
-    let cumul = soldeDeparture;
-
-    const moisAvecCumul = moisData.map(m => {
-      cumul += m.contribution;
-      return { ...m, soldeCumulatif: cumul };
-    });
 
     return NextResponse.json(serial({
-      compte:   { ...compte },
-      catsLiees,
-      mois:     moisAvecCumul,
-      soldeActuel: Number(compte.soldeActuel ?? 0),
+      compte:      { nom: compte.nom, objectif: compte.objectif },
+      soldeActuel: compte.soldeActuel,
+      mois:        moisArr,
     }));
-
   } catch (e: any) {
     console.error('GET /api/comptes/evolution:', e?.message);
     return NextResponse.json({ error: e?.message ?? 'Erreur interne' }, { status: 500 });
