@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useState, useCallback, useRef, Fragment } from 'react';
 import { Copy, Save, ChevronsDownUp, ChevronsUpDown, Plus, Trash2, Pencil,
@@ -8,7 +8,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import BandeauMoisAnterieur from '@/components/BandeauMoisAnterieur';
 import ModalKPI from '@/components/ModalKPI';
 import { useToast } from '@/components/Toast';
-import { useMois } from '../layout';
+import { useMois, useLock } from '../layout';
 import { formatFCFA, MOIS_LABELS, ORDRE_TYPES, TYPE_LABELS,
          LABEL_PREVISION, LABEL_REEL, LABEL_ECART, LABEL_EXEC } from '@/types';
 import { clsx } from 'clsx';
@@ -56,6 +56,8 @@ function trouverCompteParNom(catNom: string, comptes: any[]): any | null {
 export default function SuiviPage() {
   const { mois, annee, setMois, setAnnee } = useMois();
   const toast = useToast();
+  const { isLocked } = useLock();
+  const { isLocked } = useLock();
 
   const [data,         setData]         = useState<any>(null);
   const [lignes,       setLignes]       = useState<Lignes>({});
@@ -237,18 +239,21 @@ export default function SuiviPage() {
   }, [lignesBanque, annee, mois]);
 
   const scheduleSave = () => {
+    if (isLocked) return;
     if (timerRef.current) clearTimeout(timerRef.current);
     // Utiliser sauvegarderRef.current → toujours la dernière version avec les derniers lignes
     timerRef.current = setTimeout(() => { sauvegarderRef.current(); }, 30_000);
   };
 
   const handleChange = (catId: string, field: 'anticipe'|'reel', val: string) => {
+    if (isLocked) return;
     setLignes(prev => ({ ...prev, [catId]: { ...prev[catId], [field]: val } }));
     scheduleSave();
     setSaved(false);
   };
 
   const sauvegarder = async () => {
+    if (isLocked) return;
     // ── Annuler le timer auto-save pour éviter double-save ──────────────────
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
 
@@ -462,6 +467,7 @@ export default function SuiviPage() {
 
 
   const copierMoisPrecedent = async () => {
+    if (isLocked) return;
     const pm = mois === 1 ? 12 : mois - 1;
     const pa = mois === 1 ? annee - 1 : annee;
     if (!window.confirm(`Copier les prévisions de ${MOIS_LABELS[pm]} ${pa} vers ce mois ?\nCela remplacera les prévisions actuelles.`)) return;
@@ -506,6 +512,7 @@ export default function SuiviPage() {
   // updateLigneBanque — version PROPRE sans anti-pattern React
   // Appelle setLignes et setLignesBanque en top-level, jamais l'un dans l'autre
   const updateLigneBanque = (id: string, field: keyof LigneBanque, val: any) => {
+    if (isLocked) return;
     // 1. Mettre à jour lignesBanque
     setLignesBanque(prev => prev.map(l => l.id === id ? { ...l, [field]: val } : l));
 
@@ -611,11 +618,11 @@ export default function SuiviPage() {
             className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--surface)] hover:bg-slate-50 dark:hover:bg-dark-card text-[var(--text-muted)] rounded-xl px-3 py-2 text-xs font-medium transition-all">
             {showTotals ? '🙈 Masquer totaux' : '👁️ Afficher totaux'}
           </button>
-          <button onClick={copierMoisPrecedent} disabled={copying}
+          <button onClick={copierMoisPrecedent} disabled={copying || isLocked}
             className="flex items-center gap-2 border border-[var(--border)] bg-[var(--surface)] hover:bg-slate-50 dark:hover:bg-dark-card text-[var(--text-muted)] rounded-xl px-3.5 py-2 text-sm font-medium transition-all disabled:opacity-60">
             <Copy size={14} />{copying ? 'Copie...' : 'Mois précédent'}
           </button>
-          <button onClick={sauvegarder} disabled={saving}
+          <button onClick={sauvegarder} disabled={saving || isLocked}
             className="flex items-center gap-2 bg-primary hover:bg-primary-dark text-white rounded-xl px-3.5 py-2 text-sm font-medium transition-all disabled:opacity-60">
             <Save size={14} />{saving ? 'Sauvegarde...' : saved ? 'Sauvegardé ✓' : 'Sauvegarder'}
           </button>

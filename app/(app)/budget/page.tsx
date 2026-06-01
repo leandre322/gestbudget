@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useState, useCallback } from 'react';
 import {
@@ -10,7 +10,7 @@ import CollapsibleGroup, { useCollapseAll } from '@/components/CollapsibleGroup'
 import BandeauMoisAnterieur from '@/components/BandeauMoisAnterieur';
 import { formatFCFA, ORDRE_TYPES, TYPE_LABELS, MOIS_LABELS, LABEL_PREVISION } from '@/types';
 import { clsx } from 'clsx';
-import { useMois } from '../layout';
+import { useMois, useLock } from '../layout';
 
 /* ────────────────────────────────────────────────────────────── */
 const TYPES_OUVERTS: string[] = []; // Tout plié par défaut
@@ -37,6 +37,7 @@ function ProgressBar({ value, max, color }: { value: number; max: number; color:
 /* ────────────────────────────────────────────────────────────── */
 export default function BudgetPage() {
   const { mois, annee, setMois, setAnnee } = useMois();
+  const { isLocked: globalLocked } = useLock();
 
   const [data,        setData]        = useState<any>(null);
   const [lignes,      setLignes]      = useState<Record<string, string>>({});
@@ -47,6 +48,7 @@ export default function BudgetPage() {
   // P6 — Verrouillage mois passés
   const [locked,      setLocked]      = useState(false);
   // P8 — Référence (paramètres avec cache)
+  const effectiveLocked = locked || globalLocked;
   const [parametres,  setParametres]  = useState<any>(null);
   // P5 — Historique 3 mois
   const [showHist,    setShowHist]    = useState(false);
@@ -165,7 +167,7 @@ export default function BudgetPage() {
 
   // ── Sauvegarde (P7 : validation dépassement) ──────────────────
   const sauvegarder = async () => {
-    if (!data?.anneeId || locked) return;
+    if (!data?.anneeId || effectiveLocked) return;
 
     const cats      = data?.categories ?? [];
     const revTotal  = cats.filter((c: any) => c.type === 'revenu')
@@ -247,7 +249,7 @@ export default function BudgetPage() {
       />
 
       {/* ── P6 : Bannière verrouillage ─────────────────────────── */}
-      {locked && (
+      {effectiveLocked && (
         <div className="max-w-4xl mx-auto w-full">
         <div className="flex items-center justify-between gap-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3">
           <div className="flex items-center gap-2.5">
@@ -289,7 +291,7 @@ export default function BudgetPage() {
 
         <div className="flex gap-2 flex-wrap">
           {/* P1 — Appliquer référence */}
-          {revRef > 0 && !locked && (
+          {revRef > 0 && !effectiveLocked && (
             <button onClick={appliquerReference}
               className="flex items-center gap-1.5 border border-primary/30 bg-primary/5 hover:bg-primary/10
                 text-primary rounded-xl px-3 py-2 text-xs font-medium transition-all">
@@ -318,7 +320,7 @@ export default function BudgetPage() {
               text-[var(--text-muted)] rounded-xl px-3.5 py-2 text-sm font-medium transition-all hover:bg-slate-50 dark:hover:bg-dark-card">
             <Copy size={14} />{nextM ? 'Copié ✓' : '→ Mois suivant'}
           </button>
-          {!locked && (
+          {!effectiveLocked && (
             <button onClick={sauvegarder} disabled={saving}
               className="flex items-center gap-2 bg-primary hover:bg-primary-dark text-white rounded-xl
                 px-3.5 py-2 text-sm font-medium transition-all disabled:opacity-60">
@@ -530,8 +532,8 @@ export default function BudgetPage() {
                               <input
                                 type="number"
                                 value={lignes[cat.id] ?? ''}
-                                onChange={e => !locked && setLignes(l => ({ ...l, [cat.id]: e.target.value }))}
-                                readOnly={locked}
+                                onChange={e => !effectiveLocked && setLignes(l => ({ ...l, [cat.id]: e.target.value }))}
+                                readOnly={effectiveLocked}
                                 placeholder="0"
                                 className={clsx(
                                   'w-40 text-right border rounded-lg px-2 py-1.5 text-sm outline-none transition-all',

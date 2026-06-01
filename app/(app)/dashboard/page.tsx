@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useState, useCallback, Fragment } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
@@ -6,7 +6,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
 import { TrendingUp, TrendingDown, PiggyBank, Wallet, AlertTriangle,
          Shield, ChevronDown, ChevronRight, Building2, Pencil, X, Save,
          ArrowDownCircle, ArrowUpCircle, Bell, Loader2, Check, Plus, Minus } from 'lucide-react';
-import { useMois } from '../layout';
+import { useMois, useLock } from '../layout';
 import { formatFCFA, MOIS_COURTS, TYPE_LABELS, calculerScore, couleurScore,
          ORDRE_TYPES, LABEL_PREVISION } from '@/types';
 import { useToast } from '@/components/Toast';
@@ -104,6 +104,7 @@ function EvoBadge({label,hausse,valStr}:{label:string;hausse:boolean;valStr:stri
 // ── Onglet Global ─────────────────────────────────────────────────────────────
 function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCourant:number;anneeCourante:number;budgetMois:any[];loadingMois:boolean}) {
   const toast = useToast();
+  const { isLocked } = useLock();
   const [data,         setData]         = useState<any>(null);
   const [banques,      setBanques]      = useState<any[]>([]);
   const [loading,      setLoading]      = useState(true);

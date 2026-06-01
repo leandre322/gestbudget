@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect, createContext, useContext } from 'react';
+import { useState, useEffect, createContext, useContext, useCallback } from 'react';
 import { SessionProvider, useSession } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
-import { Menu, ChevronLeft, ChevronRight, LogOut, User, WifiOff, Sun, Moon } from 'lucide-react';
+import { Menu, ChevronLeft, ChevronRight, LogOut, User, WifiOff,
+         Sun, Moon, Lock, LockOpen, X, Check } from 'lucide-react';
 import { signOut } from 'next-auth/react';
 import { MOIS_LABELS } from '@/types';
 import { useTheme } from '@/lib/theme';
@@ -12,63 +13,153 @@ import { InactivityWarning } from '@/lib/inactivity';
 import { clsx } from 'clsx';
 import { ToastProvider } from '@/components/Toast';
 import PWARegister from '@/components/PWARegister';
-// Dans le body, avant </ThemeProvider> :
-<PWARegister />
 
-interface MoisCtx { mois: number; annee: number; setMois: (m: number) => void; setAnnee: (a: number) => void; }
-export const MoisContext = createContext<MoisCtx>({ mois: 1, annee: 2026, setMois: () => {}, setAnnee: () => {} });
+const MOIS_NOMS_FR: Record<number,string> = {
+  1:'Janvier',2:'Février',3:'Mars',4:'Avril',5:'Mai',6:'Juin',
+  7:'Juillet',8:'Août',9:'Septembre',10:'Octobre',11:'Novembre',12:'Décembre',
+};
+
+// ── MoisContext ───────────────────────────────────────────────────────────────
+interface MoisCtx { mois:number; annee:number; setMois:(m:number)=>void; setAnnee:(a:number)=>void; }
+export const MoisContext = createContext<MoisCtx>({ mois:1, annee:2026, setMois:()=>{}, setAnnee:()=>{} });
 export const useMois = () => useContext(MoisContext);
 
-function Topbar({ onMenu, mois, annee, onPrev, onNext, saveStatus, isOffline, onMoisCourant, estMoisCourant }: any) {
+// ── LockContext ───────────────────────────────────────────────────────────────
+interface LockCtx { isLocked:boolean; lock:()=>void; openUnlockModal:()=>void; }
+const LockContext = createContext<LockCtx>({ isLocked:true, lock:()=>{}, openUnlockModal:()=>{} });
+export const useLock = () => useContext(LockContext);
+
+// ── Composant LockBanner ─────────────────────────────────────────────────────
+function LockBanner({ isLocked, mois, annee, isMoisCourant, onOpen, onLock }: {
+  isLocked:boolean; mois:number; annee:number; isMoisCourant:boolean;
+  onOpen:()=>void; onLock:()=>void;
+}) {
+  if (!isLocked) {
+    return (
+      <div className="flex items-center justify-between gap-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl px-4 py-2.5 mb-4">
+        <div className="flex items-center gap-2">
+          <Check size={14} className="text-green-600 dark:text-green-400 flex-shrink-0"/>
+          <span className="text-sm font-semibold text-green-800 dark:text-green-300">
+            Mode édition actif — {MOIS_NOMS_FR[mois]} {annee}
+          </span>
+          <span className="text-xs text-green-600 dark:text-green-400 hidden sm:block">· Vos modifications seront enregistrées</span>
+        </div>
+        <button onClick={onLock}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 text-xs font-medium hover:bg-green-200 transition-all flex-shrink-0">
+          <Lock size={12}/>Verrouiller
+        </button>
+      </div>
+    );
+  }
+
+  if (isMoisCourant) {
+    return (
+      <div className="flex items-center justify-between gap-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl px-4 py-2.5 mb-4">
+        <div className="flex items-center gap-2">
+          <Lock size={14} className="text-blue-600 dark:text-blue-400 flex-shrink-0"/>
+          <div>
+            <span className="text-sm font-semibold text-blue-800 dark:text-blue-300">
+              {MOIS_NOMS_FR[mois]} {annee} — Mode lecture seule
+            </span>
+            <span className="text-xs text-blue-600 dark:text-blue-400 hidden sm:block ml-2">
+              · Activez l'édition pour modifier les données
+            </span>
+          </div>
+        </div>
+        <button onClick={onOpen}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs font-medium hover:bg-blue-200 transition-all flex-shrink-0">
+          <LockOpen size={12}/>Modifier
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-2.5 mb-4">
+      <div className="flex items-center gap-2">
+        <Lock size={14} className="text-amber-600 dark:text-amber-400 flex-shrink-0"/>
+        <div>
+          <span className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+            Vous consultez {MOIS_NOMS_FR[mois]} {annee} — mois passé
+          </span>
+          <span className="text-xs text-amber-600 dark:text-amber-400 hidden sm:block ml-2">
+            · Les modifications sont désactivées pour préserver l'historique
+          </span>
+        </div>
+      </div>
+      <button onClick={onOpen}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-xs font-medium hover:bg-amber-200 transition-all flex-shrink-0">
+        <LockOpen size={12}/>Déverrouiller
+      </button>
+    </div>
+  );
+}
+
+// ── Composant Topbar ──────────────────────────────────────────────────────────
+function Topbar({ onMenu, mois, annee, onPrev, onNext, saveStatus, isOffline,
+                  onMoisCourant, estMoisCourant, isLocked }: any) {
   const { data: session } = useSession();
   const { isDark, toggleTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
+
   return (
     <header className="h-14 bg-[var(--surface)] border-b border-[var(--border)] flex items-center px-4 gap-3 sticky top-0 z-20 shadow-sm transition-colors">
-      <button onClick={onMenu} className="lg:hidden text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"><Menu size={22} /></button>
+      <button onClick={onMenu} className="lg:hidden text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
+        <Menu size={22}/>
+      </button>
       <div className="flex items-center gap-1.5">
         <button onClick={onPrev} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-dark-card text-slate-400 transition-all">
-          <ChevronLeft size={17} />
+          <ChevronLeft size={17}/>
         </button>
         <span className="font-semibold text-[var(--text)] text-sm min-w-[130px] text-center select-none">
           {MOIS_LABELS[mois]} {annee}
         </span>
         <button onClick={onNext} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-dark-card text-slate-400 transition-all">
-          <ChevronRight size={17} />
+          <ChevronRight size={17}/>
         </button>
         {!estMoisCourant && (
-          <button onClick={onMoisCourant}
-            title="Revenir au mois courant"
+          <button onClick={onMoisCourant} title="Revenir au mois courant"
             className="ml-1 px-2.5 py-1 bg-primary text-white rounded-lg text-xs font-semibold hover:bg-primary-dark transition-all flex items-center gap-1">
             📅 Aujourd'hui
           </button>
         )}
+        {/* Indicateur cadenas */}
+        <span className={clsx('ml-1 flex-shrink-0', isLocked ? 'text-slate-400' : 'text-green-500')}>
+          {isLocked ? <Lock size={13}/> : <LockOpen size={13}/>}
+        </span>
       </div>
-      {saveStatus === 'saving' && <span className="text-xs text-amber-500 font-medium hidden sm:block">Sauvegarde...</span>}
-      {saveStatus === 'saved'  && <span className="text-xs text-green-500 font-medium hidden sm:block">Sauvegardé ✓</span>}
-      {saveStatus === 'error'  && <span className="text-xs text-red-500 font-medium hidden sm:block">Erreur ⚠️</span>}
-      <div className="flex-1" />
+
+      {saveStatus==='saving' && <span className="text-xs text-amber-500 font-medium hidden sm:block">Sauvegarde...</span>}
+      {saveStatus==='saved'  && <span className="text-xs text-green-500 font-medium hidden sm:block">Sauvegardé ✓</span>}
+      {saveStatus==='error'  && <span className="text-xs text-red-500 font-medium hidden sm:block">Erreur ⚠️</span>}
+      <div className="flex-1"/>
       {isOffline && (
         <div className="flex items-center gap-1.5 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 text-amber-600 dark:text-amber-400 rounded-full px-3 py-1 text-xs font-medium">
-          <WifiOff size={12} />Hors-ligne
+          <WifiOff size={12}/>Hors-ligne
         </div>
       )}
-      <button onClick={toggleTheme} title={isDark ? 'Mode clair' : 'Mode sombre'}
+      <button onClick={toggleTheme} title={isDark?'Mode clair':'Mode sombre'}
         className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-dark-card transition-all text-slate-500 dark:text-slate-400">
-        {isDark ? <Sun size={18} className="text-amber-400" /> : <Moon size={18} />}
+        {isDark ? <Sun size={18} className="text-amber-400"/> : <Moon size={18}/>}
       </button>
       <div className="relative">
         <button onClick={() => setMenuOpen(!menuOpen)}
           className="flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-dark-card rounded-xl px-3 py-1.5 transition-all">
-          <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center"><User size={13} className="text-white" /></div>
-          <span className="text-sm text-slate-500 dark:text-slate-400 hidden sm:block max-w-[140px] truncate">{session?.user?.email}</span>
+          <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center">
+            <User size={13} className="text-white"/>
+          </div>
+          <span className="text-sm text-slate-500 dark:text-slate-400 hidden sm:block max-w-[140px] truncate">
+            {session?.user?.email}
+          </span>
         </button>
         {menuOpen && (
           <div className="absolute right-0 top-full mt-1.5 bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-lg py-1 min-w-[180px] z-50">
-            <div className="px-4 py-2 text-xs text-[var(--text-muted)] border-b border-[var(--border)] truncate">{session?.user?.email}</div>
+            <div className="px-4 py-2 text-xs text-[var(--text-muted)] border-b border-[var(--border)] truncate">
+              {session?.user?.email}
+            </div>
             <button onClick={() => signOut({ callbackUrl: '/login' })}
               className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all">
-              <LogOut size={14} />Se déconnecter
+              <LogOut size={14}/>Se déconnecter
             </button>
           </div>
         )}
@@ -77,21 +168,22 @@ function Topbar({ onMenu, mois, annee, onPrev, onNext, saveStatus, isOffline, on
   );
 }
 
+// ── Composant BottomNav ───────────────────────────────────────────────────────
 function BottomNav() {
   const pathname = usePathname();
   const items = [
-    { href: '/dashboard',     label: 'Dashboard', icon: '📊' },
-    { href: '/suivi',         label: 'Suivi',     icon: '📅' },
-    { href: '/decaissements', label: 'Dépenses',  icon: '📒' },
-    { href: '/budget',        label: 'Budget',    icon: '💰' },
-    { href: '/parametres',    label: 'Paramètres',icon: '⚙️' },
+    { href:'/dashboard',     label:'Dashboard', icon:'📊' },
+    { href:'/suivi',         label:'Suivi',     icon:'📅' },
+    { href:'/decaissements', label:'Dépenses',  icon:'📒' },
+    { href:'/budget',        label:'Budget',    icon:'💰' },
+    { href:'/parametres',    label:'Paramètres',icon:'⚙️' },
   ];
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-[var(--surface)] border-t border-[var(--border)] z-20 flex transition-colors">
       {items.map(item => (
         <a key={item.href} href={item.href}
           className={clsx('flex-1 flex flex-col items-center py-2 text-xs transition-all',
-            pathname.startsWith(item.href) ? 'text-primary font-semibold' : 'text-[var(--text-muted)]')}>
+            pathname.startsWith(item.href)?'text-primary font-semibold':'text-[var(--text-muted)]')}>
           <span className="text-lg leading-none mb-0.5">{item.icon}</span>{item.label}
         </a>
       ))}
@@ -99,14 +191,33 @@ function BottomNav() {
   );
 }
 
+// ── Layout interne ────────────────────────────────────────────────────────────
 function InnerLayout({ children }: { children: React.ReactNode }) {
-  const now = new Date();
+  const now  = new Date();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [mois,  setMois]  = useState(now.getMonth() + 1);
-  const [annee, setAnnee] = useState(now.getFullYear());
-  const [saveStatus, setSaveStatus] = useState('idle');
-  const [isOffline, setIsOffline] = useState(false);
+  const [mois,        setMois]        = useState(now.getMonth() + 1);
+  const [annee,       setAnnee]       = useState(now.getFullYear());
+  const [saveStatus,  setSaveStatus]  = useState('idle');
+  const [isOffline,   setIsOffline]   = useState(false);
 
+  // ── Lock state ──────────────────────────────────────────────────────────
+  const [isLocked,    setIsLocked]    = useState(true);
+  const [showModal,   setShowModal]   = useState(false);
+  const [confirmed,   setConfirmed]   = useState(false);
+
+  // Auto-relock quand mois ou annee change
+  useEffect(() => {
+    setIsLocked(true);
+    setShowModal(false);
+    setConfirmed(false);
+  }, [mois, annee]);
+
+  const lock           = useCallback(() => setIsLocked(true), []);
+  const openUnlockModal = useCallback(() => { setConfirmed(false); setShowModal(true); }, []);
+  const confirmUnlock  = () => { setIsLocked(false); setShowModal(false); };
+  const closeModal     = () => { setShowModal(false); setConfirmed(false); };
+
+  // ── Navigation mois ─────────────────────────────────────────────────────
   useEffect(() => {
     (window as any).__setSaveStatus = setSaveStatus;
     const upd = () => setIsOffline(!navigator.onLine);
@@ -115,38 +226,108 @@ function InnerLayout({ children }: { children: React.ReactNode }) {
     return () => { window.removeEventListener('online', upd); window.removeEventListener('offline', upd); };
   }, []);
 
-  const prev = () => { if (mois===1){setMois(12);setAnnee(a=>a-1);}else setMois(m=>m-1); };
-  const next = () => { if (mois===12){setMois(1);setAnnee(a=>a+1);}else setMois(m=>m+1); };
-  const moisCourantReel    = new Date().getMonth() + 1;
+  const prev = () => { if(mois===1){setMois(12);setAnnee(a=>a-1);}else setMois(m=>m-1); };
+  const next = () => { if(mois===12){setMois(1);setAnnee(a=>a+1);}else setMois(m=>m+1); };
+  const moisCourantReel     = new Date().getMonth() + 1;
   const anneeCouranteReelle = new Date().getFullYear();
-  const estMoisCourant     = mois === moisCourantReel && annee === anneeCouranteReelle;
-  const allerMoisCourant   = () => { setMois(moisCourantReel); setAnnee(anneeCouranteReelle); };
+  const estMoisCourant      = mois === moisCourantReel && annee === anneeCouranteReelle;
+  const allerMoisCourant    = () => { setMois(moisCourantReel); setAnnee(anneeCouranteReelle); };
+  const isMoisCourant       = estMoisCourant;
 
   return (
     <MoisContext.Provider value={{ mois, annee, setMois, setAnnee }}>
-      <div className="flex h-screen overflow-hidden bg-[var(--bg)] transition-colors">
-        <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <Topbar
-            onMenu={() => setSidebarOpen(true)}
-            mois={mois} annee={annee}
-            onPrev={prev} onNext={next}
-            saveStatus={saveStatus}
-            isOffline={isOffline}
-            onMoisCourant={allerMoisCourant}
-            estMoisCourant={estMoisCourant}
-          />
-          <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-20 lg:pb-6 bg-[var(--bg)] transition-colors">
-            {children}
-          </main>
+      <LockContext.Provider value={{ isLocked, lock, openUnlockModal }}>
+
+        {/* Modal de confirmation déverrouillage */}
+        {showModal && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/50" onClick={closeModal}/>
+            <div className="relative bg-[var(--surface)] rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+              <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-400/50 to-transparent"/>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)]">
+                <h3 className="font-bold text-[var(--text)] flex items-center gap-2">
+                  <LockOpen size={16} className="text-amber-500"/>
+                  {isMoisCourant ? 'Activer le mode édition' : 'Déverrouiller les données'}
+                </h3>
+                <button onClick={closeModal} className="text-[var(--text-muted)] hover:text-[var(--text)]">
+                  <X size={18}/>
+                </button>
+              </div>
+              <div className="p-5 space-y-4">
+                <div className={clsx('rounded-xl p-4 border text-sm',
+                  isMoisCourant
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300'
+                    : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300')}>
+                  <p className="font-semibold mb-1">
+                    {isMoisCourant
+                      ? `📝 Édition de ${MOIS_NOMS_FR[mois]} ${annee}`
+                      : `⚠️ Données historiques — ${MOIS_NOMS_FR[mois]} ${annee}`}
+                  </p>
+                  <p className="text-xs opacity-80">
+                    {isMoisCourant
+                      ? 'Vous êtes sur le point d\'activer l\'édition du mois en cours.'
+                      : 'Ce mois est terminé. Toute modification affectera des données historiques finalisées.'}
+                  </p>
+                </div>
+                <label className="flex items-start gap-3 cursor-pointer p-3 rounded-xl border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card transition-colors">
+                  <input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}
+                    className="mt-0.5 flex-shrink-0 accent-primary w-4 h-4"/>
+                  <span className="text-sm text-[var(--text)]">
+                    Je comprends que je modifie des données{' '}
+                    <strong>{isMoisCourant ? 'du mois en cours' : 'historiques'}</strong>{' '}
+                    et j'assume la responsabilité de ces modifications.
+                  </span>
+                </label>
+                <div className="flex gap-2 pt-1">
+                  <button onClick={closeModal}
+                    className="flex-1 py-2.5 rounded-xl border border-[var(--border)] text-sm text-[var(--text-muted)] hover:bg-slate-50 dark:hover:bg-dark-card transition-all">
+                    Annuler
+                  </button>
+                  <button onClick={confirmUnlock} disabled={!confirmed}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-all">
+                    <LockOpen size={14}/>
+                    {isMoisCourant ? 'Activer l\'édition' : 'Confirmer le déverrouillage'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="flex h-screen overflow-hidden bg-[var(--bg)] transition-colors">
+          <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)}/>
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <Topbar
+              onMenu={() => setSidebarOpen(true)}
+              mois={mois} annee={annee}
+              onPrev={prev} onNext={next}
+              saveStatus={saveStatus}
+              isOffline={isOffline}
+              onMoisCourant={allerMoisCourant}
+              estMoisCourant={estMoisCourant}
+              isLocked={isLocked}
+            />
+            <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-20 lg:pb-6 bg-[var(--bg)] transition-colors">
+              <LockBanner
+                isLocked={isLocked}
+                mois={mois} annee={annee}
+                isMoisCourant={isMoisCourant}
+                onOpen={openUnlockModal}
+                onLock={lock}
+              />
+              {children}
+            </main>
+          </div>
         </div>
-      </div>
-      <BottomNav />
-      <InactivityWarning />
+        <BottomNav/>
+        <InactivityWarning/>
+        <PWARegister/>
+      </LockContext.Provider>
     </MoisContext.Provider>
   );
 }
 
+// ── Layout principal ──────────────────────────────────────────────────────────
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <SessionProvider>
