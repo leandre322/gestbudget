@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useCallback, Fragment } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
@@ -104,7 +104,7 @@ function EvoBadge({label,hausse,valStr}:{label:string;hausse:boolean;valStr:stri
 // ── Onglet Global ─────────────────────────────────────────────────────────────
 function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCourant:number;anneeCourante:number;budgetMois:any[];loadingMois:boolean}) {
   const toast = useToast();
-  const { isLocked } = useLock();
+  const { isLocked, openUnlockModal } = useLock();
   const [data,         setData]         = useState<any>(null);
   const [banques,      setBanques]      = useState<any[]>([]);
   const [loading,      setLoading]      = useState(true);
@@ -259,9 +259,10 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   useEffect(() => { if(banques.length>0)chargerEvolutionBanques(banques); }, [banques, chargerEvolutionBanques]);
 
   // ── Inline edit fonds ─────────────────────────────────────────────────────
-  const startEditFond = (f:any) => { setEditingFondId(f.id); setEditingFondVal(String(Number(f.soldeActuel??0))); };
+  const startEditFond = (f:any) => { if (isLocked) { openUnlockModal(); return; } setEditingFondId(f.id); setEditingFondVal(String(Number(f.soldeActuel??0))); };
   const cancelEditFond = () => { setEditingFondId(null); setEditingFondVal(''); };
   const saveEditFond = async (f:any) => {
+    if (isLocked) return;
     const newSolde = parseInt(editingFondVal)||0;
     if (newSolde===Number(f.soldeActuel??0)){cancelEditFond();return;}
     const ancien = Number(f.soldeActuel??0);
@@ -276,8 +277,9 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   };
 
   // ── Correctif KPI ─────────────────────────────────────────────────────────
-  const ouvrirCorrectif = (kpi:'revenus'|'depenses'|'epargne') => { setCorrectifKpi(kpi);setCorrectifMontant('');setCorrectifMotif('');setCorrectifSigne(1);setShowCorrectif(true); };
+  const ouvrirCorrectif = (kpi:'revenus'|'depenses'|'epargne') => { if (isLocked) { openUnlockModal(); return; } setCorrectifKpi(kpi);setCorrectifMontant('');setCorrectifMotif('');setCorrectifSigne(1);setShowCorrectif(true); };
   const sauvegarderCorrectif = async () => {
+    if (isLocked) return;
     if (!correctifMontant||parseInt(correctifMontant)<=0){toast.error('Montant invalide');return;}
     if (!correctifMotif.trim()){toast.error('Motif obligatoire');return;}
     setSavingCorrectif(true);
@@ -315,6 +317,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const alertes = budgetMois.filter((b:any)=>b.categorie?.type?.startsWith('depense')&&b.montantAnticipe>0&&b.montantReel>b.montantAnticipe).map((b:any)=>b.categorie?.nom);
 
   const ouvrirModal = (type:string) => {
+    if (isLocked) { openUnlockModal(); return; }
     const init:Record<string,string>={};
     if(type==='urgence'){init['revenu']=String(revenuRef);init['nMois']=String(nMoisUrgence);}
     else if(type==='banques'){banques.forEach(b=>{init[b.id]=String(b.solde??0);});}
@@ -323,6 +326,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   };
 
   const sauvegarderModal = async () => {
+    if (isLocked) return;
     if(!modalType)return;setSavingModal(true);
     try {
       if(modalType==='urgence'){await fetch('/api/parametres',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revenuMensuelReference:parseInt(modalVals['revenu']||'0')||0,nMoisUrgence:parseInt(modalVals['nMois']||'6')||6})});toast.success("Fonds d'urgence mis à jour ✓");}
@@ -432,7 +436,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
               {titre:'Solde',val:solde,ant:revenus.ant-epargne.ant-depenses.ant,type:'',bg:solde>=0?'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800':'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',text:solde>=0?'text-green-700 dark:text-green-400':'text-red-600 dark:text-red-400',icon:Wallet,sparkColor:solde>=0?'#10B981':'#EF4444',sparkData:sparklines.solde},
             ].map(k=>(
               <div key={k.titre} className={clsx('rounded-2xl border p-3.5 flex flex-col gap-0.5 transition-colors',k.bg)}>
-                <div className="flex items-center justify-between"><p className="text-xs font-medium opacity-60">{k.titre}</p><div className="flex items-center gap-1"><k.icon size={15} className="opacity-40"/>{k.type&&<button onClick={()=>ouvrirModal(k.type)} className="p-1 rounded-lg hover:bg-white/40 dark:hover:bg-black/20 transition-colors"><Pencil size={11} className="opacity-60"/></button>}</div></div>
+                <div className="flex items-center justify-between"><p className="text-xs font-medium opacity-60">{k.titre}</p><div className="flex items-center gap-1"><k.icon size={15} className="opacity-40"/>{k.type&&<button onClick={()=>ouvrirModal(k.type)} disabled={isLocked} title={isLocked?"Verrouillez pour modifier":"Modifier"} className={isLocked?"p-1 rounded-lg opacity-20 cursor-not-allowed":"p-1 rounded-lg hover:bg-white/40 dark:hover:bg-black/20 transition-colors"}><Pencil size={11} className="opacity-60"/></button>}</div></div>
                 <p className={clsx('text-lg font-bold',k.text)}>{formatFCFA(k.val)}</p>
                 <p className="text-xs opacity-55">Prévision : {formatFCFA(k.ant)}</p>
                 {k.sparkData.length>=2&&<Sparkline data={k.sparkData} color={k.sparkColor} height={18} width={60}/>}
@@ -480,7 +484,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
                       <button onClick={cancelEditFond} className="p-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex-shrink-0"><X size={12}/></button>
                     </div>
                   ) : (
-                    <p className="text-base font-bold text-primary cursor-text hover:text-primary-dark transition-colors" onClick={()=>startEditFond(f)} title="Cliquer pour corriger">{formatFCFA(soldeNum)}</p>
+                    <p className="text-base font-bold text-primary cursor-text hover:text-primary-dark transition-colors" onClick={()=>startEditFond(f)} title={isLocked?"Verrouillez pour modifier":"Cliquer pour corriger"} style={isLocked?{cursor:"not-allowed",opacity:0.6}:{}}>{formatFCFA(soldeNum)}</p>
                   )}
                   {pct!==null && (
                     <div className="mt-1.5">
@@ -490,7 +494,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
                     </div>
                   )}
                   {evo.length>0&&<div className="flex gap-1 mt-1.5 flex-wrap">{evo.map((e:any,i:number)=><EvoBadge key={i} label={e.label} hausse={e.hausse} valStr={`${e.pct}%`}/>)}</div>}
-                  {!isEditing&&<button onClick={()=>startEditFond(f)} title="Corriger le solde" className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 bg-[var(--border)] hover:bg-primary/10 text-[var(--text-muted)] hover:text-primary transition-all"><Pencil size={11}/></button>}
+                  {!isEditing&&<button onClick={()=>startEditFond(f)} disabled={isLocked} title={isLocked?"Verrouillez pour modifier":"Corriger le solde"} className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 bg-[var(--border)] hover:bg-primary/10 text-[var(--text-muted)] hover:text-primary transition-all"><Pencil size={11}/></button>}
                 </div>
               );
             })}
@@ -504,7 +508,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2"><Building2 size={17} className="text-primary"/><h3 className="font-semibold text-[var(--text)]">Épargne Précaution</h3></div>
-          <div className="flex items-center gap-2"><span className="text-sm font-bold text-primary">{formatFCFA(totalPrecaution)}</span><button onClick={()=>ouvrirModal('banques')} className="p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card transition-colors"><Pencil size={13} className="text-[var(--text-muted)]"/></button></div>
+          <div className="flex items-center gap-2"><span className="text-sm font-bold text-primary">{formatFCFA(totalPrecaution)}</span><button onClick={()=>ouvrirModal('banques')} disabled={isLocked} title={isLocked?"Verrouillez pour modifier":undefined} className={isLocked?"p-1.5 rounded-lg border border-[var(--border)] opacity-30 cursor-not-allowed":"p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card transition-colors"}><Pencil size={13} className="text-[var(--text-muted)]"/></button></div>
         </div>
         {(() => {
           const cats = data?._categories??[];
@@ -522,7 +526,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
 
       {/* Fonds d'urgence */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-        <div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><Shield size={17} className="text-primary"/><h3 className="font-semibold text-[var(--text)]">Fonds d'urgence</h3></div><div className="flex items-center gap-2">{revenuRef>0&&<span className={clsx('text-sm font-bold',textColor)}>{pctFonds.toFixed(1)}%</span>}<button onClick={()=>ouvrirModal('urgence')} className="p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card"><Pencil size={13} className="text-[var(--text-muted)]"/></button></div></div>
+        <div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><Shield size={17} className="text-primary"/><h3 className="font-semibold text-[var(--text)]">Fonds d'urgence</h3></div><div className="flex items-center gap-2">{revenuRef>0&&<span className={clsx('text-sm font-bold',textColor)}>{pctFonds.toFixed(1)}%</span>}<button onClick={()=>ouvrirModal('urgence')} disabled={isLocked} title={isLocked?"Verrouillez pour modifier":undefined} className={isLocked?"p-1.5 rounded-lg border border-[var(--border)] opacity-30 cursor-not-allowed":"p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card"}><Pencil size={13} className="text-[var(--text-muted)]"/></button></div></div>
         {revenuRef===0 ? (
           <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl p-4"><p className="text-sm font-semibold text-orange-700 dark:text-orange-400 mb-1">⚠️ Revenu de référence non configuré</p><p className="text-xs text-orange-600 dark:text-orange-400 mb-3">L'objectif est calculé : Revenu mensuel × Nombre de mois.</p><div className="flex items-center justify-between"><div><p className="text-xs text-[var(--text-muted)]">Épargne précaution actuelle</p><p className="text-lg font-bold text-primary">{formatFCFA(fondsUrgence)}</p></div><button onClick={()=>ouvrirModal('urgence')} className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white rounded-xl text-xs font-medium"><Pencil size={12}/>Configurer</button></div></div>
         ) : (
@@ -553,7 +557,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
               <p className="text-xs font-medium opacity-60">{k.label}</p>
               <div className="flex items-center gap-1">
                 <k.icon size={15} className="opacity-40"/>
-                {k.kpi && <button onClick={()=>ouvrirCorrectif(k.kpi!)} title="Appliquer un correctif" className="p-1 rounded-lg hover:bg-white/40 dark:hover:bg-black/20 transition-colors"><Pencil size={11} className="opacity-50"/></button>}
+                {k.kpi && <button onClick={()=>ouvrirCorrectif(k.kpi!)} disabled={isLocked} title={isLocked?"Verrouillez pour modifier":"Appliquer un correctif"} className={isLocked?"p-1 rounded-lg opacity-20 cursor-not-allowed":"p-1 rounded-lg hover:bg-white/40 dark:hover:bg-black/20 transition-colors"}><Pencil size={11} className="opacity-50"/></button>}
               </div>
             </div>
             <p className={clsx('text-lg font-bold',k.text)}>{formatFCFA(k.val)}</p>
@@ -613,6 +617,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
 
 // ── Onglet Récap (inchangé) ───────────────────────────────────────────────────
 function OngletRecap({moisCourant}:{moisCourant:number}) {
+  const { isLocked } = useLock();
   const anneeActuelle=new Date().getFullYear();
   const [anneeSelect,setAnneeSelect]=useState(anneeActuelle);
   const [data,setData]=useState<any>(null);
@@ -621,13 +626,13 @@ function OngletRecap({moisCourant}:{moisCourant:number}) {
   const [exporting,setExporting]=useState<'excel'|'pdf'|null>(null);
   const [anneesDispos,setAnneesDispos]=useState<number[]>([anneeActuelle]);
   const [groupsOpen,setGroupsOpen]=useState<Record<string,boolean>>({});
-  const [decStats,setDecStats]=useState({totalAjouts:0,totalDecaissements:0});
+  const [decStats,setDecStats]=useState({fondAjouts:0,fondRetraits:0,banqueAjouts:0,banqueRetraits:0});
   useEffect(()=>{const def:Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{def[t]=false;});setGroupsOpen(def);},[]);
   const toggleGroup=(t:string)=>setGroupsOpen(p=>({...p,[t]:!p[t]}));
   const toutDeployer=()=>{const n:Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{n[t]=true;});setGroupsOpen(n);};
   const toutPlier=()=>{const n:Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{n[t]=false;});setGroupsOpen(n);};
   useEffect(()=>{fetch('/api/annees').then(r=>r.json()).then(d=>{if(d.annees?.length){setAnneesDispos(d.annees);if(!d.annees.includes(anneeActuelle))setAnneeSelect(d.annees[d.annees.length-1]);}}).catch(()=>{});},[]);
-  const charger=useCallback(async()=>{setLoading(true);try{const promises=Array.from({length:12},(_,i)=>fetch(`/api/budget?annee=${anneeSelect}&mois=${i+1}`).then(r=>r.ok?r.json():null));const results=await Promise.all(promises);const cats:any[]=results.find(r=>r?.categories?.length)?.categories??[];const budgetCumul:any[]=[];results.forEach(r=>{if(!r?.budget)return;r.budget.forEach((b:any)=>{const ex=budgetCumul.find(ab=>ab.categorieId===b.categorieId);if(ex){ex.montantAnticipe+=b.montantAnticipe??0;ex.montantReel+=b.montantReel??0;}else budgetCumul.push({...b,montantAnticipe:b.montantAnticipe??0,montantReel:b.montantReel??0});});});const histData=[];for(let i=5;i>=0;i--){let m=moisCourant-i,a=anneeSelect;if(m<=0){m+=12;a--;}const hr=results[m-1];histData.push({mois:MOIS_COURTS[m],ant:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantAnticipe,0)??0,reel:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantReel,0)??0});}const resDec=await fetch(`/api/decaissements?annee=${anneeSelect}`);if(resDec.ok){const dd=await resDec.json();const decs=dd.decaissements??[];setDecStats({totalAjouts:decs.filter((d:any)=>d.typeMouvement==='ajout').reduce((s:number,d:any)=>s+(d.montantTotal??0),0),totalDecaissements:decs.filter((d:any)=>d.typeMouvement==='retrait').reduce((s:number,d:any)=>s+(d.montantTotal??0),0)});}setData({budget:budgetCumul,categories:cats});setHist(histData);}catch(e){console.error(e);}setLoading(false);},[anneeSelect,moisCourant]);
+  const charger=useCallback(async()=>{setLoading(true);try{const promises=Array.from({length:12},(_,i)=>fetch(`/api/budget?annee=${anneeSelect}&mois=${i+1}`).then(r=>r.ok?r.json():null));const results=await Promise.all(promises);const cats:any[]=results.find(r=>r?.categories?.length)?.categories??[];const budgetCumul:any[]=[];results.forEach(r=>{if(!r?.budget)return;r.budget.forEach((b:any)=>{const ex=budgetCumul.find(ab=>ab.categorieId===b.categorieId);if(ex){ex.montantAnticipe+=b.montantAnticipe??0;ex.montantReel+=b.montantReel??0;}else budgetCumul.push({...b,montantAnticipe:b.montantAnticipe??0,montantReel:b.montantReel??0});});});const histData=[];for(let i=5;i>=0;i--){let m=moisCourant-i,a=anneeSelect;if(m<=0){m+=12;a--;}const hr=results[m-1];histData.push({mois:MOIS_COURTS[m],ant:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantAnticipe,0)??0,reel:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantReel,0)??0});}const [resDec,resMvt]=await Promise.all([fetch(`/api/decaissements?annee=${anneeSelect}&limit=5000`),fetch('/api/banques/mouvements?limit=5000')]);let fondAjouts=0,fondRetraits=0,banqueAjouts=0,banqueRetraits=0;if(resDec.ok){const dd=await resDec.json();const decs=dd.decaissements??[];fondAjouts=decs.filter((d:any)=>d.typeMouvement==='ajout').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);fondRetraits=decs.filter((d:any)=>d.typeMouvement==='retrait').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);}if(resMvt.ok){const dm=await resMvt.json();const mvts=(dm.mouvements??[]).filter((m:any)=>new Date(m.dateOperation).getFullYear()===anneeSelect);banqueAjouts=mvts.filter((m:any)=>m.typeMouvement==='ajout').reduce((s:number,m:any)=>s+(m.montant||0),0);banqueRetraits=mvts.filter((m:any)=>m.typeMouvement==='retrait').reduce((s:number,m:any)=>s+(m.montant||0),0);}setDecStats({fondAjouts,fondRetraits,banqueAjouts,banqueRetraits});setData({budget:budgetCumul,categories:cats});setHist(histData);}catch(e){console.error(e);}setLoading(false);},[anneeSelect,moisCourant]);
   useEffect(()=>{charger();},[charger]);
   const exportExcel=async()=>{if(!window.confirm(`📊 Exporter GestBudget-${anneeSelect}.xlsx ?`))return;setExporting('excel');const res=await fetch(`/api/export/excel?annee=${anneeSelect}`);if(res.ok){const blob=await res.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`GestBudget-${anneeSelect}.xlsx`;a.click();}setExporting(null);};
   const exportPDF=async()=>{if(!window.confirm(`📄 Exporter PDF ${anneeSelect} ?`))return;setExporting('pdf');const res=await fetch(`/api/export/pdf?annee=${anneeSelect}&mois=${moisCourant}`);if(res.ok){const blob=await res.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`GestBudget-${anneeSelect}-${String(moisCourant).padStart(2,'0')}.pdf`;a.click();}setExporting(null);};
@@ -642,24 +647,20 @@ function OngletRecap({moisCourant}:{moisCourant:number}) {
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2"><span className="text-sm font-medium text-[var(--text-muted)]">Année :</span><div className="flex gap-1">{anneesDispos.map(a=>(<button key={a} onClick={()=>setAnneeSelect(a)} className={clsx('px-3 py-1.5 rounded-xl text-sm font-semibold transition-all',anneeSelect===a?'bg-primary text-white':'border border-[var(--border)] text-[var(--text-muted)] hover:border-primary hover:text-primary')}>{a}</button>))}</div></div>
-        <div className="flex gap-2"><button onClick={exportExcel} disabled={exporting==='excel'} className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] rounded-xl px-3.5 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-dark-card disabled:opacity-60">⬇ {exporting==='excel'?'Export...':'Excel'}</button><button onClick={exportPDF} disabled={exporting==='pdf'} className="flex items-center gap-1.5 bg-primary text-white rounded-xl px-3.5 py-2 text-sm font-medium disabled:opacity-60">📄 {exporting==='pdf'?'Export...':'PDF'}</button></div>
+        <div className="flex gap-2"><button onClick={exportExcel} disabled={exporting==='excel' || isLocked} title={isLocked?"Verrouillez pour modifier":undefined} className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] rounded-xl px-3.5 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-dark-card disabled:opacity-60">⬇ {exporting==='excel'?'Export...':'Excel'}</button><button onClick={exportPDF} disabled={exporting==='pdf'} className="flex items-center gap-1.5 bg-primary text-white rounded-xl px-3.5 py-2 text-sm font-medium disabled:opacity-60">📄 {exporting==='pdf'?'Export...':'PDF'}</button></div>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">{[{label:`Revenus ${anneeSelect}`,val:revReel,cls:'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400'},{label:`Dépenses ${anneeSelect}`,val:depReel,cls:'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'},{label:'Solde annuel',val:solde,cls:solde>=0?'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400':'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'},].map(k=>(<div key={k.label} className={clsx('rounded-2xl border p-3.5 transition-colors',k.cls)}><p className="text-xs font-medium opacity-60">{k.label}</p><p className="text-lg font-bold mt-0.5">{formatFCFA(k.val)}</p></div>))}</div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[{label:`Revenus ${anneeSelect}`,val:revReel,cls:'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400'},{label:`Depenses ${anneeSelect}`,val:depReel,cls:'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'},{label:`Epargne ${anneeSelect}`,val:epReel,cls:'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400'},{label:'Solde annuel',val:solde,cls:solde>=0?'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-400':'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'},].map(k=>(<div key={k.label} className={clsx('rounded-2xl border p-3.5 transition-colors',k.cls)}><p className="text-xs font-medium opacity-60">{k.label}</p><p className="text-lg font-bold mt-0.5">{formatFCFA(k.val)}</p></div>))}</div>
       {fondsCategories.length>0&&(<div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors"><div className="flex items-center justify-between mb-3"><h3 className="font-semibold text-[var(--text)]">Épargne de Fonctionnement {anneeSelect}</h3><span className="text-sm font-bold text-primary">{formatFCFA(totalFondsRecap)}</span></div><div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{fondsCategories.map((cat:any)=>{const b=budget.find((b:any)=>b.categorieId===cat.id);return(<div key={cat.id} className="bg-slate-50 dark:bg-dark-card rounded-xl p-3 text-center"><p className="text-xs text-[var(--text-muted)] font-medium truncate">{cat.nom}</p><p className="text-base font-bold text-primary mt-1">{formatFCFA(b?.montantReel??0)}</p></div>);})}</div></div>)}
       <Separateur emoji="🔄" label={`Ajouts & Décaissements — ${anneeSelect}`}/>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-2xl p-4 flex items-center gap-3"><ArrowUpCircle size={28} className="text-green-600 flex-shrink-0"/><div><p className="text-xs font-medium text-green-700 dark:text-green-400 opacity-70">Total ajouté</p><p className="text-xl font-bold text-green-700 dark:text-green-400">{formatFCFA(decStats.totalAjouts)}</p></div></div><div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl p-4 flex items-center gap-3"><ArrowDownCircle size={28} className="text-red-500 flex-shrink-0"/><div><p className="text-xs font-medium text-red-600 dark:text-red-400 opacity-70">Total décaissé</p><p className="text-xl font-bold text-red-600 dark:text-red-400">{formatFCFA(decStats.totalDecaissements)}</p></div></div></div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[{emoji:'📂',label:'Fonds ajoutés',val:decStats.fondAjouts,bg:'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',text:'text-green-700 dark:text-green-400'},{emoji:'📂',label:'Fonds retirés',val:decStats.fondRetraits,bg:'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',text:'text-red-600 dark:text-red-400'},{emoji:'🏦',label:'Banques ajoutées',val:decStats.banqueAjouts,bg:'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',text:'text-blue-700 dark:text-blue-400'},{emoji:'🏦',label:'Banques retirées',val:decStats.banqueRetraits,bg:'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800',text:'text-orange-600 dark:text-orange-400'},].map(k=>(<div key={k.label} className={clsx('rounded-2xl border p-4 flex items-center gap-3 transition-colors',k.bg)}><span className="text-xl flex-shrink-0">{k.emoji}</span><div><p className={clsx('text-xs font-medium opacity-70',k.text)}>{k.label}</p><p className={clsx('text-base font-bold',k.text)}>{formatFCFA(k.val)}</p></div></div>))}</div>
       <div className="grid lg:grid-cols-2 gap-5">
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors"><h3 className="font-semibold text-[var(--text)] mb-3">Répartition dépenses</h3>{donut.length>0?(<ResponsiveContainer width="100%" height={220}><PieChart><Pie data={donut} cx="50%" cy="50%" innerRadius={60} outerRadius={90} dataKey="value" paddingAngle={2}>{donut.map((_:any,i:number)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie><Tooltip formatter={(v:number)=>formatFCFA(v)}/></PieChart></ResponsiveContainer>):(<div className="h-40 flex items-center justify-center text-[var(--text-muted)] text-sm">Aucune dépense cette année</div>)}</div>
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors"><h3 className="font-semibold text-[var(--text)] mb-3">Dépenses — 6 derniers mois</h3><ResponsiveContainer width="100%" height={220}><BarChart data={hist} barGap={3}><CartesianGrid strokeDasharray="3 3" stroke="var(--border)"/><XAxis dataKey="mois" tick={{fontSize:11,fill:'var(--text-muted)'}}/><YAxis tick={{fontSize:10,fill:'var(--text-muted)'}} tickFormatter={v=>(v/1000).toFixed(0)+'k'}/><Tooltip formatter={(v:number)=>formatFCFA(v)}/><Legend/><Bar dataKey="ant" name="Prévision" fill="#DBEAFE" radius={[3,3,0,0]}/><Bar dataKey="reel" name="Réel" fill="#1E40AF" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></div>
       </div>
-      <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
-        <div className="px-5 py-3 border-b border-[var(--border)] bg-slate-50 dark:bg-dark-card flex items-center justify-between"><h3 className="font-semibold text-[var(--text)]">Détail — {anneeSelect} (cumul annuel)</h3><div className="flex gap-2"><button onClick={toutDeployer} className="text-xs px-2.5 py-1 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-100 dark:hover:bg-dark-card transition">Tout déplier</button><button onClick={toutPlier} className="text-xs px-2.5 py-1 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-100 dark:hover:bg-dark-card transition">Tout plier</button></div></div>
-        <div className="overflow-x-auto"><table className="w-full text-sm min-w-[540px]" style={{tableLayout:'fixed'}}><colgroup><col/><col style={{width:'150px'}}/><col style={{width:'150px'}}/><col style={{width:'150px'}}/></colgroup><thead><tr className="border-b border-[var(--border)] bg-slate-50 dark:bg-dark-card"><th className="text-left px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Catégorie</th><th className="text-right px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Prévision</th><th className="text-right px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Réel</th><th className="text-right px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">Écart</th></tr></thead>
-        <tbody>{ORDRE_TYPES.map(type=>{const catsDuType=cats.filter((c:any)=>c.type===type);if(!catsDuType.length)return null;const gAnt=catsDuType.reduce((s:number,c:any)=>{const b=budget.find((b:any)=>b.categorieId===c.id);return s+(b?.montantAnticipe??0);},0);const gReel=catsDuType.reduce((s:number,c:any)=>{const b=budget.find((b:any)=>b.categorieId===c.id);return s+(b?.montantReel??0);},0);const gEcar=gReel-gAnt;const isOpen=groupsOpen[type]!==false;return(<Fragment key={type}><tr className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)] cursor-pointer hover:bg-slate-100 dark:hover:bg-dark-card/80 transition-colors" onClick={()=>toggleGroup(type)}><td className="px-4 py-2.5 text-xs font-bold text-[var(--text-muted)] uppercase tracking-wide"><div className="flex items-center gap-2">{isOpen?<ChevronDown size={14}/>:<ChevronRight size={14}/>}{TYPE_LABELS[type as keyof typeof TYPE_LABELS]}</div></td><td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{gAnt>0?formatFCFA(gAnt):'—'}</td><td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{gReel>0?formatFCFA(gReel):'—'}</td><td className={clsx('px-4 py-2.5 text-right text-xs font-bold',gEcar>0&&type.startsWith('depense')?'text-red-500':gEcar<0?'text-green-500':'text-[var(--text-muted)]')}>{gEcar!==0?(gEcar>0?'+':'')+formatFCFA(gEcar):'—'}</td></tr>{isOpen&&catsDuType.map((cat:any)=>{const b=budget.find((b:any)=>b.categorieId===cat.id);const ant=b?.montantAnticipe??0,reel=b?.montantReel??0,ecar=reel-ant;return(<tr key={cat.id} className="border-t border-[var(--border)] hover:bg-slate-50/40 dark:hover:bg-dark-card/40 transition-colors"><td className="px-4 py-2.5 pl-10 text-[var(--text)] truncate">{cat.nom}</td><td className="px-4 py-2.5 text-right text-[var(--text-muted)]">{ant>0?formatFCFA(ant):'—'}</td><td className="px-4 py-2.5 text-right font-medium text-[var(--text)]">{reel>0?formatFCFA(reel):'—'}</td><td className={clsx('px-4 py-2.5 text-right text-xs font-medium',ecar>0&&type.startsWith('depense')?'text-red-500':ecar<0?'text-green-500':'text-[var(--text-muted)]')}>{ecar!==0?(ecar>0?'+':'')+formatFCFA(ecar):'—'}</td></tr>);})}</Fragment>);})}</tbody></table></div>
-      </div>
     </div>
   );
 }
+
 
 // ── Page principale ───────────────────────────────────────────────────────────
 export default function DashboardPage() {
