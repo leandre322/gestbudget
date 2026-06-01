@@ -57,7 +57,6 @@ export default function SuiviPage() {
   const { mois, annee, setMois, setAnnee } = useMois();
   const toast = useToast();
   const { isLocked } = useLock();
-  const { isLocked } = useLock();
 
   const [data,         setData]         = useState<any>(null);
   const [lignes,       setLignes]       = useState<Lignes>({});
