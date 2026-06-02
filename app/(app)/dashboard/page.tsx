@@ -122,6 +122,11 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const [evolutionFonds,   setEvolutionFonds]   = useState<Record<string,any[]>>({});
   const [evolutionBanques, setEvolutionBanques] = useState<Record<string,any[]>>({});
 
+  // ── Seuil alerte banques
+  const [editingSeuilId,  setEditingSeuilId]  = useState<string|null>(null);
+  const [editingSeuilVal, setEditingSeuilVal] = useState('');
+  const [savingSeuil,     setSavingSeuil]     = useState(false);
+
   // ── Cumul (épargne + correctifs) ─────────────────────────────────────────
   const [cumulData,     setCumulData]     = useState<any>(null);
   const [banqueAjouts,  setBanqueAjouts]  = useState(0);
