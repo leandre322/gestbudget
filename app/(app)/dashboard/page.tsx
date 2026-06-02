@@ -159,6 +159,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       const fondsAvecObj = (global.fondsRoulement ?? []).map((f:any) => ({
         ...f,
         objectif: comptesAvecObj.find((c:any)=>c.id===f.id)?.objectif ?? 0,
+        seuilAlerte: comptesAvecObj.find((c:any)=>c.id===f.id)?.seuilAlerte ?? 0,
       }));
       setData({ ...global, fondsRoulement: fondsAvecObj, _budgetMoisFrais: budgetFrais?.budget??[], _categories: allCategories });
       setBanques(bqs.banques ?? []);
@@ -267,11 +268,12 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     setSavingFondSeuil(true);
     const seuil = parseInt(editingFondSeuilVal) || 0;
     try {
-      await fetch(`/api/comptes?id=${fondId}`, {
+      const resFond = await fetch(`/api/comptes?id=${fondId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ seuilAlerte: seuil }),
       });
-      toast.success(seuil > 0 ? 'Seuil fond defini ✓' : 'Seuil supprime ✓');
+      if (!resFond.ok) throw new Error('Echec sauvegarde seuil fond');
+      toast.success(seuil > 0 ? 'Seuil fond defini' : 'Seuil supprime ✓');
       setEditingFondSeuilId(null);
       await chargerData();
     } catch { toast.error('Erreur'); }
