@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useState, useCallback, Fragment } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
@@ -510,11 +510,14 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {(fondsRoulement??[]).map((f:any) => {
               const soldeNum = Number(f.soldeActuel??0), objNum = Number(f.objectif??0);
+              const seuilFond = Number(f.seuilAlerte??0);
+              const isAlerteFond = seuilFond > 0 && soldeNum < seuilFond;
+              const isEditingSeuil = editingFondSeuilId === f.id;
               const pct = objNum>0?Math.min(100,Math.round((soldeNum/objNum)*100)):null;
               const isEditing = editingFondId===f.id, isSaving = savingFondId===f.id;
               const evo = evolutionFonds[f.id]??[];
               return (
-                <div key={f.id} className={clsx('rounded-2xl border p-3.5 relative group transition-all hover:shadow-sm',getBorderFond(soldeNum,objNum))}>
+                <div key={f.id} className={clsx('rounded-2xl border p-3.5 relative group transition-all hover:shadow-sm',isAlerteFond?'border-red-400 dark:border-red-600':getBorderFond(soldeNum,objNum))}>
                   <p className="text-xs font-medium text-[var(--text-muted)] truncate mb-1 pr-7">{f.nom}</p>
                   {isEditing ? (
                     <div className="flex items-center gap-1.5 mb-1">
