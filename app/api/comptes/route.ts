@@ -58,7 +58,7 @@ export async function PUT(req: NextRequest) {
     const idParam = url.searchParams.get('id');
 
     const body = await req.json();
-    const { id: idBody, nom, ordre, isActive, action, montant } = body;
+    const { id: idBody, nom, ordre, isActive, action, montant, seuilAlerte, objectif } = body;
     const id = idParam ?? idBody;
 
     if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
@@ -97,7 +97,7 @@ export async function PUT(req: NextRequest) {
     // ── Mode normal : mise à jour nom / ordre / isActive ───────────────────
     const compte = await prisma.compteFonds.update({
       where: { id, userId: session.user.id },
-      data:  { nom, ordre, isActive },
+      data:  { nom, ordre, isActive, objectif: objectif !== undefined ? BigInt(Math.max(0, Number(objectif))) : undefined, seuilAlerte: seuilAlerte !== undefined ? BigInt(Math.max(0, Math.round(Number(seuilAlerte)))) : undefined },
     });
 
     return NextResponse.json(serial({ success: true, compte }));
