@@ -254,6 +254,21 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     setEvolutionBanques(results);
   }, []);
 
+  const sauvegarderSeuil = async (banqueId: string) => {
+    setSavingSeuil(true);
+    const seuil = parseInt(editingSeuilVal) || 0;
+    try {
+      await fetch(`/api/banques?id=${banqueId}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seuilAlerte: seuil }),
+      });
+      toast.success(seuil > 0 ? "Seuil defini ✓" : "Seuil supprime ✓");
+      setEditingSeuilId(null);
+      await chargerData();
+    } catch { toast.error("Erreur"); }
+    setSavingSeuil(false);
+  };
+
   useEffect(() => { chargerData(); chargerSparklines(); chargerCumul(); chargerBanqueKPIs(); }, [chargerData, chargerSparklines, chargerCumul, chargerBanqueKPIs]);
   useEffect(() => { if(data?.fondsRoulement?.length>0)chargerEvolutionFonds(data.fondsRoulement); }, [data?.fondsRoulement?.length, chargerEvolutionFonds]);
   useEffect(() => { if(banques.length>0)chargerEvolutionBanques(banques); }, [banques, chargerEvolutionBanques]);
@@ -505,6 +520,21 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       </div>
 
       {/* Épargne Précaution */}
+      {banques.filter(b=>Number(b.seuilAlerte||0)>0&&Number(b.solde||0)<Number(b.seuilAlerte||0)).length>0&&(
+        <div className="flex items-start gap-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl px-4 py-3">
+          <AlertTriangle size={16} className="text-red-500 flex-shrink-0 mt-0.5"/>
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-red-700 dark:text-red-400">Solde bas : {banques.filter(b=>Number(b.seuilAlerte||0)>0&&Number(b.solde||0)<Number(b.seuilAlerte||0)).length} compte(s) en dessous du seuil</p>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {banques.filter(b=>Number(b.seuilAlerte||0)>0&&Number(b.solde||0)<Number(b.seuilAlerte||0)).map(b=>(
+                <span key={b.id} className="text-xs bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 px-2 py-0.5 rounded-full">
+                  {b.nomBanque} : {formatFCFA(Number(b.solde||0))} / seuil {formatFCFA(Number(b.seuilAlerte||0))}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2"><Building2 size={17} className="text-primary"/><h3 className="font-semibold text-[var(--text)]">Épargne Précaution</h3></div>
@@ -515,7 +545,51 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
           const banquesInvestIds = new Set(cats.filter((c:any)=>c.type==='epargne_investissement'&&c.banqueId).map((c:any)=>c.banqueId));
           const renderCard = (b:any, accentCls:string, textCls:string) => {
             const evo = evolutionBanques[b.id]??[];
-            return(<div key={b.id} className={clsx('rounded-2xl border border-[var(--border)] p-3.5',accentCls)}><p className="text-xs text-[var(--text-muted)] font-medium truncate mb-1">🏦 {b.nomBanque}</p><p className={clsx('text-base font-bold',textCls)}>{formatFCFA(b.solde??0)}</p>{evo.length>0&&<div className="flex gap-1 mt-1.5 flex-wrap">{evo.map((e:any,i:number)=><EvoBadge key={i} label={e.label} hausse={e.hausse} valStr={e.montant>0?`${(e.montant/1000).toFixed(0)}k`:'='}/>)}</div>}</div>);
+            const seuil = Number(b.seuilAlerte||0);
+            const isAlerte = seuil > 0 && Number(b.solde||0) < seuil;
+            const pctSeuil = seuil > 0 ? Math.round((Number(b.solde||0)/seuil)*100) : null;
+            const isEditingSeuil = editingSeuilId === b.id;
+            return(
+              <div key={b.id} className={clsx("rounded-2xl border p-3.5 relative group transition-all",
+                isAlerte ? "border-red-400 dark:border-red-600" : "border-[var(--border)]", accentCls)}>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs text-[var(--text-muted)] font-medium truncate">{b.nomBanque}</p>
+                  <button onClick={() => { if(isLocked){openUnlockModal();return;} setEditingSeuilId(b.id); setEditingSeuilVal(String(seuil||"")); }}
+                    title={isAlerte ? "Solde en dessous du seuil" : seuil > 0 ? "Modifier le seuil" : "Definir un seuil d'alerte"}
+                    className={clsx("text-xs transition-all flex-shrink-0",
+                      isAlerte ? "text-red-500" : seuil > 0 ? "text-amber-500 opacity-70 hover:opacity-100" : "opacity-0 group-hover:opacity-50 text-slate-400 hover:text-amber-500")}>
+                    {isAlerte ? "W" : seuil > 0 ? "S" : "+"}
+                  </button>
+                </div>
+                <p className={clsx("text-base font-bold", isAlerte ? "text-red-500" : textCls)}>{formatFCFA(b.solde??0)}</p>
+                {seuil > 0 && pctSeuil !== null && (
+                  <div className="mt-1.5">
+                    <div className="h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                      <div className={clsx("h-full rounded-full transition-all", isAlerte ? "bg-red-500" : pctSeuil < 80 ? "bg-amber-400" : "bg-green-500")}
+                        style={{width:`${Math.min(100,pctSeuil)}%`}}/>
+                    </div>
+                    <p className="text-[10px] text-[var(--text-muted)] mt-0.5">Seuil : {formatFCFA(seuil)} ({pctSeuil}%)</p>
+                  </div>
+                )}
+                {isEditingSeuil && (
+                  <div className="mt-2 flex items-center gap-1.5">
+                    <input type="number" value={editingSeuilVal} autoFocus placeholder="Seuil FCFA"
+                      onChange={e => setEditingSeuilVal(e.target.value)}
+                      onKeyDown={e => { if(e.key==="Enter") sauvegarderSeuil(b.id); if(e.key==="Escape") setEditingSeuilId(null); }}
+                      className="flex-1 text-xs border border-primary rounded-lg px-2 py-1 bg-[var(--card)] text-[var(--text)] outline-none min-w-0"/>
+                    <button onClick={() => sauvegarderSeuil(b.id)} disabled={savingSeuil}
+                      className="p-1.5 rounded-lg bg-green-500 text-white disabled:opacity-60 flex-shrink-0">
+                      {savingSeuil ? <Loader2 size={11} className="animate-spin"/> : <Check size={11}/>}
+                    </button>
+                    <button onClick={() => setEditingSeuilId(null)}
+                      className="p-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex-shrink-0">
+                      <X size={11}/>
+                    </button>
+                  </div>
+                )}
+                {evo.length>0&&<div className="flex gap-1 mt-1.5 flex-wrap">{evo.map((e:any,i:number)=><EvoBadge key={i} label={e.label} hausse={e.hausse} valStr={e.montant>0?`${(e.montant/1000).toFixed(0)}k`:"="}/>)}</div>}
+              </div>
+            );
           };
           const bp = banques.filter((b:any)=>!banquesInvestIds.has(b.id));
           const bi = banques.filter((b:any)=>banquesInvestIds.has(b.id));

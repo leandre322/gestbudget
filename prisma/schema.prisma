@@ -195,6 +195,7 @@ model Banque {
   isActive   Boolean  @default(true)
   ordre      Int      @default(0)
   updatedAt  DateTime @updatedAt
+  seuilAlerte  BigInt  @default(0)
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   annee Annee? @relation(fields: [anneeId], references: [id], onDelete: SetNull)

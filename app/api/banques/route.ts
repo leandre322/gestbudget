@@ -20,7 +20,8 @@ function serial(obj: any): any {
 export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+    if (!session?.user?.id)
+      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const banques = await prisma.banque.findMany({
       where:   { userId: session.user.id },
@@ -33,11 +34,12 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST /api/banques — Créer une banque
+// POST /api/banques
 export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+    if (!session?.user?.id)
+      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const { nomBanque, typeCompte, soldeInitial, ordre } = await req.json();
 
@@ -57,30 +59,33 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// PUT /api/banques?id=xxx — Modifier une banque
+// PUT /api/banques?id=xxx
 // Body options :
 //   { nomBanque: string }                          → renommer
 //   { action: 'set',       montant: number }       → fixer le solde
 //   { action: 'increment', montant: number }       → solde += montant
 //   { action: 'decrement', montant: number }       → solde -= montant (plancher 0)
 //   { solde: number }                              → fixer le solde (alias de set)
+//   { seuilAlerte: number }                        → définir le seuil d'alerte (0 = désactiver)
 export async function PUT(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+    if (!session?.user?.id)
+      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const id = new URL(req.url).searchParams.get('id');
-    if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
+    if (!id)
+      return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
 
     const body = await req.json();
-    const { action, montant, nomBanque, solde: soldeDirect } = body;
+    const { action, montant, nomBanque, solde: soldeDirect, seuilAlerte } = body;
 
-    // Vérifier propriété
     const existing = await prisma.banque.findFirst({
       where:  { id, userId: session.user.id },
       select: { solde: true },
     });
-    if (!existing) return NextResponse.json({ error: 'Introuvable' }, { status: 404 });
+    if (!existing)
+      return NextResponse.json({ error: 'Introuvable' }, { status: 404 });
 
     const updateData: any = { updatedAt: new Date() };
 
@@ -102,6 +107,11 @@ export async function PUT(req: NextRequest) {
       updateData.solde = next < BigInt(0) ? BigInt(0) : next;
     }
 
+    // Seuil d'alerte (0 = désactivé)
+    if (seuilAlerte !== undefined) {
+      updateData.seuilAlerte = BigInt(Math.round(Math.max(0, Number(seuilAlerte ?? 0))));
+    }
+
     const banque = await prisma.banque.update({
       where: { id },
       data:  updateData,
@@ -117,10 +127,12 @@ export async function PUT(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+    if (!session?.user?.id)
+      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const id = new URL(req.url).searchParams.get('id');
-    if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
+    if (!id)
+      return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
 
     await prisma.banque.delete({ where: { id, userId: session.user.id } });
 
