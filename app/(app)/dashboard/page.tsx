@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useCallback, Fragment } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
@@ -10,6 +10,7 @@ import { useMois, useLock } from '../layout';
 import { formatFCFA, MOIS_COURTS, TYPE_LABELS, calculerScore, couleurScore,
          ORDRE_TYPES, LABEL_PREVISION } from '@/types';
 import { useToast } from '@/components/Toast';
+import { usePushNotifications } from '@/lib/hooks/usePushNotifications';
 import { clsx } from 'clsx';
 
 const COLORS = ['#1E40AF','#10B981','#F59E0B','#EF4444','#8B5CF6','#06B6D4','#F97316','#84CC16'];
@@ -105,6 +106,7 @@ function EvoBadge({label,hausse,valStr}:{label:string;hausse:boolean;valStr:stri
 function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCourant:number;anneeCourante:number;budgetMois:any[];loadingMois:boolean}) {
   const toast = useToast();
   const { isLocked, openUnlockModal } = useLock();
+  const { status: pushStatus, subscribe: pushSubscribe, sendTest: pushTest } = usePushNotifications();
   const [data,         setData]         = useState<any>(null);
   const [banques,      setBanques]      = useState<any[]>([]);
   const [loading,      setLoading]      = useState(true);
@@ -296,8 +298,56 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   };
 
   useEffect(() => { chargerData(); chargerSparklines(); chargerCumul(); chargerBanqueKPIs(); }, [chargerData, chargerSparklines, chargerCumul, chargerBanqueKPIs]);
+
+  // Push alerte au chargement
+  useEffect(() => {
+    if (!data || pushStatus !== 'granted') return;
+    const alertesFonds = (data.fondsRoulement ?? []).filter((f:any) => {
+      const seuil = Number(f.seuilAlerte ?? 0);
+      return seuil > 0 && Number(f.soldeActuel ?? 0) < seuil;
+    });
+    const alertesBanques = banques.filter((b:any) => {
+      const seuil = Number(b.seuilAlerte ?? 0);
+      return seuil > 0 && Number(b.solde ?? 0) < seuil;
+    });
+    const total = alertesFonds.length + alertesBanques.length;
+    if (total > 0) {
+      fetch('/api/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: total + ' alerte(s) seuil actives',
+          body: alertesFonds.map((f:any) => f.nom).concat(alertesBanques.map((b:any) => b.nomBanque)).join(', '),
+          url: '/dashboard',
+          tag: 'alerte-seuil-chargement',
+        }),
+      }).catch(() => {});
+    }
+  }, [data, banques, pushStatus]);
   useEffect(() => { if(data?.fondsRoulement?.length>0)chargerEvolutionFonds(data.fondsRoulement); }, [data?.fondsRoulement?.length, chargerEvolutionFonds]);
   useEffect(() => { if(banques.length>0)chargerEvolutionBanques(banques); }, [banques, chargerEvolutionBanques]);
+
+  // ── Bouton notifications ─────────────────────────────────────────────────
+  const renderPushButton = () => {
+    if (pushStatus === 'unsupported') return null;
+    if (pushStatus === 'granted') return (
+      <button onClick={pushTest}
+        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-green-500/10 text-green-500 hover:bg-green-500/20 transition-colors"
+        title="Notifications actives — cliquer pour tester">
+        <span>Bell</span> Notifs ON
+      </button>
+    );
+    if (pushStatus === 'denied') return (
+      <span className="text-[11px] text-red-400 px-2">Notifs bloquees</span>
+    );
+    return (
+      <button onClick={pushSubscribe}
+        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors"
+        title="Activer les notifications push">
+        <span>Bell</span> Activer notifs
+      </button>
+    );
+  };
 
   // ── Inline edit fonds ─────────────────────────────────────────────────────
   const startEditFond = (f:any) => { if (isLocked) { openUnlockModal(); return; } setEditingFondId(f.id); setEditingFondVal(String(Number(f.soldeActuel??0))); };

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { sendPushToUser } from '@/lib/push';
 
 // ── Sérialisation BigInt/Date ─────────────────────────────────────────────────
 function serial(obj: any): any {
@@ -213,6 +214,16 @@ export async function POST(req: NextRequest) {
       throw txErr;
     }
 
+    try {
+      const montantNotif = Number(mtFond + mtBanque);
+      await sendPushToUser(session.user.id, {
+        title: 'Decaissement enregistre',
+        body: description + ' — ' + montantNotif.toLocaleString('fr-FR') + ' FCFA',
+        icon: '/icons/icon-192.png',
+        url: '/decaissements',
+        tag: 'decaissement',
+      });
+    } catch {}
     return NextResponse.json(serial({ success: true, id: result.id }), { status: 201 });
   } catch (e: any) {
     console.error('POST /api/decaissements:', e?.message);

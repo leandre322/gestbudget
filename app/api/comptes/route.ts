@@ -1,7 +1,8 @@
-﻿import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { sendPushToUser } from '@/lib/push';
 
 function serial(obj: any): any {
   if (typeof obj === 'bigint') return Number(obj);
@@ -91,6 +92,17 @@ export async function PUT(req: NextRequest) {
         data:  { soldeActuel: newSolde, updatedAt: new Date() },
       });
 
+      if (compte.seuilAlerte && compte.seuilAlerte > BigInt(0) && newSolde < compte.seuilAlerte) {
+        try {
+          await sendPushToUser(session.user.id, {
+            title: 'Alerte seuil — ' + compte.nom,
+            body: 'Solde ' + Number(newSolde).toLocaleString('fr-FR') + ' FCFA / seuil ' + Number(compte.seuilAlerte).toLocaleString('fr-FR') + ' FCFA',
+            icon: '/icons/icon-192.png',
+            url: '/dashboard',
+            tag: 'seuil-' + id,
+          });
+        } catch {}
+      }
       return NextResponse.json(serial({ success: true, compte }));
     }
 
