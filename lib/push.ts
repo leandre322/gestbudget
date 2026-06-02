@@ -1,12 +1,6 @@
 import webpush from 'web-push';
 import prisma from '@/lib/prisma';
 
-webpush.setVapidDetails(
-  'mailto:contact@lawdigitals.com',
-  process.env.VAPID_PUBLIC_KEY!,
-  process.env.VAPID_PRIVATE_KEY!
-);
-
 export interface PushPayload {
   title: string;
   body: string;
@@ -17,6 +11,12 @@ export interface PushPayload {
 }
 
 export async function sendPushToUser(userId: string, payload: PushPayload) {
+  webpush.setVapidDetails(
+    'mailto:contact@lawdigitals.com',
+    process.env.VAPID_PUBLIC_KEY!,
+    process.env.VAPID_PRIVATE_KEY!
+  );
+
   const subs = await prisma.pushSubscription.findMany({ where: { userId } });
   const deadSubs: string[] = [];
 
