@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
@@ -113,6 +113,10 @@ export async function DELETE(req: NextRequest) {
 
     const id = new URL(req.url).searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
+
+    if (body.seuilAlerte !== undefined) {
+      updateData.seuilAlerte = BigInt(Math.max(0, Math.round(Number(body.seuilAlerte ?? 0))));
+    }
 
     await prisma.compteFonds.update({
       where: { id, userId: session.user.id },

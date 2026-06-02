@@ -123,9 +123,13 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const [evolutionBanques, setEvolutionBanques] = useState<Record<string,any[]>>({});
 
   // ── Seuil alerte banques
-  const [editingSeuilId,  setEditingSeuilId]  = useState<string|null>(null);
-  const [editingSeuilVal, setEditingSeuilVal] = useState('');
-  const [savingSeuil,     setSavingSeuil]     = useState(false);
+  const [editingSeuilId,    setEditingSeuilId]    = useState<string|null>(null);
+  const [editingSeuilVal,   setEditingSeuilVal]   = useState('');
+  const [savingSeuil,       setSavingSeuil]       = useState(false);
+  // ── Seuil alerte fonds
+  const [editingFondSeuilId,  setEditingFondSeuilId]  = useState<string|null>(null);
+  const [editingFondSeuilVal, setEditingFondSeuilVal] = useState('');
+  const [savingFondSeuil,     setSavingFondSeuil]     = useState(false);
 
   // ── Cumul (épargne + correctifs) ─────────────────────────────────────────
   const [cumulData,     setCumulData]     = useState<any>(null);
@@ -258,6 +262,21 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     }));
     setEvolutionBanques(results);
   }, []);
+
+  const sauvegarderSeuilFond = async (fondId: string) => {
+    setSavingFondSeuil(true);
+    const seuil = parseInt(editingFondSeuilVal) || 0;
+    try {
+      await fetch(`/api/comptes?id=${fondId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seuilAlerte: seuil }),
+      });
+      toast.success(seuil > 0 ? 'Seuil fond defini ✓' : 'Seuil supprime ✓');
+      setEditingFondSeuilId(null);
+      await chargerData();
+    } catch { toast.error('Erreur'); }
+    setSavingFondSeuil(false);
+  };
 
   const sauvegarderSeuil = async (banqueId: string) => {
     setSavingSeuil(true);
@@ -514,6 +533,41 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
                     </div>
                   )}
                   {evo.length>0&&<div className="flex gap-1 mt-1.5 flex-wrap">{evo.map((e:any,i:number)=><EvoBadge key={i} label={e.label} hausse={e.hausse} valStr={`${e.pct}%`}/>)}</div>}
+                  {/* Badge alerte seuil fond */}
+                  {isAlerteFond && !isEditing && (
+                    <div className="flex items-center gap-1 mt-0.5 text-xs text-red-500 font-semibold">
+                      <span>Sous le seuil ({formatFCFA(seuilFond)})</span>
+                    </div>
+                  )}
+                  {/* Seuil fond info ou inline edit */}
+                  {!isEditingSeuil && seuilFond > 0 && !isAlerteFond && (
+                    <p className="text-[10px] text-amber-500 mt-0.5">Seuil : {formatFCFA(seuilFond)}</p>
+                  )}
+                  {isEditingSeuil && (
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <input type="number" value={editingFondSeuilVal} autoFocus placeholder="Seuil FCFA"
+                        onChange={e => setEditingFondSeuilVal(e.target.value)}
+                        onKeyDown={e => { if(e.key==="Enter") sauvegarderSeuilFond(f.id); if(e.key==="Escape") setEditingFondSeuilId(null); }}
+                        className="flex-1 text-xs border border-primary rounded-lg px-2 py-1 bg-[var(--card)] text-[var(--text)] outline-none min-w-0"/>
+                      <button onClick={() => sauvegarderSeuilFond(f.id)} disabled={savingFondSeuil}
+                        className="p-1.5 rounded-lg bg-green-500 text-white disabled:opacity-60 flex-shrink-0">
+                        {savingFondSeuil ? <Loader2 size={11} className="animate-spin"/> : <Check size={11}/>}
+                      </button>
+                      <button onClick={() => setEditingFondSeuilId(null)}
+                        className="p-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex-shrink-0">
+                        <X size={11}/>
+                      </button>
+                    </div>
+                  )}
+                  {/* Crayon solde + bouton seuil */}
+                  {!isEditing && !isEditingSeuil && (
+                    <button onClick={() => { if(isLocked){openUnlockModal();return;} setEditingFondSeuilId(f.id); setEditingFondSeuilVal(String(seuilFond||"")); }}
+                      title={isAlerteFond ? "Solde sous le seuil — modifier" : seuilFond > 0 ? "Modifier le seuil" : "Definir un seuil d'alerte"}
+                      className={clsx("absolute top-2 right-10 p-1.5 rounded-lg transition-all",
+                        isAlerteFond ? "text-red-500 opacity-100" : seuilFond > 0 ? "text-amber-500 opacity-70 hover:opacity-100" : "opacity-0 group-hover:opacity-50 text-slate-400 hover:text-amber-500")}>
+                      {isAlerteFond ? <AlertTriangle size={11}/> : <span className="text-xs">{seuilFond > 0 ? "S" : "+"}</span>}
+                    </button>
+                  )}
                   {!isEditing&&<button onClick={()=>startEditFond(f)} disabled={isLocked} title={isLocked?"Verrouillez pour modifier":"Corriger le solde"} className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 bg-[var(--border)] hover:bg-primary/10 text-[var(--text-muted)] hover:text-primary transition-all"><Pencil size={11}/></button>}
                 </div>
               );

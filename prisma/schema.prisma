@@ -136,6 +136,7 @@ model CompteFonds {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   objectif    BigInt  @default(0)
+  seuilAlerte  BigInt  @default(0)
 
   user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   repartitions DecaissementCompte[]
