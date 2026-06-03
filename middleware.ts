@@ -49,6 +49,25 @@ export async function middleware(req: NextRequest) {
     }
   }
 
+  // 1b. CSRF pour mutations API (sauf auth NextAuth qui a son propre CSRF)
+  const isMutation = ['POST','PUT','DELETE','PATCH'].includes(req.method.toUpperCase());
+  const isApiRoute = pathname.startsWith('/api/') && !pathname.startsWith('/api/auth');
+  if (isMutation && isApiRoute) {
+    const origin  = req.headers.get('origin')  ?? '';
+    const referer = req.headers.get('referer') ?? '';
+    const appUrl  = process.env.NEXT_PUBLIC_APP_URL ?? '';
+    if (appUrl) {
+      const allowed = new URL(appUrl).origin;
+      const isCron  = pathname.startsWith('/api/push/cron');
+      if (!isCron && !origin.startsWith(allowed) && !referer.startsWith(allowed)) {
+        return new NextResponse(
+          JSON.stringify({ error: 'Requete non autorisee (CSRF)' }),
+          { status: 403, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+  }
+
   // 2. Auth protection pages
   const isProtected = PROTECTED_PAGES.some(p => pathname.startsWith(p));
   if (isProtected) {

@@ -3,64 +3,42 @@ import bcrypt from 'bcryptjs';
 import prisma from '@/lib/prisma';
 import { initUserData } from '@/lib/init';
 import { envoyerEmailBienvenue } from '@/lib/email';
+import { validateBody, csrfCheck } from '@/lib/api-helpers';
+import { RegisterSchema } from '@/lib/validators';
+import { logAudit } from '@/lib/audit';
 
 export async function POST(req: NextRequest) {
   try {
-    const { email, password, nom } = await req.json();
+    const csrfErr = csrfCheck(req);
+    if (csrfErr) return csrfErr;
 
-    if (!email || !password) {
-      return NextResponse.json(
-        { error: 'Email et mot de passe requis' },
-        { status: 400 }
-      );
-    }
-    if (password.length < 8) {
-      return NextResponse.json(
-        { error: 'Mot de passe trop court (8 caractères minimum)' },
-        { status: 400 }
-      );
-    }
+    const raw = await req.json();
+    const { data, error } = validateBody(RegisterSchema, raw);
+    if (error) return error;
+    const { email, password, nom } = data;
 
-    // Vérifier si email déjà utilisé
-    const existing = await prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-    });
-    if (existing) {
-      return NextResponse.json(
-        { error: 'Cet email est déjà utilisé' },
-        { status: 409 }
-      );
-    }
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) return NextResponse.json({ error: 'Cet email est deja utilise' }, { status: 409 });
 
-    // Hasher le mot de passe
     const hash = await bcrypt.hash(password, 12);
-
-    // Créer l'utilisateur
     const user = await prisma.user.create({
-      data: { email: email.toLowerCase(), password: hash, nom },
+      data: { email, password: hash, nom },
     });
 
-    // Initialiser catégories, comptes et paramètres
     await initUserData(user.id);
 
-    // Email de bienvenue (non bloquant)
-    try {
-      await envoyerEmailBienvenue(user.email, nom);
-    } catch (emailError) {
-      console.warn('Email bienvenue non envoyé :', emailError);
-    }
+    try { await envoyerEmailBienvenue(user.email, nom); } catch {}
 
-    return NextResponse.json(
-      { success: true, userId: user.id },
-      { status: 201 }
-    );
+    await logAudit({
+      userId: user.id, action: 'register',
+      entityType: 'user', entityId: user.id,
+      details: { email: user.email },
+      req,
+    });
 
-  } catch (error: any) {
-    // Log détaillé dans le terminal
-    console.error('❌ Erreur register:', error?.message ?? error);
-    return NextResponse.json(
-      { error: error?.message ?? 'Erreur interne' },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: true, userId: user.id }, { status: 201 });
+  } catch (e: any) {
+    console.error('register:', e?.message);
+    return NextResponse.json({ error: e?.message ?? 'Erreur interne' }, { status: 500 });
   }
 }

@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { sendPushToUser } from '@/lib/push';
+import { logAudit } from '@/lib/audit';
+import { csrfCheck } from '@/lib/api-helpers';
 
 // ── Sérialisation BigInt/Date ─────────────────────────────────────────────────
 function serial(obj: any): any {
@@ -224,6 +226,7 @@ export async function POST(req: NextRequest) {
         tag: 'decaissement',
       });
     } catch {}
+    await logAudit({ userId: session.user.id, action: 'create', entityType: 'decaissement', entityId: result.id, entityNom: description, req });
     return NextResponse.json(serial({ success: true, id: result.id }), { status: 201 });
   } catch (e: any) {
     console.error('POST /api/decaissements:', e?.message);

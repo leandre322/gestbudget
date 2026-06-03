@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logAudit } from '@/lib/audit';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
@@ -170,6 +171,7 @@ export async function GET(req: NextRequest) {
     // Générer le fichier
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
+    await logAudit({ userId: session.user.id, action: 'export', entityType: 'excel', req });
     return new NextResponse(buf, {
       status: 200,
       headers: {

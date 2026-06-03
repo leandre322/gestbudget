@@ -3,6 +3,9 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { sendPushToUser } from '@/lib/push';
+import { logAudit } from '@/lib/audit';
+import { validateBody, csrfCheck } from '@/lib/api-helpers';
+import { CompteFondsUpdateSchema } from '@/lib/validators';
 
 function serial(obj: any): any {
   if (typeof obj === 'bigint') return Number(obj);
