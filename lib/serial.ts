@@ -1,5 +1,5 @@
 export function serial(obj: any): any {
-  if (typeof obj === 'bigint') return obj.toString();
+  if (typeof obj === 'bigint') return Number(obj);
   if (Array.isArray(obj)) return obj.map(serial);
   if (obj && typeof obj === 'object') {
     const r: any = {};
