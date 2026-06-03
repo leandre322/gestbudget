@@ -46,7 +46,10 @@ export async function PUT(req: NextRequest) {
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const csrfErr = csrfCheck(req); if (csrfErr) return csrfErr;
-    const { revenuMensuelReference, tauxReference, nMoisUrgence } = await req.json();
+    const rawParams = await req.json();
+    const { data: paramsData, error: zodParamsErr } = validateBody(ParametresSchema, rawParams);
+    if (zodParamsErr) return zodParamsErr;
+    const { revenuMensuelReference, tauxReference, nMoisUrgence } = paramsData!;
 
     await prisma.parametres.upsert({
       where:  { userId: session.user.id },

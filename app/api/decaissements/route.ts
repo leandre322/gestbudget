@@ -4,7 +4,8 @@ import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { sendPushToUser } from '@/lib/push';
 import { logAudit } from '@/lib/audit';
-import { csrfCheck } from '@/lib/api-helpers';
+import { csrfCheck, validateBody } from '@/lib/api-helpers';
+import { DecaissementSchema } from '@/lib/validators';
 
 // ── Sérialisation BigInt/Date ─────────────────────────────────────────────────
 function serial(obj: any): any {
@@ -84,13 +85,10 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.id)
       return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
-    const body = await req.json();
-    const {
-      description, dateOperation, notes, typeMouvement,
-      compteId, banqueId,
-      montantFond, montantBanque,
-      impacterBanque,
-    } = body;
+    const rawBody = await req.json();
+    const { data: validBody, error: zodErr } = validateBody(DecaissementSchema, rawBody);
+    if (zodErr) return zodErr;
+    const { description, dateOperation, notes, typeMouvement, compteId, banqueId, montantFond, montantBanque, impacterBanque } = validBody ?? rawBody;
 
     if (!description || !dateOperation)
       return NextResponse.json({ error: 'Description et date obligatoires' }, { status: 400 });

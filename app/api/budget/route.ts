@@ -3,7 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { logAudit } from '@/lib/audit';
-import { csrfCheck } from '@/lib/api-helpers';
+import { csrfCheck, validateBody } from '@/lib/api-helpers';
+import { BudgetPutSchema, BudgetPostSchema } from '@/lib/validators';
 
 function serializeBigInt(obj: any): any {
   if (obj === null || obj === undefined) return obj;
@@ -62,10 +63,10 @@ export async function PUT(req: NextRequest) {
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
 
     const csrfErr = csrfCheck(req); if (csrfErr) return csrfErr;
-    const { anneeId, mois, lignes } = await req.json();
-
-    if (!anneeId || !mois || !lignes)
-      return NextResponse.json({ error: 'Donnees manquantes' }, { status: 400 });
+    const rawPut = await req.json();
+    const { data: putData, error: zodPutErr } = validateBody(BudgetPutSchema, rawPut);
+    if (zodPutErr) return zodPutErr;
+    const { anneeId, mois, lignes } = putData!;
 
     const upserts = Object.entries(
       lignes as Record<string, { anticipe: string; reel: string }>
@@ -97,7 +98,10 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
 
     const csrfErrPost = csrfCheck(req); if (csrfErrPost) return csrfErrPost;
-    const { anneeId, categorieId, mois, montantAnticipe, montantReel, notes } = await req.json();
+    const rawPost = await req.json();
+    const { data: postData, error: zodPostErr } = validateBody(BudgetPostSchema, rawPost);
+    if (zodPostErr) return zodPostErr;
+    const { anneeId, categorieId, mois, montantAnticipe, montantReel, notes } = postData!;
 
     const ligne = await prisma.budgetMensuel.upsert({
       where: { userId_anneeId_categorieId_mois: { userId: session.user.id, anneeId, categorieId, mois } },

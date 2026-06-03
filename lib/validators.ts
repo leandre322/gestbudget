@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const DecaissementSchema = z.object({
+  impacterBanque: z.boolean().optional(),
   description:   z.string().min(1,'Description requise').max(200).trim(),
   dateOperation: z.string().refine(v => !isNaN(Date.parse(v)), 'Date invalide'),
   montantFond:   z.number().min(0).max(999_999_999).optional().default(0),

@@ -61,8 +61,11 @@ export async function PUT(req: NextRequest) {
     const url = new URL(req.url);
     const idParam = url.searchParams.get('id');
 
-    const body = await req.json();
-    const { id: idBody, nom, ordre, isActive, action, montant, seuilAlerte, objectif } = body;
+    const rawBody = await req.json();
+    const { data: body, error: zodErr } = validateBody(CompteFondsUpdateSchema, rawBody);
+    if (zodErr) return zodErr;
+    const { nom, ordre, isActive, action, montant, seuilAlerte, objectif } = body ?? rawBody;
+    const idBody = rawBody.id;
     const id = idParam ?? idBody;
 
     if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
