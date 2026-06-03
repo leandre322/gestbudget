@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { logAudit } from '@/lib/audit';
+import { csrfCheck, validateBody } from '@/lib/api-helpers';
+import { ParametresSchema } from '@/lib/validators';
 
 function n(v: any) { return typeof v === 'bigint' ? Number(v) : (Number(v) || 0); }
 
@@ -42,6 +45,7 @@ export async function PUT(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
+    const csrfErr = csrfCheck(req); if (csrfErr) return csrfErr;
     const { revenuMensuelReference, tauxReference, nMoisUrgence } = await req.json();
 
     await prisma.parametres.upsert({
@@ -70,6 +74,7 @@ export async function PUT(req: NextRequest) {
       }
     }
 
+    await logAudit({ userId: session.user.id, action: 'update', entityType: 'parametres', req });
     return NextResponse.json({ success: true });
   } catch (e: any) {
     console.error('PUT /api/parametres:', e?.message);

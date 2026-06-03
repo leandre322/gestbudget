@@ -43,3 +43,33 @@ export const RegisterSchema = z.object({
               .regex(/[0-9]/,'Un chiffre requis'),
   nom:      z.string().min(1).max(100).trim().optional(),
 });
+export const BanqueCreateSchema = z.object({
+  nomBanque:    z.string().min(1).max(100).trim().optional(),
+  typeCompte:   z.string().max(50).optional(),
+  soldeInitial: z.number().min(0).max(9_999_999_999).optional().default(0),
+  ordre:        z.number().int().min(0).max(100).optional().default(0),
+});
+
+export const ParametresSchema = z.object({
+  revenuMensuelReference: z.number().min(0).max(9_999_999_999).optional(),
+  nMoisUrgence:           z.number().int().min(1).max(60).optional(),
+  tauxReference:          z.record(z.string(), z.number().min(0).max(100)).optional(),
+});
+
+export const BudgetPutSchema = z.object({
+  anneeId: z.string().min(1),
+  mois:    z.number().int().min(1).max(12),
+  lignes:  z.record(z.string(), z.object({
+    anticipe: z.string().or(z.number()),
+    reel:     z.string().or(z.number()),
+  })),
+});
+
+export const BudgetPostSchema = z.object({
+  anneeId:         z.string().min(1),
+  categorieId:     z.string().min(1),
+  mois:            z.number().int().min(1).max(12),
+  montantAnticipe: z.number().min(0).max(9_999_999_999).optional(),
+  montantReel:     z.number().min(0).max(9_999_999_999).optional(),
+  notes:           z.string().max(500).optional(),
+});

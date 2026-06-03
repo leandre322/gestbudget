@@ -151,6 +151,7 @@ export async function GET(req: NextRequest) {
 
     const pdfBuffer = Buffer.from(doc.output('arraybuffer'));
 
+    await logAudit({ userId: session.user.id, action: 'export', entityType: 'pdf', req });
     return new NextResponse(pdfBuffer, {
       status: 200,
       headers: {

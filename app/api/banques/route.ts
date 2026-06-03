@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { logAudit } from '@/lib/audit';
+import { csrfCheck, validateBody } from '@/lib/api-helpers';
+import { BanqueCreateSchema, BanqueUpdateSchema } from '@/lib/validators';
 
 function serial(obj: any): any {
   if (obj === null || obj === undefined) return obj;
@@ -37,6 +40,7 @@ export async function GET(req: NextRequest) {
 // POST /api/banques
 export async function POST(req: NextRequest) {
   try {
+    const csrfErr = csrfCheck(req); if (csrfErr) return csrfErr;
     const session = await getServerSession(authOptions);
     if (!session?.user?.id)
       return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
@@ -53,6 +57,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    await logAudit({ userId: session.user.id, action: 'create', entityType: 'banque', entityId: banque.id, entityNom: banque.nomBanque, req });
     return NextResponse.json(serial({ success: true, banque }), { status: 201 });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message }, { status: 500 });
@@ -117,6 +122,7 @@ export async function PUT(req: NextRequest) {
       data:  updateData,
     });
 
+    await logAudit({ userId: session.user.id, action: 'update', entityType: 'banque', entityId: id ?? '', req });
     return NextResponse.json(serial({ success: true, banque }));
   } catch (e: any) {
     return NextResponse.json({ error: e?.message }, { status: 500 });
