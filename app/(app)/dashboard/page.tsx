@@ -11,7 +11,7 @@ import { formatFCFA, MOIS_COURTS, TYPE_LABELS, calculerScore, couleurScore,
          ORDRE_TYPES, LABEL_PREVISION } from '@/types';
 import { useToast } from '@/components/Toast';
 import { usePushNotifications } from '@/lib/hooks/usePushNotifications';
-import { useDashboardGlobal, useBanques, useComptes, useCategories, useDashboardCumul } from '@/lib/hooks/useDashboard';
+import { useDashboardGlobal, useBanques, useComptes, useCategories, useDashboardCumul, useRecapAnnuel } from '@/lib/hooks/useDashboard';
 import useSWR from 'swr';
 import { clsx } from 'clsx';
 
@@ -800,6 +800,7 @@ function OngletRecap({moisCourant}:{moisCourant:number}) {
   const { isLocked } = useLock();
   const anneeActuelle=new Date().getFullYear();
   const [anneeSelect,setAnneeSelect]=useState(anneeActuelle);
+  const { data: recapData, isLoading: recapLoading, mutate: mutateRecap } = useRecapAnnuel(anneeSelect, moisCourant);
   const [data,setData]=useState<any>(null);
   const [hist,setHist]=useState<any[]>([]);
   const [loading,setLoading]=useState(true);
@@ -812,7 +813,17 @@ function OngletRecap({moisCourant}:{moisCourant:number}) {
   const toutDeployer=()=>{const n:Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{n[t]=true;});setGroupsOpen(n);};
   const toutPlier=()=>{const n:Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{n[t]=false;});setGroupsOpen(n);};
   useEffect(()=>{fetch('/api/annees').then(r=>r.json()).then(d=>{if(d.annees?.length){setAnneesDispos(d.annees);if(!d.annees.includes(anneeActuelle))setAnneeSelect(d.annees[d.annees.length-1]);}}).catch(()=>{});},[]);
-  const charger=useCallback(async()=>{setLoading(true);try{const promises=Array.from({length:12},(_,i)=>fetch(`/api/budget?annee=${anneeSelect}&mois=${i+1}`).then(r=>r.ok?r.json():null));const results=await Promise.all(promises);const cats:any[]=results.find(r=>r?.categories?.length)?.categories??[];const budgetCumul:any[]=[];results.forEach(r=>{if(!r?.budget)return;r.budget.forEach((b:any)=>{const ex=budgetCumul.find(ab=>ab.categorieId===b.categorieId);if(ex){ex.montantAnticipe+=b.montantAnticipe??0;ex.montantReel+=b.montantReel??0;}else budgetCumul.push({...b,montantAnticipe:b.montantAnticipe??0,montantReel:b.montantReel??0});});});const histData=[];for(let i=5;i>=0;i--){let m=moisCourant-i,a=anneeSelect;if(m<=0){m+=12;a--;}const hr=results[m-1];histData.push({mois:MOIS_COURTS[m],ant:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantAnticipe,0)??0,reel:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantReel,0)??0});}const [resDec,resMvt]=await Promise.all([fetch(`/api/decaissements?annee=${anneeSelect}&limit=5000`),fetch('/api/banques/mouvements?limit=5000')]);let fondAjouts=0,fondRetraits=0,banqueAjouts=0,banqueRetraits=0;if(resDec.ok){const dd=await resDec.json();const decs=dd.decaissements??[];fondAjouts=decs.filter((d:any)=>d.typeMouvement==='ajout').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);fondRetraits=decs.filter((d:any)=>d.typeMouvement==='retrait').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);}if(resMvt.ok){const dm=await resMvt.json();const mvts=(dm.mouvements??[]).filter((m:any)=>new Date(m.dateOperation).getFullYear()===anneeSelect);banqueAjouts=mvts.filter((m:any)=>m.typeMouvement==='ajout').reduce((s:number,m:any)=>s+(m.montant||0),0);banqueRetraits=mvts.filter((m:any)=>m.typeMouvement==='retrait').reduce((s:number,m:any)=>s+(m.montant||0),0);}setDecStats({fondAjouts,fondRetraits,banqueAjouts,banqueRetraits});setData({budget:budgetCumul,categories:cats});setHist(histData);}catch(e){console.error(e);}setLoading(false);},[anneeSelect,moisCourant]);
+  const charger=useCallback(async()=>{
+  if (recapData) {
+    const cats = recapData.categories ?? [];
+    const budget = recapData.budget ?? [];
+    setDecStats(recapData.decStats ?? {fondAjouts:0,fondRetraits:0,banqueAjouts:0,banqueRetraits:0});
+    setData({budget,categories:cats});
+    setHist(recapData.hist ?? []);
+    setLoading(false);
+    return;
+  }
+  setLoading(true);try{const promises=Array.from({length:12},(_,i)=>fetch(`/api/budget?annee=${anneeSelect}&mois=${i+1}`).then(r=>r.ok?r.json():null));const results=await Promise.all(promises);const cats:any[]=results.find(r=>r?.categories?.length)?.categories??[];const budgetCumul:any[]=[];results.forEach(r=>{if(!r?.budget)return;r.budget.forEach((b:any)=>{const ex=budgetCumul.find(ab=>ab.categorieId===b.categorieId);if(ex){ex.montantAnticipe+=b.montantAnticipe??0;ex.montantReel+=b.montantReel??0;}else budgetCumul.push({...b,montantAnticipe:b.montantAnticipe??0,montantReel:b.montantReel??0});});});const histData=[];for(let i=5;i>=0;i--){let m=moisCourant-i,a=anneeSelect;if(m<=0){m+=12;a--;}const hr=results[m-1];histData.push({mois:MOIS_COURTS[m],ant:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantAnticipe,0)??0,reel:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantReel,0)??0});}const [resDec,resMvt]=await Promise.all([fetch(`/api/decaissements?annee=${anneeSelect}&limit=5000`),fetch('/api/banques/mouvements?limit=5000')]);let fondAjouts=0,fondRetraits=0,banqueAjouts=0,banqueRetraits=0;if(resDec.ok){const dd=await resDec.json();const decs=dd.decaissements??[];fondAjouts=decs.filter((d:any)=>d.typeMouvement==='ajout').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);fondRetraits=decs.filter((d:any)=>d.typeMouvement==='retrait').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);}if(resMvt.ok){const dm=await resMvt.json();const mvts=(dm.mouvements??[]).filter((m:any)=>new Date(m.dateOperation).getFullYear()===anneeSelect);banqueAjouts=mvts.filter((m:any)=>m.typeMouvement==='ajout').reduce((s:number,m:any)=>s+(m.montant||0),0);banqueRetraits=mvts.filter((m:any)=>m.typeMouvement==='retrait').reduce((s:number,m:any)=>s+(m.montant||0),0);}setDecStats({fondAjouts,fondRetraits,banqueAjouts,banqueRetraits});setData({budget:budgetCumul,categories:cats});setHist(histData);}catch(e){console.error(e);}setLoading(false);},[anneeSelect,moisCourant]);
   useEffect(()=>{charger();},[charger]);
   const exportExcel=async()=>{if(!window.confirm(`📊 Exporter GestBudget-${anneeSelect}.xlsx ?`))return;setExporting('excel');const res=await fetch(`/api/export/excel?annee=${anneeSelect}`);if(res.ok){const blob=await res.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`GestBudget-${anneeSelect}.xlsx`;a.click();}setExporting(null);};
   const exportPDF=async()=>{if(!window.confirm(`📄 Exporter PDF ${anneeSelect} ?`))return;setExporting('pdf');const res=await fetch(`/api/export/pdf?annee=${anneeSelect}&mois=${moisCourant}`);if(res.ok){const blob=await res.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`GestBudget-${anneeSelect}-${String(moisCourant).padStart(2,'0')}.pdf`;a.click();}setExporting(null);};

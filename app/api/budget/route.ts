@@ -2,21 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { serial } from '@/lib/serial';
 import { logAudit } from '@/lib/audit';
 import { csrfCheck, validateBody } from '@/lib/api-helpers';
 import { BudgetPutSchema, BudgetPostSchema } from '@/lib/validators';
-
-function serializeBigInt(obj: any): any {
-  if (obj === null || obj === undefined) return obj;
-  if (typeof obj === 'bigint') return Number(obj);
-  if (Array.isArray(obj)) return obj.map(serializeBigInt);
-  if (typeof obj === 'object') {
-    const result: any = {};
-    for (const key of Object.keys(obj)) { result[key] = serializeBigInt(obj[key]); }
-    return result;
-  }
-  return obj;
-}
 
 export async function GET(req: NextRequest) {
   try {
@@ -50,7 +39,7 @@ export async function GET(req: NextRequest) {
       orderBy: { ordre: 'asc' },
     });
 
-    return NextResponse.json(serializeBigInt({ anneeId: anneeRec.id, anneeData: anneeRec, budget, categories }));
+    return NextResponse.json(serial({ anneeId: anneeRec.id, anneeData: anneeRec, budget, categories }));
   } catch (error: any) {
     console.error('GET /api/budget:', error?.message ?? error);
     return NextResponse.json({ error: error?.message ?? 'Erreur interne' }, { status: 500 });
@@ -110,7 +99,7 @@ export async function POST(req: NextRequest) {
     });
 
     await logAudit({ userId: session.user.id, action: 'update', entityType: 'budget', entityId: ligne.id, details: { mois, anneeId }, req });
-    return NextResponse.json(serializeBigInt({ success: true, id: ligne.id }));
+    return NextResponse.json(serial({ success: true, id: ligne.id }));
   } catch (error: any) {
     console.error('POST /api/budget:', error?.message ?? error);
     return NextResponse.json({ error: error?.message ?? 'Erreur interne' }, { status: 500 });

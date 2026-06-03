@@ -57,3 +57,15 @@ export function useDashboardCumul() {
     refreshInterval:      0,
   });
 }
+// Recap annuel — cache fort (donnees historiques)
+export function useRecapAnnuel(annee: number, moisCourant: number) {
+  return useSWR(
+    `/api/dashboard/recap?annee=${annee}&mois=${moisCourant}`,
+    (url: string) => fetch(url).then(r => r.json()),
+    {
+      revalidateOnFocus:     false,
+      revalidateOnReconnect: false,
+      dedupingInterval:      10 * 60 * 1000, // 10 min — donnees annuelles stables
+    }
+  );
+}

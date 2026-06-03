@@ -3,11 +3,10 @@ import { logAudit } from '@/lib/audit';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { toNum } from '@/lib/serial';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { MOIS_LABELS, TYPE_LABELS } from '@/types';
-
-function n(v: any) { return typeof v === 'bigint' ? Number(v) : (Number(v) || 0); }
 function fmt(v: number) {
   return new Intl.NumberFormat('fr-FR').format(v) + ' FCFA';
 }
@@ -55,9 +54,9 @@ export async function GET(req: NextRequest) {
     doc.setTextColor(30, 41, 59);
 
     // KPIs
-    const rev  = budgets.filter(b => b.categorie.type === 'revenu').reduce((s, b) => s + n(b.montantReel), 0);
-    const dep  = budgets.filter(b => b.categorie.type.startsWith('depense') || b.categorie.type === 'remboursement_dette').reduce((s, b) => s + n(b.montantReel), 0);
-    const ep   = budgets.filter(b => b.categorie.type.startsWith('epargne')).reduce((s, b) => s + n(b.montantReel), 0);
+    const rev  = budgets.filter(b => b.categorie.type === 'revenu').reduce((s, b) => s + toNum(b.montantReel), 0);
+    const dep  = budgets.filter(b => b.categorie.type.startsWith('depense') || b.categorie.type === 'remboursement_dette').reduce((s, b) => s + toNum(b.montantReel), 0);
+    const ep   = budgets.filter(b => b.categorie.type.startsWith('epargne')).reduce((s, b) => s + toNum(b.montantReel), 0);
     const solde = rev - dep - ep;
     const tauxEp = rev > 0 ? ((ep / rev) * 100).toFixed(1) : '0';
 
@@ -106,15 +105,15 @@ export async function GET(req: NextRequest) {
 
       const rows = catsDuType.map(cat => {
         const b = budgets.find(b => b.categorieId === cat.id);
-        const ant  = b ? n(b.montantAnticipe) : 0;
-        const reel = b ? n(b.montantReel)     : 0;
+        const ant  = b ? toNum(b.montantAnticipe) : 0;
+        const reel = b ? toNum(b.montantReel)     : 0;
         const ecar = reel - ant;
         const pct  = ant > 0 ? `${((reel / ant) * 100).toFixed(0)}%` : '—';
         return [cat.nom, fmt(ant), fmt(reel), (ecar >= 0 ? '+' : '') + fmt(ecar), pct];
       });
 
-      const totAnt  = catsDuType.reduce((s, c) => { const b = budgets.find(b => b.categorieId === c.id); return s + (b ? n(b.montantAnticipe) : 0); }, 0);
-      const totReel = catsDuType.reduce((s, c) => { const b = budgets.find(b => b.categorieId === c.id); return s + (b ? n(b.montantReel) : 0); }, 0);
+      const totAnt  = catsDuType.reduce((s, c) => { const b = budgets.find(b => b.categorieId === c.id); return s + (b ? toNum(b.montantAnticipe) : 0); }, 0);
+      const totReel = catsDuType.reduce((s, c) => { const b = budgets.find(b => b.categorieId === c.id); return s + (b ? toNum(b.montantReel) : 0); }, 0);
       rows.push(['SOUS-TOTAL', fmt(totAnt), fmt(totReel), (totReel - totAnt >= 0 ? '+' : '') + fmt(totReel - totAnt), '']);
 
       autoTable(doc, {

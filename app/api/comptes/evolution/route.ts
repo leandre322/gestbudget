@@ -2,21 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { serial } from '@/lib/serial';
 
 const MOIS_COURTS = ['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
-
-function serial(obj: any): any {
-  if (obj === null || obj === undefined) return obj;
-  if (typeof obj === 'bigint') return Number(obj);
-  if (obj instanceof Date) return obj.toISOString();
-  if (Array.isArray(obj)) return obj.map(serial);
-  if (typeof obj === 'object') {
-    const r: any = {};
-    for (const k of Object.keys(obj)) r[k] = serial(obj[k]);
-    return r;
-  }
-  return obj;
-}
 
 // GET /api/comptes/evolution?id=xxx
 // Retourne 12 mois de données de contribution pour un fond

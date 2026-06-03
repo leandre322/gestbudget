@@ -2,24 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { serial } from '@/lib/serial';
 import { sendPushToUser } from '@/lib/push';
 import { logAudit } from '@/lib/audit';
 import { csrfCheck, validateBody } from '@/lib/api-helpers';
 import { DecaissementSchema } from '@/lib/validators';
 
 // ── Sérialisation BigInt/Date ─────────────────────────────────────────────────
-function serial(obj: any): any {
-  if (obj === null || obj === undefined) return obj;
-  if (typeof obj === 'bigint') return Number(obj);
-  if (obj instanceof Date) return obj.toISOString();
-  if (Array.isArray(obj)) return obj.map(serial);
-  if (typeof obj === 'object') {
-    const r: any = {};
-    for (const k of Object.keys(obj)) r[k] = serial(obj[k]);
-    return r;
-  }
-  return obj;
-}
 
 // ── Trouver ou créer l'enregistrement Annee (dans transaction) ────────────────
 async function getOrCreateAnnee(tx: any, userId: string, annee: number) {

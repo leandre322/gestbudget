@@ -8,3 +8,7 @@ export function serial(obj: any): any {
   }
   return obj;
 }
+
+export function toNum(v: any): number {
+  return typeof v === 'bigint' ? Number(v) : (Number(v) || 0);
+}

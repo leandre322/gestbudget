@@ -2,21 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { serial } from '@/lib/serial';
 import { sendPushToUser } from '@/lib/push';
 import { logAudit } from '@/lib/audit';
 import { validateBody, csrfCheck } from '@/lib/api-helpers';
 import { CompteFondsUpdateSchema } from '@/lib/validators';
 
-function serial(obj: any): any {
-  if (typeof obj === 'bigint') return Number(obj);
-  if (Array.isArray(obj)) return obj.map(serial);
-  if (obj && typeof obj === 'object') {
-    const r: any = {};
-    for (const k of Object.keys(obj)) r[k] = serial(obj[k]);
-    return r;
-  }
-  return obj;
-}
 
 export async function GET(req: NextRequest) {
   try {

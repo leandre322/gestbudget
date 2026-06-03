@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { toNum } from '@/lib/serial';
 import { logAudit } from '@/lib/audit';
 import { csrfCheck, validateBody } from '@/lib/api-helpers';
 import { ParametresSchema } from '@/lib/validators';
@@ -26,12 +27,12 @@ export async function GET(req: NextRequest) {
       themeCouleur:           params?.themeCouleur    ?? 'blue',
       anneeCourante:          params?.anneeCourante   ?? new Date().getFullYear(),
       moisCourant:            params?.moisCourant     ?? new Date().getMonth() + 1,
-      revenuMensuelReference: n(params?.revenuMensuelReference ?? 0),
+      revenuMensuelReference: toNum(params?.revenuMensuelReference ?? 0),
       categories: categories.map(c => ({
         id:               c.id,
         type:             c.type,
         tauxReference:    c.tauxReference    ?? 0,
-        montantReference: n(c.montantReference),
+        montantReference: toNum(c.montantReference),
       })),
     });
   } catch (e: any) {

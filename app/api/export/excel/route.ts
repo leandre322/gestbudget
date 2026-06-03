@@ -3,10 +3,9 @@ import { logAudit } from '@/lib/audit';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { toNum } from '@/lib/serial';
 import * as XLSX from 'xlsx';
 import { MOIS_LABELS, MOIS_COURTS, TYPE_LABELS } from '@/types';
-
-function n(v: any) { return typeof v === 'bigint' ? Number(v) : (Number(v) || 0); }
 
 function fmt(v: number) {
   return new Intl.NumberFormat('fr-FR').format(v) + ' FCFA';
@@ -59,9 +58,9 @@ export async function GET(req: NextRequest) {
 
     for (let m = 1; m <= 12; m++) {
       const mBudgets = budgets.filter(b => b.mois === m);
-      const rev = mBudgets.filter(b => b.categorie.type === 'revenu').reduce((s, b) => s + n(b.montantReel), 0);
-      const dep = mBudgets.filter(b => b.categorie.type.startsWith('depense') || b.categorie.type === 'remboursement_dette').reduce((s, b) => s + n(b.montantReel), 0);
-      const ep  = mBudgets.filter(b => b.categorie.type.startsWith('epargne')).reduce((s, b) => s + n(b.montantReel), 0);
+      const rev = mBudgets.filter(b => b.categorie.type === 'revenu').reduce((s, b) => s + toNum(b.montantReel), 0);
+      const dep = mBudgets.filter(b => b.categorie.type.startsWith('depense') || b.categorie.type === 'remboursement_dette').reduce((s, b) => s + toNum(b.montantReel), 0);
+      const ep  = mBudgets.filter(b => b.categorie.type.startsWith('epargne')).reduce((s, b) => s + toNum(b.montantReel), 0);
       dash.push([MOIS_LABELS[m], rev, dep, ep, rev - dep - ep]);
     }
 
@@ -72,10 +71,10 @@ export async function GET(req: NextRequest) {
       const row = [
         new Date(d.dateOperation).toLocaleDateString('fr-FR'),
         d.description,
-        n(d.montantTotal),
+        toNum(d.montantTotal),
         ...comptes.map(c => {
           const r = d.repartitions.find(r => r.compteId === c.id);
-          return r ? n(r.montant) : 0;
+          return r ? toNum(r.montant) : 0;
         }),
       ];
       dash.push(row);
@@ -103,8 +102,8 @@ export async function GET(req: NextRequest) {
       let totAnt = 0, totReel = 0;
       for (let m = 1; m <= 12; m++) {
         const b = budgets.find(b => b.categorieId === cat.id && b.mois === m);
-        const ant  = b ? n(b.montantAnticipe) : 0;
-        const reel = b ? n(b.montantReel)     : 0;
+        const ant  = b ? toNum(b.montantAnticipe) : 0;
+        const reel = b ? toNum(b.montantReel)     : 0;
         row.push(ant, reel);
         totAnt  += ant;
         totReel += reel;
@@ -125,13 +124,13 @@ export async function GET(req: NextRequest) {
 
     const totalRevAnnuel = budgets
       .filter(b => b.categorie.type === 'revenu')
-      .reduce((s, b) => s + n(b.montantReel), 0);
+      .reduce((s, b) => s + toNum(b.montantReel), 0);
 
     for (const cat of categories) {
       const catBudgets = budgets.filter(b => b.categorieId === cat.id);
-      const totAnt  = catBudgets.reduce((s, b) => s + n(b.montantAnticipe), 0);
-      const totReel = catBudgets.reduce((s, b) => s + n(b.montantReel), 0);
-      const moisAvecData = catBudgets.filter(b => n(b.montantReel) > 0).length || 1;
+      const totAnt  = catBudgets.reduce((s, b) => s + toNum(b.montantAnticipe), 0);
+      const totReel = catBudgets.reduce((s, b) => s + toNum(b.montantReel), 0);
+      const moisAvecData = catBudgets.filter(b => toNum(b.montantReel) > 0).length || 1;
       const pct = totalRevAnnuel > 0 ? ((totReel / totalRevAnnuel) * 100).toFixed(1) + '%' : '0%';
       recap.push([
         cat.nom,
@@ -155,12 +154,12 @@ export async function GET(req: NextRequest) {
 
     for (const cat of categories) {
       const derniereValeur = budgets
-        .filter(b => b.categorieId === cat.id && n(b.montantAnticipe) > 0)
+        .filter(b => b.categorieId === cat.id && toNum(b.montantAnticipe) > 0)
         .sort((a, b) => b.mois - a.mois)[0];
       budgetRef.push([
         cat.nom,
         TYPE_LABELS[cat.type as keyof typeof TYPE_LABELS],
-        derniereValeur ? n(derniereValeur.montantAnticipe) : 0,
+        derniereValeur ? toNum(derniereValeur.montantAnticipe) : 0,
       ]);
     }
 

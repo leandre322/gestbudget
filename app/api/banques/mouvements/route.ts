@@ -2,19 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-
-function serial(obj: any): any {
-  if (obj === null || obj === undefined) return obj;
-  if (typeof obj === 'bigint') return Number(obj);
-  if (obj instanceof Date) return obj.toISOString();
-  if (Array.isArray(obj)) return obj.map(serial);
-  if (typeof obj === 'object') {
-    const r: any = {};
-    for (const k of Object.keys(obj)) r[k] = serial(obj[k]);
-    return r;
-  }
-  return obj;
-}
+import { serial } from '@/lib/serial';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/banques/mouvements?limit=100&offset=0&banqueId=xxx
