@@ -186,18 +186,18 @@ function InnerLayout({ children }: { children: React.ReactNode }) {
     setShowModal(false);
     setConfirmed(false);
     // Exposer globalement pour les fetch des pages enfants
-    (window as any).__gestbudgetUnlock = null;
+    try { sessionStorage.removeItem('gb_unlock'); } catch {}
   }, [mois, annee]);
 
   // Exposer le token globalement dès qu'il change
   useEffect(() => {
-    (window as any).__gestbudgetUnlock = unlockToken;
+    try { if(unlockToken) sessionStorage.setItem('gb_unlock', unlockToken); else sessionStorage.removeItem('gb_unlock'); } catch {}
   }, [unlockToken]);
 
   const lock = useCallback(() => {
     setIsLocked(true);
     setUnlockToken(null);
-    (window as any).__gestbudgetUnlock = null;
+    try { sessionStorage.removeItem('gb_unlock'); } catch {};
   }, []);
 
   const openUnlockModal = useCallback(() => {

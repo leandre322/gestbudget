@@ -44,6 +44,7 @@ model User {
   parametres    Parametres?
   resetTokens        PasswordResetToken[]
   pushSubscriptions  PushSubscription[]
+  auditLogs          AuditLog[]
 
   @@map("users")
 }
@@ -267,4 +268,22 @@ model PushSubscription {
 
   @@unique([userId, endpoint])
   @@map("push_subscriptions")
+}
+model AuditLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  userId     String   @map("user_id")
+  action     String
+  entityType String?  @map("entity_type")
+  entityId   String?  @map("entity_id")
+  entityNom  String?  @map("entity_nom")
+  details    Json?
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
 }

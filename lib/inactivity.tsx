@@ -1,117 +1,59 @@
 'use client';
-
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { signOut } from 'next-auth/react';
 
-const TIMEOUT_MS    = 15 * 60 * 1000; // 15 minutes
-const WARNING_MS    = 2  * 60 * 1000; // Avertissement 2 min avant
-const EVENTS        = ['mousedown','mousemove','keydown','scroll','touchstart','click'];
+const LIMIT   = 30 * 60 * 1000;
+const WARNING =  5 * 60 * 1000;
 
-export function useInactivityTimer() {
-  const [showWarning, setShowWarning] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(120);
-  const timerRef    = useRef<NodeJS.Timeout>();
-  const warningRef  = useRef<NodeJS.Timeout>();
-  const countdownRef= useRef<NodeJS.Timeout>();
-
-  const clearAll = useCallback(() => {
-    clearTimeout(timerRef.current);
-    clearTimeout(warningRef.current);
-    clearInterval(countdownRef.current);
-  }, []);
-
-  const resetTimer = useCallback(() => {
-    clearAll();
-    setShowWarning(false);
-
-    // Warning après 13 minutes
-    warningRef.current = setTimeout(() => {
-      setShowWarning(true);
-      setSecondsLeft(120);
-      // Compte à rebours
-      countdownRef.current = setInterval(() => {
-        setSecondsLeft(s => {
-          if (s <= 1) { clearInterval(countdownRef.current); return 0; }
-          return s - 1;
-        });
-      }, 1000);
-    }, TIMEOUT_MS - WARNING_MS);
-
-    // Déconnexion après 15 minutes
-    timerRef.current = setTimeout(() => {
-      signOut({ callbackUrl: '/login' });
-    }, TIMEOUT_MS);
-  }, [clearAll]);
-
-  const stayConnected = useCallback(() => {
-    setShowWarning(false);
-    resetTimer();
-  }, [resetTimer]);
+export function InactivityWarning() {
+  const [show,      setShow]      = useState(false);
+  const [countdown, setCountdown] = useState(300);
 
   useEffect(() => {
-    resetTimer();
-    EVENTS.forEach(e => window.addEventListener(e, resetTimer, { passive: true }));
+    let last = Date.now();
+    const reset = () => { last = Date.now(); setShow(false); };
+    const events = ['mousemove','keypress','click','scroll','touchstart'];
+    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
+
+    const check = setInterval(() => {
+      const elapsed = Date.now() - last;
+      if (elapsed >= LIMIT) { signOut({ callbackUrl: '/login' }); return; }
+      if (elapsed >= LIMIT - WARNING) {
+        setShow(true);
+        setCountdown(Math.round((LIMIT - elapsed) / 1000));
+      }
+    }, 10_000);
+
+    const tick = setInterval(() => {
+      setCountdown(c => {
+        if (c <= 1) { signOut({ callbackUrl: '/login' }); return 0; }
+        return show ? c - 1 : c;
+      });
+    }, 1_000);
+
     return () => {
-      clearAll();
-      EVENTS.forEach(e => window.removeEventListener(e, resetTimer));
+      events.forEach(e => window.removeEventListener(e, reset));
+      clearInterval(check);
+      clearInterval(tick);
     };
-  }, [resetTimer, clearAll]);
+  }, [show]);
 
-  return { showWarning, secondsLeft, stayConnected };
-}
-
-// Composant popup d'avertissement
-export function InactivityWarning() {
-  const { showWarning, secondsLeft, stayConnected } = useInactivityTimer();
-
-  if (!showWarning) return null;
-
-  const mins = Math.floor(secondsLeft / 60);
-  const secs = secondsLeft % 60;
-  const pct  = (secondsLeft / 120) * 100;
+  if (!show) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4">
-      <div className="bg-[var(--surface)] rounded-2xl shadow-2xl p-8 max-w-sm w-full text-center border border-[var(--border)]">
-        {/* Icône */}
-        <div className="w-16 h-16 rounded-full bg-amber-50 dark:bg-amber-900/30 flex items-center justify-center mx-auto mb-4">
-          <span className="text-3xl">⏱️</span>
-        </div>
-
-        <h3 className="text-lg font-bold text-[var(--text)] mb-2">
-          Session expirée bientôt
-        </h3>
-        <p className="text-sm text-[var(--text-muted)] mb-5">
-          Vous serez déconnecté automatiquement dans
+    <div className="fixed inset-0 z-[100] flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/60"/>
+      <div className="relative bg-white dark:bg-slate-800 rounded-2xl shadow-2xl p-6 max-w-sm mx-4 text-center">
+        <div className="text-4xl mb-3">⏱</div>
+        <h3 className="font-bold text-lg text-slate-800 dark:text-slate-200 mb-2">Session inactive</h3>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+          Deconnexion automatique dans{' '}
+          <strong className="text-red-500">{countdown}s</strong> pour securite.
         </p>
-
-        {/* Compte à rebours */}
-        <div className="text-4xl font-bold text-amber-500 mb-4">
-          {mins > 0 ? `${mins}:${String(secs).padStart(2,'0')}` : `${secs}s`}
-        </div>
-
-        {/* Barre de progression */}
-        <div className="h-2 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden mb-6">
-          <div
-            className="h-full bg-amber-400 rounded-full transition-all duration-1000"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-
-        <div className="flex gap-3">
-          <button
-            onClick={() => signOut({ callbackUrl: '/login' })}
-            className="flex-1 border border-[var(--border)] text-[var(--text-muted)] rounded-xl py-2.5 text-sm font-medium hover:bg-slate-50 dark:hover:bg-dark-card transition-all"
-          >
-            Se déconnecter
-          </button>
-          <button
-            onClick={stayConnected}
-            className="flex-1 bg-primary hover:bg-primary-dark text-white rounded-xl py-2.5 text-sm font-bold transition-all"
-          >
-            Rester connecté
-          </button>
-        </div>
+        <button onClick={() => setShow(false)}
+          className="w-full py-2.5 rounded-xl bg-blue-500 text-white font-semibold hover:bg-blue-600 transition-colors">
+          Rester connecte
+        </button>
       </div>
     </div>
   );
