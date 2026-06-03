@@ -11,6 +11,8 @@ import { formatFCFA, MOIS_COURTS, TYPE_LABELS, calculerScore, couleurScore,
          ORDRE_TYPES, LABEL_PREVISION } from '@/types';
 import { useToast } from '@/components/Toast';
 import { usePushNotifications } from '@/lib/hooks/usePushNotifications';
+import { useDashboardGlobal, useBanques, useComptes, useCategories, useDashboardCumul } from '@/lib/hooks/useDashboard';
+import useSWR from 'swr';
 import { clsx } from 'clsx';
 
 const COLORS = ['#1E40AF','#10B981','#F59E0B','#EF4444','#8B5CF6','#06B6D4','#F97316','#84CC16'];
@@ -107,9 +109,37 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const toast = useToast();
   const { isLocked, openUnlockModal } = useLock();
   const { status: pushStatus, subscribe: pushSubscribe, sendTest: pushTest } = usePushNotifications();
-  const [data,         setData]         = useState<any>(null);
-  const [banques,      setBanques]      = useState<any[]>([]);
-  const [loading,      setLoading]      = useState(true);
+
+  // ── SWR hooks ────────────────────────────────────────────────────────────────
+  const { data: _globalRaw, isLoading: _loadingGlobal, mutate: mutateGlobal } = useDashboardGlobal(moisCourant, anneeCourante);
+  const { data: _banquesRaw, isLoading: _loadingBanques, mutate: mutateBanques } = useBanques();
+  const { data: _comptesRaw, mutate: mutateComptes } = useComptes();
+  const { data: _catsRaw } = useCategories();
+  const { data: _cumulRaw, mutate: mutateCumul } = useDashboardCumul();
+  const { data: _budgetRaw } = useSWR(
+    `/api/budget?annee=${anneeCourante}&mois=${moisCourant}`,
+    (url: string) => fetch(url).then(r => r.json()),
+    { revalidateOnFocus: false, dedupingInterval: 30_000 }
+  );
+
+  // ── Données dérivées ──────────────────────────────────────────────────────────
+  const banques = _banquesRaw?.banques ?? [];
+  const _comptesAvecObj = _comptesRaw?.comptes ?? [];
+  const _fondsAvecSeuil = (_globalRaw?.fondsRoulement ?? []).map((f: any) => ({
+    ...f,
+    objectif:    _comptesAvecObj.find((c: any) => c.id === f.id)?.objectif    ?? 0,
+    seuilAlerte: _comptesAvecObj.find((c: any) => c.id === f.id)?.seuilAlerte ?? 0,
+  }));
+  const data = _globalRaw ? {
+    ..._globalRaw,
+    fondsRoulement:   _fondsAvecSeuil,
+    _budgetMoisFrais: _budgetRaw?.budget   ?? [],
+    _categories:      _catsRaw?.categories ?? [],
+  } : null;
+  const loading    = _loadingGlobal || _loadingBanques;
+  const cumulData  = _cumulRaw ?? null;
+  const correctifs = _cumulRaw?.correctifs ?? [];
+
   const [modalType,    setModalType]    = useState<string|null>(null);
   const [modalVals,    setModalVals]    = useState<Record<string,string>>({});
   const [savingModal,  setSavingModal]  = useState(false);
@@ -134,7 +164,6 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const [savingFondSeuil,     setSavingFondSeuil]     = useState(false);
 
   // ── Cumul (épargne + correctifs) ─────────────────────────────────────────
-  const [cumulData,     setCumulData]     = useState<any>(null);
   const [banqueAjouts,  setBanqueAjouts]  = useState(0);
   const [banqueRetraits,setBanqueRetraits]= useState(0);
 
@@ -145,41 +174,6 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const [correctifSigne,  setCorrectifSigne]  = useState<1|-1>(1);
   const [correctifMotif,  setCorrectifMotif]  = useState('');
   const [savingCorrectif, setSavingCorrectif] = useState(false);
-  const [correctifs,      setCorrectifs]      = useState<any[]>([]);
-
-  // ── Chargement principal ──────────────────────────────────────────────────
-  const chargerData = useCallback(() => {
-    Promise.all([
-      fetch('/api/dashboard/global').then(r=>r.json()),
-      fetch('/api/banques').then(r=>r.json()),
-      fetch(`/api/budget?annee=${anneeCourante}&mois=${moisCourant}`).then(r=>r.json()),
-      fetch('/api/categories').then(r=>r.json()),
-      fetch('/api/comptes').then(r=>r.json()),
-    ]).then(([global, bqs, budgetFrais, catsData, comptesData]) => {
-      const allCategories = catsData?.categories ?? [];
-      const comptesAvecObj = comptesData?.comptes ?? [];
-      const fondsAvecObj = (global.fondsRoulement ?? []).map((f:any) => ({
-        ...f,
-        objectif: comptesAvecObj.find((c:any)=>c.id===f.id)?.objectif ?? 0,
-        seuilAlerte: comptesAvecObj.find((c:any)=>c.id===f.id)?.seuilAlerte ?? 0,
-      }));
-      setData({ ...global, fondsRoulement: fondsAvecObj, _budgetMoisFrais: budgetFrais?.budget??[], _categories: allCategories });
-      setBanques(bqs.banques ?? []);
-      setLoading(false);
-    }).catch(()=>setLoading(false));
-  }, [moisCourant, anneeCourante]);
-
-  // ── Chargement cumulatif (épargne + correctifs) ───────────────────────────
-  const chargerCumul = useCallback(async () => {
-    try {
-      const res = await fetch('/api/dashboard/cumul');
-      if (res.ok) {
-        const d = await res.json();
-        setCumulData(d);
-        setCorrectifs(d.correctifs ?? []);
-      }
-    } catch {}
-  }, []);
 
   // ── Chargement mouvements banque (pour KPIs) ──────────────────────────────
   const chargerBanqueKPIs = useCallback(async () => {
@@ -277,7 +271,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       if (!resFond.ok) throw new Error('Echec sauvegarde seuil fond');
       toast.success(seuil > 0 ? 'Seuil fond defini' : 'Seuil supprime ✓');
       setEditingFondSeuilId(null);
-      await chargerData();
+      mutateGlobal(); mutateBanques(); mutateComptes();
     } catch { toast.error('Erreur'); }
     setSavingFondSeuil(false);
   };
@@ -292,12 +286,13 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       });
       toast.success(seuil > 0 ? "Seuil defini ✓" : "Seuil supprime ✓");
       setEditingSeuilId(null);
-      await chargerData();
+      mutateGlobal(); mutateBanques(); mutateComptes();
     } catch { toast.error("Erreur"); }
     setSavingSeuil(false);
   };
 
-  useEffect(() => { chargerData(); chargerSparklines(); chargerCumul(); chargerBanqueKPIs(); }, [chargerData, chargerSparklines, chargerCumul, chargerBanqueKPIs]);
+  // ── useEffects ────────────────────────────────────────────────────────────
+  useEffect(() => { chargerSparklines(); chargerBanqueKPIs(); }, [chargerSparklines, chargerBanqueKPIs]);
 
   // Push alerte au chargement
   useEffect(() => {
@@ -361,7 +356,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     setSavingFondId(f.id);
     try {
       const res = await fetch('/api/comptes/correction',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({compteId:f.id,nouveauSolde:newSolde,motif:'Correction manuelle depuis Dashboard'})});
-      if(res.ok){toast.success(`${f.nom} : solde mis à jour ✓`);cancelEditFond();chargerData();}
+      if(res.ok){toast.success(`${f.nom} : solde mis à jour ✓`);cancelEditFond();mutateGlobal();mutateComptes();}
       else{const err=await res.json();toast.error(err.error??'Erreur');}
     } catch{toast.error('Erreur réseau');}
     setSavingFondId(null);
@@ -376,14 +371,14 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     setSavingCorrectif(true);
     try {
       const res = await fetch('/api/correctifs-kpi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kpi:correctifKpi,montant:correctifSigne*parseInt(correctifMontant),motif:correctifMotif.trim()})});
-      if(res.ok){toast.success('Correctif appliqué ✓');setShowCorrectif(false);chargerCumul();}
+      if(res.ok){toast.success('Correctif appliqué ✓');setShowCorrectif(false);mutateCumul();}
       else{const err=await res.json();toast.error(err.error??'Erreur');}
     } catch{toast.error('Erreur réseau');}
     setSavingCorrectif(false);
   };
   const supprimerCorrectif = async (id:string) => {
     await fetch(`/api/correctifs-kpi?id=${id}`,{method:'DELETE'});
-    chargerCumul();
+    mutateCumul();
   };
 
   // ── KPIs mois courant ─────────────────────────────────────────────────────
@@ -411,7 +406,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     if (isLocked) { openUnlockModal(); return; }
     const init:Record<string,string>={};
     if(type==='urgence'){init['revenu']=String(revenuRef);init['nMois']=String(nMoisUrgence);}
-    else if(type==='banques'){banques.forEach(b=>{init[b.id]=String(b.solde??0);});}
+    else if(type==='banques'){banques.forEach((b:any)=>{init[b.id]=String(b.solde??0);});}
     else{budgetMois.filter((b:any)=>{if(type==='revenus')return b.categorie?.type==='revenu';if(type==='depenses')return b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette';return false;}).forEach((b:any)=>{init[b.categorieId]=String(b.montantReel??0);});}
     setModalVals(init);setModalType(type);
   };
@@ -423,7 +418,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       if(modalType==='urgence'){await fetch('/api/parametres',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revenuMensuelReference:parseInt(modalVals['revenu']||'0')||0,nMoisUrgence:parseInt(modalVals['nMois']||'6')||6})});toast.success("Fonds d'urgence mis à jour ✓");}
       else if(modalType==='banques'){for(const[id,s]of Object.entries(modalVals)){await fetch(`/api/banques?id=${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set',montant:parseInt(s)||0})});};toast.success('Soldes banques mis à jour ✓');}
       else{const r=await fetch(`/api/budget?annee=${anneeCourante}&mois=${moisCourant}`);if(r.ok){const d=await r.json();const lignes:Record<string,any>={};for(const b of d.budget){lignes[b.categorieId]={anticipe:String(b.montantAnticipe??0),reel:modalVals[b.categorieId]!==undefined?modalVals[b.categorieId]:String(b.montantReel??0)};};await fetch('/api/budget',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({anneeId:d.anneeId,mois:moisCourant,lignes})});toast.success('Données mises à jour ✓');}}
-      chargerData();setModalType(null);
+      mutateGlobal(); mutateBanques(); mutateComptes(); setModalType(null);
     } catch{toast.error('Erreur lors de la sauvegarde');}
     setSavingModal(false);
   };
@@ -501,7 +496,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       <DashboardModal isOpen={modalType!==null} onClose={()=>setModalType(null)} titre={modalType==='urgence'?"Fonds d'urgence — Objectif":modalType==='banques'?'Épargne Précaution — Soldes':modalType==='revenus'?`Revenus — ${MOIS_NOMS_FR[moisCourant]} ${anneeCourante}`:modalType==='depenses'?`Dépenses — ${MOIS_NOMS_FR[moisCourant]} ${anneeCourante}`:''}>
         <div className="space-y-3">
           {modalType==='urgence'&&(<div className="space-y-3"><div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Revenu mensuel de référence (FCFA)</label><input type="number" value={modalVals['revenu']??''} placeholder="Ex: 690 000" className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,revenu:e.target.value}))}/></div><div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Nombre de mois de précaution</label><input type="number" value={modalVals['nMois']??String(nMoisUrgence)} min="1" max="24" className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,nMois:e.target.value}))}/></div><div className="bg-primary/5 rounded-xl p-3"><p className="text-xs text-[var(--text-muted)]">Objectif calculé :</p><p className="text-lg font-bold text-primary mt-1">{formatFCFA((parseInt(modalVals['revenu']||'0')||0)*(parseInt(modalVals['nMois']||'6')||6))}</p></div></div>)}
-          {modalType==='banques'&&(<div className="space-y-2">{banques.map(b=>(<div key={b.id} className="flex items-center gap-3"><span className="flex-1 text-sm text-[var(--text)] font-medium">🏦 {b.nomBanque}</span><input type="number" value={modalVals[b.id]??''} placeholder="0" className="w-36 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,[b.id]:e.target.value}))}/></div>))}</div>)}
+          {modalType==='banques'&&(<div className="space-y-2">{banques.map((b:any)=>(<div key={b.id} className="flex items-center gap-3"><span className="flex-1 text-sm text-[var(--text)] font-medium">🏦 {b.nomBanque}</span><input type="number" value={modalVals[b.id]??''} placeholder="0" className="w-36 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,[b.id]:e.target.value}))}/></div>))}</div>)}
           {(modalType==='revenus'||modalType==='depenses')&&(<div className="space-y-2"><div className="grid grid-cols-2 gap-2 text-xs font-semibold text-[var(--text-muted)] uppercase pb-2 border-b border-[var(--border)]"><span>Catégorie</span><span className="text-right">{LABEL_PREVISION} → Réel</span></div>{budgetMois.filter((b:any)=>{if(modalType==='revenus')return b.categorie?.type==='revenu';if(modalType==='depenses')return b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette';return false;}).map((b:any)=>(<div key={b.categorieId} className="flex items-center gap-3"><span className="flex-1 text-sm text-[var(--text)] truncate">{b.categorie?.nom}</span><div className="flex items-center gap-1.5 flex-shrink-0"><span className="text-xs text-[var(--text-muted)] w-24 text-right">{b.montantAnticipe>0?formatFCFA(b.montantAnticipe):'—'}</span><input type="number" value={modalVals[b.categorieId]??''} placeholder="0" className="w-32 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,[b.categorieId]:e.target.value}))}/></div></div>))}</div>)}
           <div className="flex justify-end gap-2 pt-3 border-t border-[var(--border)] mt-4"><button onClick={()=>setModalType(null)} className="px-4 py-2 rounded-xl text-sm border border-[var(--border)] text-[var(--text-muted)]">Annuler</button><button onClick={sauvegarderModal} disabled={savingModal} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium bg-primary text-white disabled:opacity-60"><Save size={14}/>{savingModal?'Sauvegarde...':'Sauvegarder'}</button></div>
         </div>
@@ -588,13 +583,11 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
                     </div>
                   )}
                   {evo.length>0&&<div className="flex gap-1 mt-1.5 flex-wrap">{evo.map((e:any,i:number)=><EvoBadge key={i} label={e.label} hausse={e.hausse} valStr={`${e.pct}%`}/>)}</div>}
-                  {/* Badge alerte seuil fond */}
                   {isAlerteFond && !isEditing && (
                     <div className="flex items-center gap-1 mt-0.5 text-xs text-red-500 font-semibold">
                       <span>Sous le seuil ({formatFCFA(seuilFond)})</span>
                     </div>
                   )}
-                  {/* Seuil fond info ou inline edit */}
                   {!isEditingSeuil && seuilFond > 0 && !isAlerteFond && (
                     <p className="text-[10px] text-amber-500 mt-0.5">Seuil : {formatFCFA(seuilFond)}</p>
                   )}
@@ -614,7 +607,6 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
                       </button>
                     </div>
                   )}
-                  {/* Crayon solde + bouton seuil */}
                   {!isEditing && !isEditingSeuil && (
                     <button onClick={() => { if(isLocked){openUnlockModal();return;} setEditingFondSeuilId(f.id); setEditingFondSeuilVal(String(seuilFond||"")); }}
                       title={isAlerteFond ? "Solde sous le seuil — modifier" : seuilFond > 0 ? "Modifier le seuil" : "Definir un seuil d'alerte"}
@@ -634,13 +626,13 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       </div>
 
       {/* Épargne Précaution */}
-      {banques.filter(b=>Number(b.seuilAlerte||0)>0&&Number(b.solde||0)<Number(b.seuilAlerte||0)).length>0&&(
+      {banques.filter((b:any)=>Number(b.seuilAlerte||0)>0&&Number(b.solde||0)<Number(b.seuilAlerte||0)).length>0&&(
         <div className="flex items-start gap-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl px-4 py-3">
           <AlertTriangle size={16} className="text-red-500 flex-shrink-0 mt-0.5"/>
           <div className="flex-1">
-            <p className="text-sm font-semibold text-red-700 dark:text-red-400">Solde bas : {banques.filter(b=>Number(b.seuilAlerte||0)>0&&Number(b.solde||0)<Number(b.seuilAlerte||0)).length} compte(s) en dessous du seuil</p>
+            <p className="text-sm font-semibold text-red-700 dark:text-red-400">Solde bas : {banques.filter((b:any)=>Number(b.seuilAlerte||0)>0&&Number(b.solde||0)<Number(b.seuilAlerte||0)).length} compte(s) en dessous du seuil</p>
             <div className="flex flex-wrap gap-2 mt-1">
-              {banques.filter(b=>Number(b.seuilAlerte||0)>0&&Number(b.solde||0)<Number(b.seuilAlerte||0)).map(b=>(
+              {banques.filter((b:any)=>Number(b.seuilAlerte||0)>0&&Number(b.solde||0)<Number(b.seuilAlerte||0)).map((b:any)=>(
                 <span key={b.id} className="text-xs bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 px-2 py-0.5 rounded-full">
                   {b.nomBanque} : {formatFCFA(Number(b.solde||0))} / seuil {formatFCFA(Number(b.seuilAlerte||0))}
                 </span>
@@ -707,7 +699,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
           };
           const bp = banques.filter((b:any)=>!banquesInvestIds.has(b.id));
           const bi = banques.filter((b:any)=>banquesInvestIds.has(b.id));
-          return(<>{bp.length>0&&<div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">{bp.map(b=>renderCard(b,'bg-[var(--surface)]','text-primary'))}</div>}{bi.length>0&&<div className="mt-2 pt-2 border-t border-[var(--border)]"><p className="text-xs text-[var(--text-muted)] mb-2">🔗 Compte lié (épargne investissement)</p><div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{bi.map(b=>renderCard(b,'bg-green-50 dark:bg-green-900/10','text-green-700 dark:text-green-400'))}</div></div>}</>);
+          return(<>{bp.length>0&&<div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">{bp.map((b:any)=>renderCard(b,'bg-[var(--surface)]','text-primary'))}</div>}{bi.length>0&&<div className="mt-2 pt-2 border-t border-[var(--border)]"><p className="text-xs text-[var(--text-muted)] mb-2">🔗 Compte lié (épargne investissement)</p><div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{bi.map((b:any)=>renderCard(b,'bg-green-50 dark:bg-green-900/10','text-green-700 dark:text-green-400'))}</div></div>}</>);
         })()}
         {banques.length===0&&<p className="text-sm text-[var(--text-muted)] py-2">Aucune banque configurée. <a href="/parametres" className="text-primary underline">Ajouter dans Paramètres → Banques</a></p>}
       </div>
