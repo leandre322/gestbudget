@@ -66,6 +66,28 @@ export function useAnomalies(mois: number, annee: number) {
   );
 }
 
+// Projets
+export function useProjets(statut?: 'actif' | 'atteint' | 'abandonne') {
+  const url = statut ? `/api/projets?statut=${statut}` : '/api/projets'
+  const { data, error, mutate, isLoading } = useSWR(url, fetcher, {
+    refreshInterval: 60000, // refresh toutes les 60s
+  })
+  return {
+    projets:  data?.projets  ?? [],
+    nbRetard: data?.nbRetard ?? 0,
+    isLoading,
+    isError:  !!error,
+    mutate,
+  }
+}
+
+// Badge retard projets (utilise dans Topbar/layout)
+export function useNbProjetsEnRetard() {
+  const { data } = useSWR('/api/projets', fetcher, { refreshInterval: 300000 })
+  return data?.nbRetard ?? 0
+}
+
+
 // Recap annuel — cache fort (donnees historiques)
 export function useRecapAnnuel(annee: number, moisCourant: number) {
   return useSWR(

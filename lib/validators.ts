@@ -10,6 +10,7 @@ export const DecaissementSchema = z.object({
   compteId:      z.string().optional(),
   notes:         z.string().max(500).optional(),
   typeMouvement: z.enum(['retrait','ajout']).default('retrait'),
+  sourceVocale:  z.boolean().optional().default(false), // D1 — dictee vocale
 });
 
 export const CompteFondsUpdateSchema = z.object({
@@ -44,6 +45,7 @@ export const RegisterSchema = z.object({
               .regex(/[0-9]/,'Un chiffre requis'),
   nom:      z.string().min(1).max(100).trim().optional(),
 });
+
 export const BanqueCreateSchema = z.object({
   nomBanque:    z.string().min(1).max(100).trim().optional(),
   typeCompte:   z.string().max(50).optional(),
@@ -59,6 +61,7 @@ export const ParametresSchema = z.object({
   rapportEmailJour:       z.number().int().min(1).max(28).optional(),
   rapportEmailHeure:      z.number().int().min(0).max(23).optional(),
   seuilAnomaliesPct:      z.number().int().min(10).max(200).optional(),
+  langueVocale:           z.string().max(10).optional(), // D1 — dictee vocale
 });
 
 export const BudgetPutSchema = z.object({

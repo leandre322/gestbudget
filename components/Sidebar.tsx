@@ -6,16 +6,17 @@ import { signOut } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, CalendarCheck2, Wallet,
-  RefreshCcw, Settings, X, TrendingUp, LogOut
+  RefreshCcw, Settings, X, TrendingUp, LogOut, Target
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
 const NAV = [
-  { href: '/dashboard',           label: 'Tableau de bord',    icon: LayoutDashboard  },
-  { href: '/suivi',               label: 'Suivi mensuel',      icon: CalendarCheck2   },
-  { href: '/budget',              label: 'Budget mensuel',     icon: Wallet           },
-  { href: '/ajout-retrait-fonds', label: 'Ajout/Retrait Fonds',icon: RefreshCcw       },
-  { href: '/parametres',          label: 'Paramètres',         icon: Settings         },
+  { href: '/dashboard',           label: 'Tableau de bord',     icon: LayoutDashboard },
+  { href: '/suivi',               label: 'Suivi mensuel',       icon: CalendarCheck2  },
+  { href: '/budget',              label: 'Budget mensuel',      icon: Wallet          },
+  { href: '/ajout-retrait-fonds', label: 'Ajout/Retrait Fonds', icon: RefreshCcw      },
+  { href: '/projets',             label: 'Projets',             icon: Target          }, // D3
+  { href: '/parametres',          label: 'Paramètres',          icon: Settings        },
 ];
 
 interface SidebarProps {
@@ -42,13 +43,9 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
       {/* ── Sidebar panel ── */}
       <aside
         className={clsx(
-          // Position
           'fixed lg:static inset-y-0 left-0',
-          // Dimensions
           'w-64 flex-shrink-0 flex flex-col',
-          // Glass — classe utilitaire CSS (globals.css)
           'sidebar-glass',
-          // Mobile slide
           'transition-transform duration-300 ease-out',
           'lg:translate-x-0',
           open ? 'translate-x-0 z-50' : '-translate-x-full',
@@ -58,7 +55,6 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         {/* ── Header brand ── */}
         <div className="flex items-center justify-between px-5 pt-6 pb-4">
           <div className="flex items-center gap-3">
-            {/* Logo icône avec glow */}
             <div className={clsx(
               'w-9 h-9 rounded-xl flex-shrink-0',
               'flex items-center justify-center',
@@ -78,7 +74,6 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             </div>
           </div>
 
-          {/* Fermer (mobile) */}
           <button
             onClick={onClose}
             className="lg:hidden p-1.5 rounded-lg text-[var(--text-muted)]
@@ -104,15 +99,12 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                 href={item.href}
                 onClick={onClose}
                 className={clsx(
-                  // Base
                   'group flex items-center gap-3 px-3.5 py-2.5 rounded-xl',
                   'text-sm font-medium transition-all duration-200',
-                  // P3 : entrée décalée
                   `stagger-${i + 1}`,
-                  // État actif vs inactif
                   isActive
                     ? [
-                        'sidebar-item-active',          // glow CSS (globals.css)
+                        'sidebar-item-active',
                         'bg-gradient-to-r from-blue-600/20 to-blue-500/8',
                         'text-[var(--primary)]',
                       ]
@@ -123,7 +115,6 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                       ]
                 )}
               >
-                {/* Icône — P4 glow sur actif */}
                 <item.icon
                   size={17}
                   strokeWidth={isActive ? 2.2 : 1.8}
@@ -135,10 +126,8 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                   )}
                 />
 
-                {/* Label */}
                 <span className="flex-1 truncate">{item.label}</span>
 
-                {/* Indicateur actif — trait vertical lumineux */}
                 {isActive && (
                   <div className={clsx(
                     'w-1 h-4 rounded-full flex-shrink-0',
@@ -146,8 +135,6 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                     'shadow-[0_0_8px_rgba(59,130,246,0.90)]',
                   )} />
                 )}
-
-                {/* Dot nouvelle session non-sauvegardée (passé via context si besoin) */}
               </Link>
             );
           })}
@@ -158,18 +145,19 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           <div className="mb-3 h-px"
             style={{ background: 'linear-gradient(90deg, transparent, var(--border), transparent)' }} />
 
-          <button onClick={() => setShowLogoutModal(true)} className="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl mb-3 text-sm font-medium text-red-500 hover:bg-red-500/10 transition-all group">
+          <button
+            onClick={() => setShowLogoutModal(true)}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl mb-3 text-sm font-medium text-red-500 hover:bg-red-500/10 transition-all group"
+          >
             <LogOut size={15} className="flex-shrink-0" />
             <span>Se deconnecter</span>
           </button>
 
-          {/* Devise + version */}
           <div className="flex items-center justify-between px-1">
             <span className="text-[10px] text-[var(--text-muted)]">Devise : F CFA</span>
             <span className="text-[10px] text-[var(--text-muted)] opacity-50">v1.0</span>
           </div>
 
-          {/* Barre de statut connexion */}
           <div className="mt-2 flex items-center gap-1.5 px-1">
             <div className="w-1.5 h-1.5 rounded-full bg-green-400
               shadow-[0_0_6px_rgba(16,185,129,0.80)] animate-pulse" />
@@ -178,6 +166,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         </div>
       </aside>
 
+      {/* ── Modale déconnexion ── */}
       {showLogoutModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60" onClick={() => setShowLogoutModal(false)} />
@@ -187,10 +176,20 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
               <h3 className="font-bold text-red-700 dark:text-red-400">Se deconnecter ?</h3>
             </div>
             <div className="p-5 space-y-4">
-              <p className="text-sm text-[var(--text-muted)]">Votre session sera fermee. Vous devrez vous reconnecter pour acceder a GestBudget.</p>
+              <p className="text-sm text-[var(--text-muted)]">
+                Votre session sera fermee. Vous devrez vous reconnecter pour acceder a GestBudget.
+              </p>
               <div className="flex gap-2">
-                <button onClick={() => setShowLogoutModal(false)} className="flex-1 py-2.5 rounded-xl border border-[var(--border)] text-sm text-[var(--text-muted)] hover:bg-slate-50 dark:hover:bg-dark-card transition-all">Annuler</button>
-                <button onClick={() => signOut({ callbackUrl: '/login' })} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition-all">
+                <button
+                  onClick={() => setShowLogoutModal(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-[var(--border)] text-sm text-[var(--text-muted)] hover:bg-slate-50 dark:hover:bg-dark-card transition-all"
+                >
+                  Annuler
+                </button>
+                <button
+                  onClick={() => signOut({ callbackUrl: '/login' })}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition-all"
+                >
                   <LogOut size={14} />Confirmer
                 </button>
               </div>

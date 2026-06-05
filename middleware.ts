@@ -7,7 +7,6 @@ const rlFallback = new Map<string, { count: number; resetAt: number }>();
 
 async function checkRL(key: string, limit: number, windowMs: number): Promise<boolean> {
   if (!process.env.DATABASE_URL_UNPOOLED) {
-    // Fallback in-memory si variable absente
     const now = Date.now();
     const e = rlFallback.get(key);
     if (!e || now > e.resetAt) { rlFallback.set(key, { count: 1, resetAt: now + windowMs }); return true; }
@@ -34,7 +33,6 @@ async function checkRL(key: string, limit: number, windowMs: number): Promise<bo
     `;
     return (rows[0]?.count ?? 1) <= limit;
   } catch {
-    // Fallback in-memory si Neon indisponible
     const now = Date.now();
     const e = rlFallback.get(key);
     if (!e || now > e.resetAt) { rlFallback.set(key, { count: 1, resetAt: now + windowMs }); return true; }
@@ -44,7 +42,6 @@ async function checkRL(key: string, limit: number, windowMs: number): Promise<bo
   }
 }
 
-// Limites durcies sur auth/register/forgot (persistant = vraiment bloquant)
 const RATE_RULES = [
   { path: '/api/auth',            limit: 10, window:  60_000 },
   { path: '/api/register',        limit:  3, window: 300_000 },
@@ -56,6 +53,7 @@ const RATE_RULES = [
 const PROTECTED_PAGES = [
   '/dashboard', '/suivi', '/recapitulatif',
   '/budget', '/decaissements', '/parametres', '/ajout-retrait-fonds',
+  '/projets', // D3 — planificateur projets
 ];
 
 export async function middleware(req: NextRequest) {
@@ -108,21 +106,30 @@ export async function middleware(req: NextRequest) {
   }
 
   // 4. Headers securite
+  // NOTE : microphone PAS restreint — requis pour Web Speech API (D1 vocal)
   const res = NextResponse.next();
   res.headers.set('X-Frame-Options',        'SAMEORIGIN');
   res.headers.set('X-Content-Type-Options', 'nosniff');
   res.headers.set('X-XSS-Protection',       '1; mode=block');
   res.headers.set('Referrer-Policy',        'strict-origin-when-cross-origin');
-  res.headers.set('Permissions-Policy',     'camera=(), microphone=(), geolocation=()');
+  res.headers.set('Permissions-Policy',     'camera=(), geolocation=()');
   return res;
 }
 
 export const config = {
   matcher: [
-    '/dashboard/:path*', '/suivi/:path*', '/recapitulatif/:path*',
-    '/budget/:path*', '/decaissements/:path*', '/parametres/:path*',
+    '/dashboard/:path*',
+    '/suivi/:path*',
+    '/recapitulatif/:path*',
+    '/budget/:path*',
+    '/decaissements/:path*',
+    '/parametres/:path*',
     '/ajout-retrait-fonds/:path*',
-    '/api/auth/:path*', '/api/register', '/api/forgot-password',
-    '/api/reset-password', '/api/push/:path*',
+    '/projets/:path*',           // D3
+    '/api/auth/:path*',
+    '/api/register',
+    '/api/forgot-password',
+    '/api/reset-password',
+    '/api/push/:path*',
   ],
 };

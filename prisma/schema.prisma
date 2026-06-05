@@ -45,6 +45,7 @@ model User {
   resetTokens        PasswordResetToken[]
   pushSubscriptions  PushSubscription[]
   auditLogs          AuditLog[]
+  projets            Projet[]
 
   @@map("users")
 }
@@ -94,18 +95,19 @@ model Categorie {
 
   tauxReference    Float   @default(0)
   montantReference BigInt  @default(0)
+  enveloppeActive  Boolean @default(false) // D2 — enveloppes budgetaires
 
   // ── Liaison vers CompteFonds (epargne_autre uniquement) ──
   compteFondsId String?       @map("compte_fonds_id")
   compteFonds   CompteFonds?  @relation(fields: [compteFondsId], references: [id], onDelete: SetNull)
 
   // ── Liaison vers Banque (epargne_investissement uniquement) ──
-  // Quand le réel est saisi dans Suivi, la banque liée est mise à jour (delta)
   banqueId      String?       @map("banque_id")
   banque        Banque?       @relation("CategorieBanque", fields: [banqueId], references: [id], onDelete: SetNull)
 
   user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   budgetMensuel BudgetMensuel[]
+  projets       Projet[]
 
   @@map("categories")
 }
@@ -137,13 +139,13 @@ model CompteFonds {
   ordre       Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  objectif    BigInt  @default(0)
-  seuilAlerte  BigInt  @default(0)
+  objectif    BigInt   @default(0)
+  seuilAlerte BigInt   @default(0)
 
   user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   repartitions DecaissementCompte[]
-  // ── Catégories liées à ce fond ──
   categories   Categorie[]
+  projets      Projet[]
 
   @@map("comptes_fonds")
 }
@@ -164,6 +166,7 @@ model Decaissement {
   soldeApresFond   BigInt?
   soldeAvantBanque BigInt?
   soldeApresBanque BigInt?
+  sourceVocale     Boolean  @default(false) // D1 — dictee vocale
   banque           Banque?  @relation("DecaissementBanque", fields: [banqueId], references: [id])
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -198,16 +201,15 @@ model Banque {
   isActive   Boolean  @default(true)
   ordre      Int      @default(0)
   updatedAt  DateTime @updatedAt
-  seuilAlerte  BigInt  @default(0)
+  seuilAlerte BigInt  @default(0)
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   annee Annee? @relation(fields: [anneeId], references: [id], onDelete: SetNull)
-  // Catégories liées (epargne_investissement)
   categories Categorie[] @relation("CategorieBanque")
 
   @@map("banques")
-  decaissements    Decaissement[]  @relation("DecaissementBanque")
-  mouvements       MouvementBanque[]
+  decaissements Decaissement[]  @relation("DecaissementBanque")
+  mouvements    MouvementBanque[]
 }
 
 model MouvementBanque {
@@ -254,10 +256,35 @@ model Parametres {
   rapportEmailJour             Int     @default(1)
   rapportEmailHeure            Int     @default(8)
   seuilAnomaliesPct            Int     @default(50)
+  langueVocale                 String  @default("fr-FR") // D1 — dictee vocale
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("parametres")
+}
+
+model Projet {
+  id             String    @id @default(dbgenerated("gen_random_uuid()::text"))
+  userId         String
+  nom            String
+  description    String?
+  montantCible   BigInt    @default(0)
+  montantActuel  BigInt    @default(0)
+  dateDebut      DateTime  @db.Date
+  dateCible      DateTime  @db.Date
+  statut         String    @default("actif")
+  categorieId    String?
+  compteFondsId  String?
+  notifSeuils    String    @default("50,75,100")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categorie   Categorie?   @relation(fields: [categorieId], references: [id], onDelete: SetNull)
+  compteFonds CompteFonds? @relation(fields: [compteFondsId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@map("projets")
 }
 
 model PushSubscription {
@@ -273,8 +300,9 @@ model PushSubscription {
   @@unique([userId, endpoint])
   @@map("push_subscriptions")
 }
+
 model AuditLog {
-  id        String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  id         String   @id @default(dbgenerated("gen_random_uuid()::text"))
   userId     String   @map("user_id")
   action     String
   entityType String?  @map("entity_type")

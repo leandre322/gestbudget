@@ -13,7 +13,6 @@ const GRANDES_CATEGORIES = [
 ] as const;
 type GrandeCategorie = typeof GRANDES_CATEGORIES[number];
 
-// ── Cle localStorage pour le mode de saisie ──────────────────────────────────
 const LS_MODE_KEY = 'gb_cat_input_mode';
 
 export default function ParametresPage() {
@@ -50,7 +49,7 @@ export default function ParametresPage() {
   const [savedTaux,  setSavedTaux]  = useState(false);
   const [tauxError,  setTauxError]  = useState<string | null>(null);
 
-  // ── Mode saisie (Montant FCFA ou Taux %) persisté localStorage ───────────
+  // ── Mode saisie (Montant FCFA ou Taux %) ─────────────────────────────────
   const [inputMode, setInputMode] = useState<'montant' | 'taux'>('montant');
   useEffect(() => {
     const saved = localStorage.getItem(LS_MODE_KEY);
@@ -65,10 +64,13 @@ export default function ParametresPage() {
   const [savingLien,       setSavingLien]       = useState<string|null>(null);
   const [savingBanqueLien, setSavingBanqueLien] = useState<string|null>(null);
   const [catGroupsOpen,    setCatGroupsOpen]    = useState<Record<string,boolean>>({});
+
+  // ── Alertes ───────────────────────────────────────────────────────────────
   const [rapportEmailActif, setRapportEmailActif] = useState(true);
   const [rapportEmailJour,  setRapportEmailJour]  = useState(1);
   const [rapportEmailHeure, setRapportEmailHeure] = useState(8);
   const [seuilAnomaliesPct, setSeuilAnomaliesPct] = useState(50);
+  const [langueVocale,      setLangueVocale]      = useState('fr-FR'); // D1
   const [savingAlertes,     setSavingAlertes]     = useState(false);
   const [savedAlertes,      setSavedAlertes]      = useState(false);
 
@@ -78,18 +80,14 @@ export default function ParametresPage() {
   const isDirty        = useRef(false);
 
   // ── Fonctions de conversion ───────────────────────────────────────────────
-  // Taux -> Montant : affichage en mode Taux
   const tauxToMontant = (taux: number): number =>
     revenuRef > 0 ? Math.round((taux / 100) * revenuRef) : 0;
 
-  // Montant -> Taux : arrondi classique 2 decimales (REGLE : pas de ceiling)
   const montantToTaux = (montant: number): number =>
     revenuRef > 0 ? Math.round((montant / revenuRef) * 10000) / 100 : 0;
 
-  // Total taux alloue
   const totalTaux = GRANDES_CATEGORIES.reduce((s, t) => s + (tauxRef[t] ?? 0), 0);
 
-  // ── Couleur barre totale selon P4 ────────────────────────────────────────
   const totalBgCls = totalTaux > 100
     ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
     : totalTaux >= 90
@@ -135,10 +133,12 @@ export default function ParametresPage() {
           });
           setTauxRef(taux);
           setMontantRef(montants);
+          // Alertes
           setRapportEmailActif(d.rapportEmailActif ?? true);
           setRapportEmailJour(d.rapportEmailJour   ?? 1);
           setRapportEmailHeure(d.rapportEmailHeure  ?? 8);
           setSeuilAnomaliesPct(d.seuilAnomaliesPct  ?? 50);
+          setLangueVocale(d.langueVocale ?? 'fr-FR'); // D1
           isDirty.current = false;
         }
       }
@@ -148,13 +148,11 @@ export default function ParametresPage() {
 
   useEffect(() => { charger(); },[charger]);
 
-  // Quand revenuRef change par l'utilisateur -> recalculer montantRef depuis tauxRef courant
   const handleRevenuChange = (newRevenu: number) => {
     if (isLocked) return;
     isDirty.current = true;
     setTauxError(null);
     setRevenuRef(newRevenu);
-    // Recalculer les montants avec le nouveau revenu (taux inchanges)
     setMontantRef(prev => {
       const m = { ...prev } as Record<GrandeCategorie, number>;
       GRANDES_CATEGORIES.forEach(type => {
@@ -164,13 +162,21 @@ export default function ParametresPage() {
     });
   };
 
+  // ── Sauvegarder alertes (D1 : + langueVocale) ─────────────────────────────
   const sauvegarderAlertes = async () => {
     if (isLocked) { openUnlockModal(); return; }
     setSavingAlertes(true);
     try {
       const res = await fetch('/api/parametres', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rapportEmailActif, rapportEmailJour, rapportEmailHeure, seuilAnomaliesPct }),
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rapportEmailActif,
+          rapportEmailJour,
+          rapportEmailHeure,
+          seuilAnomaliesPct,
+          langueVocale, // D1
+        }),
       });
       if (res.ok) { setSavedAlertes(true); setTimeout(() => setSavedAlertes(false), 3000); }
     } catch(e){ console.error(e); }
@@ -198,14 +204,11 @@ export default function ParametresPage() {
   // ── Sauvegarder taux ──────────────────────────────────────────────────────
   const sauvegarderTaux = async () => {
     if (isLocked) { openUnlockModal(); return; }
-
-    // OPTION B : bloquer si total > 100%
     if (totalTaux > 100) {
       setTauxError('Total depasse 100% : reduire les depenses ou augmenter le revenu de reference.');
       return;
     }
     setTauxError(null);
-
     setSavingTaux(true);
     try {
       const res = await fetch('/api/parametres', {
@@ -327,15 +330,12 @@ export default function ParametresPage() {
       {activeTab==='categories'&&(
         <div className="space-y-5">
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-
-            {/* En-tete : titre + toggle mode + bouton sauvegarder */}
             <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
               <div>
                 <h3 className="font-semibold text-[var(--text)]">Budget de reference</h3>
                 <p className="text-xs text-[var(--text-muted)] mt-0.5">Revenu mensuel et allocation par grande categorie</p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                {/* Toggle Montant / Taux */}
                 <div className="flex gap-0.5 bg-slate-100 dark:bg-dark-card rounded-lg p-0.5 border border-[var(--border)]">
                   {(['montant','taux'] as const).map(mode=>(
                     <button key={mode} onClick={()=>toggleInputMode(mode)}
@@ -347,7 +347,6 @@ export default function ParametresPage() {
                     </button>
                   ))}
                 </div>
-                {/* Bouton sauvegarder — rouge si >100% */}
                 <button
                   onClick={sauvegarderTaux}
                   disabled={savingTaux || isLocked || totalTaux > 100}
@@ -366,18 +365,13 @@ export default function ParametresPage() {
               </div>
             </div>
 
-            {/* Revenu de reference */}
             <div className="mb-5 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-800">
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex-1 min-w-48">
                   <label className="text-xs font-semibold text-blue-700 dark:text-blue-400 mb-1 block">
                     Revenu mensuel de reference (FCFA)
                   </label>
-                  <input
-                    type="number"
-                    value={revenuRef||''}
-                    placeholder="Ex: 700000"
-                    disabled={isLocked}
+                  <input type="number" value={revenuRef||''} placeholder="Ex: 700000" disabled={isLocked}
                     onChange={e=>handleRevenuChange(parseInt(e.target.value)||0)}
                     className={clsx('w-full border rounded-xl px-3 py-2 text-sm outline-none',
                       isLocked
@@ -392,7 +386,6 @@ export default function ParametresPage() {
               </div>
             </div>
 
-            {/* Lignes par grande categorie */}
             <div className="space-y-3">
               {GRANDES_CATEGORIES.map(type => {
                 const taux = tauxRef[type] ?? 0;
@@ -402,99 +395,66 @@ export default function ParametresPage() {
                       <span className="text-sm font-medium text-[var(--text)] w-52 flex-shrink-0">
                         {TYPE_LABELS[type as keyof typeof TYPE_LABELS]}
                       </span>
-
-                      {/* Input conditionnel selon le mode */}
                       {inputMode === 'montant' ? (
                         <div className="flex items-center gap-1.5">
-                          <input
-                            type="number"
-                            min="0"
-                            step="1000"
-                            value={montantRef[type] || ''}
-                            placeholder="0"
-                            disabled={isLocked}
+                          <input type="number" min="0" step="1000" value={montantRef[type] || ''} placeholder="0" disabled={isLocked}
                             onChange={e => {
                               if (isLocked) return;
-                              isDirty.current = true;
-                              setTauxError(null);
+                              isDirty.current = true; setTauxError(null);
                               const m = parseInt(e.target.value) || 0;
                               const newTaux = montantToTaux(m);
                               setMontantRef(prev => ({ ...prev, [type]: m }));
                               setTauxRef(prev => ({ ...prev, [type]: newTaux }));
                             }}
                             className={clsx('w-32 text-right border rounded-lg px-2 py-1.5 text-sm outline-none',
-                              isLocked
-                                ?'border-[var(--border)] bg-slate-50 dark:bg-dark-card text-[var(--text-muted)] cursor-not-allowed'
-                                :'border-[var(--border)] bg-[var(--card)] text-[var(--text)] focus:border-primary')}/>
+                              isLocked?'border-[var(--border)] bg-slate-50 dark:bg-dark-card text-[var(--text-muted)] cursor-not-allowed':'border-[var(--border)] bg-[var(--card)] text-[var(--text)] focus:border-primary')}/>
                           <span className="text-xs text-[var(--text-muted)]">FCFA</span>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1.5">
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="0.5"
-                            value={taux||''}
-                            placeholder="0"
-                            disabled={isLocked}
+                          <input type="number" min="0" max="100" step="0.5" value={taux||''} placeholder="0" disabled={isLocked}
                             onChange={e => {
                               if (isLocked) return;
-                              isDirty.current = true;
-                              setTauxError(null);
+                              isDirty.current = true; setTauxError(null);
                               const newTaux = parseFloat(e.target.value) || 0;
                               setTauxRef(prev => ({ ...prev, [type]: newTaux }));
                               setMontantRef(prev => ({ ...prev, [type]: tauxToMontant(newTaux) }));
                             }}
                             className={clsx('w-20 text-right border rounded-lg px-2 py-1.5 text-sm outline-none',
-                              isLocked
-                                ?'border-[var(--border)] bg-slate-50 dark:bg-dark-card text-[var(--text-muted)] cursor-not-allowed'
-                                :'border-[var(--border)] bg-[var(--card)] text-[var(--text)] focus:border-primary')}/>
+                              isLocked?'border-[var(--border)] bg-slate-50 dark:bg-dark-card text-[var(--text-muted)] cursor-not-allowed':'border-[var(--border)] bg-[var(--card)] text-[var(--text)] focus:border-primary')}/>
                           <span className="text-sm text-[var(--text-muted)]">%</span>
                         </div>
                       )}
-
-                      {/* Valeur derivee (l'autre mode) */}
                       <span className="text-sm font-semibold text-primary w-40">
                         {inputMode === 'montant'
                           ? (taux > 0 ? `${taux.toFixed(2)}%` : '0%')
                           : (revenuRef > 0 && taux > 0 ? formatFCFA(tauxToMontant(taux)) : '--')}
                       </span>
                     </div>
-
-                    {/* Barre progression individuelle */}
                     <div className="flex items-center gap-2">
                       <div className="flex-1 h-2 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
-                        <div
-                          className={clsx('h-full rounded-full transition-all',
-                            totalTaux > 100 ? 'bg-red-500' : taux > 30 ? 'bg-blue-500' : taux > 15 ? 'bg-green-500' : 'bg-amber-400')}
+                        <div className={clsx('h-full rounded-full transition-all',
+                          totalTaux > 100 ? 'bg-red-500' : taux > 30 ? 'bg-blue-500' : taux > 15 ? 'bg-green-500' : 'bg-amber-400')}
                           style={{width:`${Math.min(100,taux)}%`}}/>
                       </div>
-                      <span className="text-xs text-[var(--text-muted)] w-12 text-right">
-                        {taux.toFixed(2)}%
-                      </span>
+                      <span className="text-xs text-[var(--text-muted)] w-12 text-right">{taux.toFixed(2)}%</span>
                     </div>
                   </div>
                 );
               })}
 
-              {/* Barre de progression globale P4 */}
               <div className="mt-3 mb-1">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs text-[var(--text-muted)]">Allocation totale</span>
-                  <span className={clsx('text-xs font-bold',
-                    totalTaux > 100 ? 'text-red-500' : totalTaux >= 90 ? 'text-amber-500' : 'text-green-600')}>
+                  <span className={clsx('text-xs font-bold',totalTaux > 100 ? 'text-red-500' : totalTaux >= 90 ? 'text-amber-500' : 'text-green-600')}>
                     {totalTaux.toFixed(2)}%
                   </span>
                 </div>
                 <div className="h-3 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
-                  <div
-                    className={clsx('h-full rounded-full transition-all duration-300', totalBarCls)}
-                    style={{width:`${Math.min(100, totalTaux)}%`}}/>
+                  <div className={clsx('h-full rounded-full transition-all duration-300', totalBarCls)} style={{width:`${Math.min(100, totalTaux)}%`}}/>
                 </div>
               </div>
 
-              {/* Ligne totale */}
               <div className={clsx('mt-2 pt-3 border-t border-[var(--border)] flex items-center justify-between rounded-xl px-3 py-2', totalBgCls)}>
                 <span className="text-sm font-bold text-[var(--text)]">Total alloue</span>
                 <div className="flex items-center gap-3">
@@ -510,7 +470,6 @@ export default function ParametresPage() {
                 </div>
               </div>
 
-              {/* Message erreur blocage sauvegarde */}
               {tauxError && (
                 <div className="flex items-center gap-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl px-3 py-2.5">
                   <AlertTriangle size={14} className="text-red-500 flex-shrink-0"/>
@@ -520,15 +479,12 @@ export default function ParametresPage() {
             </div>
           </div>
 
-          {/* Liste categories par type */}
           <div className="flex justify-between items-center flex-wrap gap-2">
             <p className="text-sm text-[var(--text-muted)]">{categories.filter(c=>c.isActive).length} categories actives</p>
             <div className="flex items-center gap-2">
               <button onClick={plierTousCats} className="flex items-center gap-1 border border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] rounded-xl px-3 py-1.5 text-xs font-medium transition-all hover:bg-slate-50 dark:hover:bg-dark-card"><ChevronsUpDown size={12}/>Tout plier</button>
               <button onClick={ouvrirTousCats} className="flex items-center gap-1 border border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] rounded-xl px-3 py-1.5 text-xs font-medium transition-all hover:bg-slate-50 dark:hover:bg-dark-card"><ChevronsDownUp size={12}/>Tout deployer</button>
-              <button onClick={()=>{if(isLocked){openUnlockModal();return;}setShowNewCat(!showNewCat);}} disabled={isLocked}
-                title={isLocked?'Verrouillez pour modifier':undefined}
-                className={actionBtn(isLocked)}><Plus size={14}/>Ajouter</button>
+              <button onClick={()=>{if(isLocked){openUnlockModal();return;}setShowNewCat(!showNewCat);}} disabled={isLocked} title={isLocked?'Verrouillez pour modifier':undefined} className={actionBtn(isLocked)}><Plus size={14}/>Ajouter</button>
             </div>
           </div>
 
@@ -624,20 +580,16 @@ export default function ParametresPage() {
             {comptes.map((c:any)=>(
               <div key={c.id} className={clsx('px-4 py-3 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors',!c.isActive&&'opacity-40')}>
                 {editCompte?.id===c.id?(
-                  <>
-                    <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-bold text-sm flex-shrink-0">{editCompte.nom.charAt(0)}</div>
-                    <input type="text" value={editCompte.nom} onChange={e=>setEditCompte((p:any)=>({...p,nom:e.target.value}))} className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none"/>
-                    <button onClick={sauvegarderCompte} className="text-green-500 hover:text-green-600"><Check size={15}/></button>
-                    <button onClick={()=>setEditCompte(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={15}/></button>
-                  </>
+                  <><div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-bold text-sm flex-shrink-0">{editCompte.nom.charAt(0)}</div>
+                  <input type="text" value={editCompte.nom} onChange={e=>setEditCompte((p:any)=>({...p,nom:e.target.value}))} className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none"/>
+                  <button onClick={sauvegarderCompte} className="text-green-500 hover:text-green-600"><Check size={15}/></button>
+                  <button onClick={()=>setEditCompte(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={15}/></button></>
                 ):(
-                  <>
-                    <div className="w-8 h-8 rounded-xl bg-primary/10 dark:bg-primary/20 flex items-center justify-center text-primary font-bold text-sm">{c.nom.charAt(0)}</div>
-                    <span className="flex-1 text-sm text-[var(--text)] font-medium">{c.nom}</span>
-                    <span className="text-sm font-bold text-primary">{formatFCFA(c.soldeActuel??0)}</span>
-                    {categories.filter(cat=>cat.compteFondsId===c.id).length>0&&<span className="text-xs px-2 py-0.5 rounded-lg bg-primary/10 text-primary font-medium flex items-center gap-1"><Link size={10}/>{categories.filter(cat=>cat.compteFondsId===c.id).length} cat.</span>}
-                    {c.isActive&&<><button onClick={()=>{if(isLocked){openUnlockModal();return;}setEditCompte(c);}} disabled={isLocked} title={isLocked?'Verrouillez pour modifier':undefined} className={iconBtn(isLocked)}><Pencil size={13}/></button><button onClick={()=>supprimerCompte(c.id)} disabled={isLocked} title={isLocked?'Verrouillez pour modifier':undefined} className={iconBtnDanger(isLocked)}><Trash2 size={14}/></button></>}
-                  </>
+                  <><div className="w-8 h-8 rounded-xl bg-primary/10 dark:bg-primary/20 flex items-center justify-center text-primary font-bold text-sm">{c.nom.charAt(0)}</div>
+                  <span className="flex-1 text-sm text-[var(--text)] font-medium">{c.nom}</span>
+                  <span className="text-sm font-bold text-primary">{formatFCFA(c.soldeActuel??0)}</span>
+                  {categories.filter(cat=>cat.compteFondsId===c.id).length>0&&<span className="text-xs px-2 py-0.5 rounded-lg bg-primary/10 text-primary font-medium flex items-center gap-1"><Link size={10}/>{categories.filter(cat=>cat.compteFondsId===c.id).length} cat.</span>}
+                  {c.isActive&&<><button onClick={()=>{if(isLocked){openUnlockModal();return;}setEditCompte(c);}} disabled={isLocked} title={isLocked?'Verrouillez pour modifier':undefined} className={iconBtn(isLocked)}><Pencil size={13}/></button><button onClick={()=>supprimerCompte(c.id)} disabled={isLocked} title={isLocked?'Verrouillez pour modifier':undefined} className={iconBtnDanger(isLocked)}><Trash2 size={14}/></button></></>
                 )}
               </div>
             ))}
@@ -666,20 +618,16 @@ export default function ParametresPage() {
             {banques.length===0?<div className="px-4 py-8 text-center text-[var(--text-muted)] text-sm">Aucune banque.</div>:banques.map((b:any)=>(
               <div key={b.id} className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors">
                 {editBanque?.id===b.id?(
-                  <>
-                    <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm flex-shrink-0">B</div>
-                    <input type="text" value={editBanque.nomBanque} onChange={e=>setEditBanque((p:any)=>({...p,nomBanque:e.target.value}))} className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none"/>
-                    <button onClick={async()=>{if(isLocked)return;await fetch(`/api/banques?id=${editBanque.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({nomBanque:editBanque.nomBanque})});setEditBanque(null);chargerOnglet('banques');}} className="text-green-500 hover:text-green-600"><Check size={15}/></button>
-                    <button onClick={()=>setEditBanque(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={15}/></button>
-                  </>
+                  <><div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm flex-shrink-0">B</div>
+                  <input type="text" value={editBanque.nomBanque} onChange={e=>setEditBanque((p:any)=>({...p,nomBanque:e.target.value}))} className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none"/>
+                  <button onClick={async()=>{if(isLocked)return;await fetch(`/api/banques?id=${editBanque.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({nomBanque:editBanque.nomBanque})});setEditBanque(null);chargerOnglet('banques');}} className="text-green-500 hover:text-green-600"><Check size={15}/></button>
+                  <button onClick={()=>setEditBanque(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={15}/></button></>
                 ):(
-                  <>
-                    <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm">B</div>
-                    <span className="flex-1 text-sm text-[var(--text)] font-medium">{b.nomBanque}</span>
-                    <span className="text-sm font-bold text-primary">{formatFCFA(b.solde)}</span>
-                    <button onClick={()=>{if(isLocked){openUnlockModal();return;}setEditBanque(b);}} disabled={isLocked} title={isLocked?'Verrouillez pour modifier':undefined} className={iconBtn(isLocked)}><Pencil size={13}/></button>
-                    <button onClick={async()=>{if(isLocked){openUnlockModal();return;}if(!confirm('Supprimer ?'))return;await fetch(`/api/banques?id=${b.id}`,{method:'DELETE'});chargerOnglet('banques');}} disabled={isLocked} title={isLocked?'Verrouillez pour modifier':undefined} className={iconBtnDanger(isLocked)}><Trash2 size={14}/></button>
-                  </>
+                  <><div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm">B</div>
+                  <span className="flex-1 text-sm text-[var(--text)] font-medium">{b.nomBanque}</span>
+                  <span className="text-sm font-bold text-primary">{formatFCFA(b.solde)}</span>
+                  <button onClick={()=>{if(isLocked){openUnlockModal();return;}setEditBanque(b);}} disabled={isLocked} title={isLocked?'Verrouillez pour modifier':undefined} className={iconBtn(isLocked)}><Pencil size={13}/></button>
+                  <button onClick={async()=>{if(isLocked){openUnlockModal();return;}if(!confirm('Supprimer ?'))return;await fetch(`/api/banques?id=${b.id}`,{method:'DELETE'});chargerOnglet('banques');}} disabled={isLocked} title={isLocked?'Verrouillez pour modifier':undefined} className={iconBtnDanger(isLocked)}><Trash2 size={14}/></button></>
                 )}
               </div>
             ))}
@@ -699,8 +647,7 @@ export default function ParametresPage() {
             <div key={a.id} className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
               <div className="flex items-center justify-between mb-4">
                 <div><h3 className="font-bold text-[var(--text)]">{a.annee}</h3><p className="text-xs text-[var(--text-muted)] mt-0.5">{a.nbMois} mois - {a.nbDecaissements} operation(s)</p></div>
-                <button onClick={()=>{if(isLocked){openUnlockModal();return;}setSuppAnnee(a.annee);setSuppMois(null);setConfirmText('');setSuppResult('');}} disabled={isLocked}
-                  title={isLocked?'Verrouillez pour modifier':undefined}
+                <button onClick={()=>{if(isLocked){openUnlockModal();return;}setSuppAnnee(a.annee);setSuppMois(null);setConfirmText('');setSuppResult('');}} disabled={isLocked} title={isLocked?'Verrouillez pour modifier':undefined}
                   className={clsx('px-3 py-1.5 rounded-xl text-xs font-semibold transition-all',isLocked?'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed':'bg-red-500 hover:bg-red-600 text-white')}>
                   Supprimer {a.annee}
                 </button>
@@ -740,9 +687,11 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* ── ALERTES ─────────────────────────────────────────────────────────────── */}
+      {/* ── ALERTES ──────────────────────────────────────────────────────────── */}
       {activeTab==='alertes'&&(
         <div className="space-y-5">
+
+          {/* Rapport email */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
             <div className="flex items-center justify-between mb-4">
               <div>
@@ -772,6 +721,8 @@ export default function ParametresPage() {
               </div>
             )}
           </div>
+
+          {/* Detection anomalies */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
             <h3 className="font-semibold text-[var(--text)] mb-1">Detection d'anomalies</h3>
             <p className="text-xs text-[var(--text-muted)] mb-4">Alerte Dashboard et email si une depense depasse la moyenne des 3 mois precedents</p>
@@ -792,9 +743,44 @@ export default function ParametresPage() {
               </p>
             </div>
           </div>
+
+          {/* ── D1 — Dictee vocale ──────────────────────────────────────────── */}
+          <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
+            <h3 className="font-semibold text-[var(--text)] mb-1">Dictee vocale</h3>
+            <p className="text-xs text-[var(--text-muted)] mb-4">
+              Langue utilisee pour la reconnaissance vocale dans le formulaire de decaissements.
+              Maintenez le bouton micro pour dicter la description.
+            </p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <label className="text-sm font-medium text-[var(--text)] flex-shrink-0">Langue de reconnaissance</label>
+              <select
+                value={langueVocale}
+                onChange={e => { if (isLocked) return; setLangueVocale(e.target.value); }}
+                disabled={isLocked}
+                className={clsx(
+                  'border rounded-xl px-3 py-2 text-sm outline-none transition-all',
+                  isLocked
+                    ? 'border-[var(--border)] bg-slate-50 dark:bg-dark-card text-[var(--text-muted)] cursor-not-allowed opacity-60'
+                    : 'border-[var(--border)] bg-[var(--card)] text-[var(--text)] focus:border-primary'
+                )}
+              >
+                <option value="fr-FR">🇫🇷 Français (France)</option>
+                <option value="fr-BE">🇧🇪 Français (Belgique)</option>
+                <option value="fr-CA">🇨🇦 Français (Canada)</option>
+                <option value="en-US">🇺🇸 English (US)</option>
+                <option value="en-GB">🇬🇧 English (UK)</option>
+              </select>
+              <span className="text-xs text-[var(--text-muted)] italic">
+                Parametre sauvegarde avec les alertes ci-dessous
+              </span>
+            </div>
+          </div>
+
+          {/* Bouton sauvegarder */}
           <div className="flex justify-end">
             <button onClick={sauvegarderAlertes} disabled={savingAlertes||isLocked}
-              className={clsx('flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-medium transition-all disabled:opacity-60',isLocked?'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed':'bg-primary hover:bg-primary-dark text-white')}>
+              className={clsx('flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-medium transition-all disabled:opacity-60',
+                isLocked?'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed':'bg-primary hover:bg-primary-dark text-white')}>
               {isLocked?<Lock size={13}/>:<Save size={13}/>}
               {savingAlertes?'Sauvegarde...':savedAlertes?'OK':isLocked?'Verrouille':'Sauvegarder'}
             </button>

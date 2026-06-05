@@ -8,9 +8,7 @@ import { logAudit } from '@/lib/audit';
 import { csrfCheck, validateBody } from '@/lib/api-helpers';
 import { DecaissementSchema } from '@/lib/validators';
 
-// ── Sérialisation BigInt/Date ─────────────────────────────────────────────────
-
-// ── Trouver ou créer l'enregistrement Annee (dans transaction) ────────────────
+// ── Trouver ou créer l'enregistrement Annee ───────────────────────────────────
 async function getOrCreateAnnee(tx: any, userId: string, annee: number) {
   let rec = await tx.annee.findUnique({
     where: { userId_annee: { userId, annee } },
@@ -33,7 +31,6 @@ export async function GET(req: NextRequest) {
     const limit  = Math.min(parseInt(searchParams.get('limit')  ?? '100'), 200);
     const offset = parseInt(searchParams.get('offset') ?? '0');
 
-    // Filtre par année si fourni
     const anneeRec = anneeParam
       ? await prisma.annee.findUnique({
           where: { userId_annee: { userId: session.user.id, annee: parseInt(anneeParam) } },
@@ -77,7 +74,19 @@ export async function POST(req: NextRequest) {
     const rawBody = await req.json();
     const { data: validBody, error: zodErr } = validateBody(DecaissementSchema, rawBody);
     if (zodErr) return zodErr;
-    const { description, dateOperation, notes, typeMouvement, compteId, banqueId, montantFond, montantBanque, impacterBanque } = validBody ?? rawBody;
+
+    const {
+      description,
+      dateOperation,
+      notes,
+      typeMouvement,
+      compteId,
+      banqueId,
+      montantFond,
+      montantBanque,
+      impacterBanque,
+      sourceVocale,   // D1 — dictee vocale
+    } = validBody ?? rawBody;
 
     if (!description || !dateOperation)
       return NextResponse.json({ error: 'Description et date obligatoires' }, { status: 400 });
@@ -114,7 +123,6 @@ export async function POST(req: NextRequest) {
 
           soldeAvantFond = BigInt(Number(compte.soldeActuel ?? 0));
 
-          // Vérification solde insuffisant pour un retrait
           if (!isAjout && soldeAvantFond < mtFond) {
             throw Object.assign(new Error('SOLDE_INSUFFISANT'), {
               code: 422,
@@ -144,7 +152,6 @@ export async function POST(req: NextRequest) {
 
           soldeAvantBanque = BigInt(Number(banque.solde ?? 0));
 
-          // Logique transfert : ajout fond = argent quitte banque ; retrait fond = argent entre banque
           const rawApres = isAjout
             ? soldeAvantBanque - mtBanque
             : soldeAvantBanque + mtBanque;
@@ -156,7 +163,7 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        // ── 3. Créer l'enregistrement decaissement (historique) ─────────
+        // ── 3. Créer le décaissement ────────────────────────────────────
         const anneeRec = await getOrCreateAnnee(tx, session.user.id, opAnnee);
 
         const dec = await tx.decaissement.create({
@@ -165,14 +172,13 @@ export async function POST(req: NextRequest) {
             anneeId:         anneeRec.id,
             description,
             dateOperation:   opDate,
-            // montantTotal conservé pour compat affichage existant
             montantTotal:    mtFond > BigInt(0) ? mtFond : mtBanque,
-            // Nouveaux champs pour rollback complet
             montantFond,
             montantBanque:   doBanque ? mtBanque : BigInt(0),
             banqueId:        doBanque ? banqueId : null,
             notes:           notes ?? null,
             typeMouvement:   mouvType,
+            sourceVocale:    sourceVocale ?? false, // D1
             soldeAvantFond:  soldeAvantFond  > BigInt(0) ? soldeAvantFond  : null,
             soldeApresFond:  soldeApresFond  > BigInt(0) ? soldeApresFond  : null,
             soldeAvantBanque: doBanque && soldeAvantBanque >= BigInt(0) ? soldeAvantBanque : null,
@@ -188,9 +194,6 @@ export async function POST(req: NextRequest) {
         }
 
         // ══ AUCUNE ÉCRITURE DANS budget_mensuel ══
-        // Le suivi mensuel et le dashboard Mois Courant ne sont JAMAIS
-        // impactés par les opérations Ajout/Retrait Fonds.
-
         return dec;
       });
     } catch (txErr: any) {
@@ -213,7 +216,16 @@ export async function POST(req: NextRequest) {
         tag: 'decaissement',
       });
     } catch {}
-    await logAudit({ userId: session.user.id, action: 'create', entityType: 'decaissement', entityId: result.id, entityNom: description, req });
+
+    await logAudit({
+      userId: session.user.id,
+      action: 'create',
+      entityType: 'decaissement',
+      entityId: result.id,
+      entityNom: description,
+      req,
+    });
+
     return NextResponse.json(serial({ success: true, id: result.id }), { status: 201 });
   } catch (e: any) {
     console.error('POST /api/decaissements:', e?.message);
@@ -255,7 +267,6 @@ export async function DELETE(req: NextRequest) {
         if (!compte) continue;
 
         const solde = BigInt(Number(compte.soldeActuel ?? 0));
-        // Inverser : ajout → on soustrait ; retrait → on ajoute
         const rawApres = isAjout ? solde - repMt : solde + repMt;
         await tx.compteFonds.update({
           where: { id: rep.compteId },
@@ -273,7 +284,6 @@ export async function DELETE(req: NextRequest) {
         });
         if (banque) {
           const solde = BigInt(Number(banque.solde ?? 0));
-          // Inverser le transfert : ajout fond avait soustrait banque → on rajoute
           const rawApres = isAjout ? solde + mtBanque : solde - mtBanque;
           await tx.banque.update({
             where: { id: decAny.banqueId },
