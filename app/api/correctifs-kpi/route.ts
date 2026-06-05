@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id)
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+      return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
 
     const correctifs = await (prisma as any).correctifKpi.findMany({
       where:   { userId: session.user.id },
@@ -26,16 +26,17 @@ export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id)
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+      return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
 
     const { kpi, montant, motif } = await req.json();
 
-    if (!['revenus','depenses','epargne'].includes(kpi))
+    // SUJET 3 — 'solde' ajoute aux KPIs corrigibles
+    if (!['revenus', 'depenses', 'epargne', 'solde'].includes(kpi))
       return NextResponse.json({ error: 'KPI invalide' }, { status: 400 });
     if (!motif?.trim())
       return NextResponse.json({ error: 'Motif obligatoire' }, { status: 400 });
     if (montant === 0)
-      return NextResponse.json({ error: 'Montant ne peut pas être 0' }, { status: 400 });
+      return NextResponse.json({ error: 'Montant ne peut pas etre 0' }, { status: 400 });
 
     const correctif = await (prisma as any).correctifKpi.create({
       data: {
@@ -56,7 +57,7 @@ export async function DELETE(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id)
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
+      return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
 
     const id = new URL(req.url).searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });

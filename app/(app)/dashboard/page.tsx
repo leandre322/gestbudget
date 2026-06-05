@@ -21,7 +21,6 @@ const MOIS_NOMS_FR: Record<number,string> = {
   7:'Juillet',8:'Août',9:'Septembre',10:'Octobre',11:'Novembre',12:'Décembre',
 };
 
-// ── Composants réutilisables ─────────────────────────────────────────────────
 function serial(obj: any): any {
   if (obj===null||obj===undefined)return obj;
   if(typeof obj==='bigint')return Number(obj);
@@ -110,7 +109,6 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const { isLocked, openUnlockModal } = useLock();
   const { status: pushStatus, subscribe: pushSubscribe, sendTest: pushTest } = usePushNotifications();
 
-  // ── SWR hooks ────────────────────────────────────────────────────────────────
   const { data: _globalRaw, isLoading: _loadingGlobal, mutate: mutateGlobal } = useDashboardGlobal(moisCourant, anneeCourante);
   const { data: _banquesRaw, isLoading: _loadingBanques, mutate: mutateBanques } = useBanques();
   const { data: _comptesRaw, mutate: mutateComptes } = useComptes();
@@ -122,7 +120,6 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     { revalidateOnFocus: false, dedupingInterval: 30_000 }
   );
 
-  // ── Données dérivées ──────────────────────────────────────────────────────────
   const banques = _banquesRaw?.banques ?? [];
   const _comptesAvecObj = _comptesRaw?.comptes ?? [];
   const _fondsAvecSeuil = (_globalRaw?.fondsRoulement ?? []).map((f: any) => ({
@@ -145,37 +142,31 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const [savingModal,  setSavingModal]  = useState(false);
   const [sparklines,   setSparklines]   = useState({revenus:[] as number[],depenses:[] as number[],epargne:[] as number[],solde:[] as number[]});
 
-  // ── Inline edit fonds ────────────────────────────────────────────────────
   const [editingFondId,  setEditingFondId]  = useState<string|null>(null);
   const [editingFondVal, setEditingFondVal] = useState('');
   const [savingFondId,   setSavingFondId]   = useState<string|null>(null);
 
-  // ── Évolution ──────────────────────────────────────────────────────────────
   const [evolutionFonds,   setEvolutionFonds]   = useState<Record<string,any[]>>({});
   const [evolutionBanques, setEvolutionBanques] = useState<Record<string,any[]>>({});
 
-  // ── Seuil alerte banques
   const [editingSeuilId,    setEditingSeuilId]    = useState<string|null>(null);
   const [editingSeuilVal,   setEditingSeuilVal]   = useState('');
   const [savingSeuil,       setSavingSeuil]       = useState(false);
-  // ── Seuil alerte fonds
   const [editingFondSeuilId,  setEditingFondSeuilId]  = useState<string|null>(null);
   const [editingFondSeuilVal, setEditingFondSeuilVal] = useState('');
   const [savingFondSeuil,     setSavingFondSeuil]     = useState(false);
 
-  // ── Cumul (épargne + correctifs) ─────────────────────────────────────────
   const [banqueAjouts,  setBanqueAjouts]  = useState(0);
   const [banqueRetraits,setBanqueRetraits]= useState(0);
 
-  // ── Modal correctif ───────────────────────────────────────────────────────
+  // ── SUJET 3 : type etendu a 'solde' ──────────────────────────────────────
   const [showCorrectif,   setShowCorrectif]   = useState(false);
-  const [correctifKpi,    setCorrectifKpi]    = useState<'revenus'|'depenses'|'epargne'>('revenus');
+  const [correctifKpi,    setCorrectifKpi]    = useState<'revenus'|'depenses'|'epargne'|'solde'>('revenus');
   const [correctifMontant,setCorrectifMontant]= useState('');
   const [correctifSigne,  setCorrectifSigne]  = useState<1|-1>(1);
   const [correctifMotif,  setCorrectifMotif]  = useState('');
   const [savingCorrectif, setSavingCorrectif] = useState(false);
 
-  // ── Chargement mouvements banque (pour KPIs) ──────────────────────────────
   const chargerBanqueKPIs = useCallback(async () => {
     try {
       const res = await fetch('/api/banques/mouvements?limit=5000');
@@ -188,7 +179,6 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     } catch {}
   }, []);
 
-  // ── Sparklines ────────────────────────────────────────────────────────────
   const chargerSparklines = useCallback(async () => {
     const result = {revenus:[] as number[],depenses:[] as number[],epargne:[] as number[],solde:[] as number[]};
     for (let i=5;i>=0;i--) {
@@ -208,7 +198,6 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     setSparklines(result);
   }, [moisCourant, anneeCourante]);
 
-  // ── Évolution fonds ──────────────────────────────────────────────────────
   const chargerEvolutionFonds = useCallback(async (fonds:any[]) => {
     if (!fonds?.length) return;
     const results: Record<string,any[]> = {};
@@ -233,7 +222,6 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     setEvolutionFonds(results);
   }, []);
 
-  // ── Évolution banques ──────────────────────────────────────────────────────
   const chargerEvolutionBanques = useCallback(async (banquesList:any[]) => {
     if (!banquesList?.length) return;
     const results: Record<string,any[]> = {};
@@ -269,7 +257,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
         body: JSON.stringify({ seuilAlerte: seuil }),
       });
       if (!resFond.ok) throw new Error('Echec sauvegarde seuil fond');
-      toast.success(seuil > 0 ? 'Seuil fond defini' : 'Seuil supprime ✓');
+      toast.success(seuil > 0 ? 'Seuil fond defini' : 'Seuil supprime');
       setEditingFondSeuilId(null);
       mutateGlobal(); mutateBanques(); mutateComptes();
     } catch { toast.error('Erreur'); }
@@ -281,20 +269,18 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     const seuil = parseInt(editingSeuilVal) || 0;
     try {
       await fetch(`/api/banques?id=${banqueId}`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ seuilAlerte: seuil }),
       });
-      toast.success(seuil > 0 ? "Seuil defini ✓" : "Seuil supprime ✓");
+      toast.success(seuil > 0 ? 'Seuil defini' : 'Seuil supprime');
       setEditingSeuilId(null);
       mutateGlobal(); mutateBanques(); mutateComptes();
-    } catch { toast.error("Erreur"); }
+    } catch { toast.error('Erreur'); }
     setSavingSeuil(false);
   };
 
-  // ── useEffects ────────────────────────────────────────────────────────────
   useEffect(() => { chargerSparklines(); chargerBanqueKPIs(); }, [chargerSparklines, chargerBanqueKPIs]);
 
-  // Push alerte au chargement
   useEffect(() => {
     if (!data || pushStatus !== 'granted') return;
     const alertesFonds = (data.fondsRoulement ?? []).filter((f:any) => {
@@ -322,13 +308,11 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   useEffect(() => { if(data?.fondsRoulement?.length>0)chargerEvolutionFonds(data.fondsRoulement); }, [data?.fondsRoulement?.length, chargerEvolutionFonds]);
   useEffect(() => { if(banques.length>0)chargerEvolutionBanques(banques); }, [banques, chargerEvolutionBanques]);
 
-  // ── Bouton notifications ─────────────────────────────────────────────────
   const renderPushButton = () => {
     if (pushStatus === 'unsupported') return null;
     if (pushStatus === 'granted') return (
       <button onClick={pushTest}
-        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-green-500/10 text-green-500 hover:bg-green-500/20 transition-colors"
-        title="Notifications actives — cliquer pour tester">
+        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-green-500/10 text-green-500 hover:bg-green-500/20 transition-colors">
         <span>Bell</span> Notifs ON
       </button>
     );
@@ -337,14 +321,12 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     );
     return (
       <button onClick={pushSubscribe}
-        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors"
-        title="Activer les notifications push">
+        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors">
         <span>Bell</span> Activer notifs
       </button>
     );
   };
 
-  // ── Inline edit fonds ─────────────────────────────────────────────────────
   const startEditFond = (f:any) => { if (isLocked) { openUnlockModal(); return; } setEditingFondId(f.id); setEditingFondVal(String(Number(f.soldeActuel??0))); };
   const cancelEditFond = () => { setEditingFondId(null); setEditingFondVal(''); };
   const saveEditFond = async (f:any) => {
@@ -352,18 +334,21 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     const newSolde = parseInt(editingFondVal)||0;
     if (newSolde===Number(f.soldeActuel??0)){cancelEditFond();return;}
     const ancien = Number(f.soldeActuel??0);
-    if (ancien>0 && Math.abs(newSolde-ancien)>ancien*2 && !confirm(`⚠️ Modification de ±${formatFCFA(Math.abs(newSolde-ancien))}. Confirmer ?`)) return;
+    if (ancien>0 && Math.abs(newSolde-ancien)>ancien*2 && !confirm(`Modification de +-${formatFCFA(Math.abs(newSolde-ancien))}. Confirmer ?`)) return;
     setSavingFondId(f.id);
     try {
       const res = await fetch('/api/comptes/correction',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({compteId:f.id,nouveauSolde:newSolde,motif:'Correction manuelle depuis Dashboard'})});
-      if(res.ok){toast.success(`${f.nom} : solde mis à jour ✓`);cancelEditFond();mutateGlobal();mutateComptes();}
+      if(res.ok){toast.success(`${f.nom} : solde mis a jour`);cancelEditFond();mutateGlobal();mutateComptes();}
       else{const err=await res.json();toast.error(err.error??'Erreur');}
-    } catch{toast.error('Erreur réseau');}
+    } catch{toast.error('Erreur reseau');}
     setSavingFondId(null);
   };
 
-  // ── Correctif KPI ─────────────────────────────────────────────────────────
-  const ouvrirCorrectif = (kpi:'revenus'|'depenses'|'epargne') => { if (isLocked) { openUnlockModal(); return; } setCorrectifKpi(kpi);setCorrectifMontant('');setCorrectifMotif('');setCorrectifSigne(1);setShowCorrectif(true); };
+  // ── SUJET 3 : ouvrirCorrectif etendu a 'solde' ───────────────────────────
+  const ouvrirCorrectif = (kpi:'revenus'|'depenses'|'epargne'|'solde') => {
+    if (isLocked) { openUnlockModal(); return; }
+    setCorrectifKpi(kpi);setCorrectifMontant('');setCorrectifMotif('');setCorrectifSigne(1);setShowCorrectif(true);
+  };
   const sauvegarderCorrectif = async () => {
     if (isLocked) return;
     if (!correctifMontant||parseInt(correctifMontant)<=0){toast.error('Montant invalide');return;}
@@ -371,9 +356,9 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     setSavingCorrectif(true);
     try {
       const res = await fetch('/api/correctifs-kpi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kpi:correctifKpi,montant:correctifSigne*parseInt(correctifMontant),motif:correctifMotif.trim()})});
-      if(res.ok){toast.success('Correctif appliqué ✓');setShowCorrectif(false);mutateCumul();}
+      if(res.ok){toast.success('Correctif applique');setShowCorrectif(false);mutateCumul();}
       else{const err=await res.json();toast.error(err.error??'Erreur');}
-    } catch{toast.error('Erreur réseau');}
+    } catch{toast.error('Erreur reseau');}
     setSavingCorrectif(false);
   };
   const supprimerCorrectif = async (id:string) => {
@@ -381,7 +366,6 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     mutateCumul();
   };
 
-  // ── KPIs mois courant ─────────────────────────────────────────────────────
   const budgetSource = data?._budgetMoisFrais ?? budgetMois;
   const tot = (type:string, f:'montantAnticipe'|'montantReel') =>
     budgetSource.filter((b:any) => b.categorie?.isActive!==false &&
@@ -415,9 +399,9 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     if (isLocked) return;
     if(!modalType)return;setSavingModal(true);
     try {
-      if(modalType==='urgence'){await fetch('/api/parametres',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revenuMensuelReference:parseInt(modalVals['revenu']||'0')||0,nMoisUrgence:parseInt(modalVals['nMois']||'6')||6})});toast.success("Fonds d'urgence mis à jour ✓");}
-      else if(modalType==='banques'){for(const[id,s]of Object.entries(modalVals)){await fetch(`/api/banques?id=${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set',montant:parseInt(s)||0})});};toast.success('Soldes banques mis à jour ✓');}
-      else{const r=await fetch(`/api/budget?annee=${anneeCourante}&mois=${moisCourant}`);if(r.ok){const d=await r.json();const lignes:Record<string,any>={};for(const b of d.budget){lignes[b.categorieId]={anticipe:String(b.montantAnticipe??0),reel:modalVals[b.categorieId]!==undefined?modalVals[b.categorieId]:String(b.montantReel??0)};};await fetch('/api/budget',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({anneeId:d.anneeId,mois:moisCourant,lignes})});toast.success('Données mises à jour ✓');}}
+      if(modalType==='urgence'){await fetch('/api/parametres',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revenuMensuelReference:parseInt(modalVals['revenu']||'0')||0,nMoisUrgence:parseInt(modalVals['nMois']||'6')||6})});toast.success("Fonds urgence mis a jour");}
+      else if(modalType==='banques'){for(const[id,s]of Object.entries(modalVals)){await fetch(`/api/banques?id=${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set',montant:parseInt(s)||0})});};toast.success('Soldes banques mis a jour');}
+      else{const r=await fetch(`/api/budget?annee=${anneeCourante}&mois=${moisCourant}`);if(r.ok){const d=await r.json();const lignes:Record<string,any>={};for(const b of d.budget){lignes[b.categorieId]={anticipe:String(b.montantAnticipe??0),reel:modalVals[b.categorieId]!==undefined?modalVals[b.categorieId]:String(b.montantReel??0)};};await fetch('/api/budget',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({anneeId:d.anneeId,mois:moisCourant,lignes})});toast.success('Donnees mises a jour');}}
       mutateGlobal(); mutateBanques(); mutateComptes(); setModalType(null);
     } catch{toast.error('Erreur lors de la sauvegarde');}
     setSavingModal(false);
@@ -433,24 +417,33 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const totalPrecaution = banques.reduce((s:number,b:any)=>s+(b.solde??0),0);
   const getBorderFond = (s:number,o:number) => { if(o<=0)return 'border-[var(--border)]'; const p=(s/o)*100; return p>=100?'border-green-500':p>=50?'border-amber-400':'border-primary/40'; };
 
-  // Valeurs cumulées (avec épargne et correctifs)
-  const cumRev  = cumulData?.totalRevenus  ?? data.totalRevenus  ?? 0;
-  const cumDep  = cumulData?.totalDepenses ?? data.totalDepenses ?? 0;
-  const cumEp   = cumulData?.totalEpargne  ?? 0;
-  const cumSolde = cumulData?.soldeNet     ?? (data.solde ?? (cumRev - cumDep));
+  const cumRev   = cumulData?.totalRevenus  ?? data.totalRevenus  ?? 0;
+  const cumDep   = cumulData?.totalDepenses ?? data.totalDepenses ?? 0;
+  const cumEp    = cumulData?.totalEpargne  ?? 0;
+  const cumSolde = cumulData?.soldeNet      ?? (data.solde ?? (cumRev - cumDep));
 
-  // 4 KPIs Ajouts & Décaissements
+  // ── SUJET 3 : correctifs 'solde' appliques cote frontend ─────────────────
+  const soldeCorrectifTotal = correctifs
+    .filter((c:any) => c.kpi === 'solde')
+    .reduce((s:number, c:any) => s + Number(c.montant), 0);
+  const cumSoldeAvecCorrectif = cumSolde + soldeCorrectifTotal;
+
   const fondAjouts    = Number(totalAjouts        ?? 0);
   const fondRetraits  = Number(totalDecaissements ?? 0);
 
   return (
     <div className="space-y-5">
 
-      {/* Modal correctif */}
-      <DashboardModal isOpen={showCorrectif} onClose={()=>setShowCorrectif(false)} titre={`Correctif — ${correctifKpi === 'revenus' ? 'Revenus' : correctifKpi === 'depenses' ? 'Dépenses' : 'Épargne'} cumulé(e)s`}>
+      {/* Modal correctif — titre etendu a 'solde' (SUJET 3) */}
+      <DashboardModal isOpen={showCorrectif} onClose={()=>setShowCorrectif(false)}
+        titre={`Correctif — ${
+          correctifKpi === 'revenus'  ? 'Revenus'   :
+          correctifKpi === 'depenses' ? 'Depenses'  :
+          correctifKpi === 'epargne'  ? 'Epargne'   : 'Solde net'
+        } cumule(e)s`}>
         <div className="space-y-4">
           <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-3 text-xs text-amber-700 dark:text-amber-400">
-            ⚠️ Le correctif ajuste uniquement le total affiché sans modifier les données mensuelles. Utile pour corriger une erreur historique.
+            Le correctif ajuste uniquement le total affiche sans modifier les donnees mensuelles.
           </div>
           <div>
             <label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Sens</label>
@@ -465,7 +458,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
           </div>
           <div>
             <label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Motif (obligatoire)</label>
-            <input type="text" value={correctifMotif} onChange={e=>setCorrectifMotif(e.target.value)} placeholder="Ex: Correction saisie Mars 2025" className="w-full border border-[var(--border)] rounded-xl px-3 py-2.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"/>
+            <input type="text" value={correctifMotif} onChange={e=>setCorrectifMotif(e.target.value)} placeholder="Ex: Correction solde initial" className="w-full border border-[var(--border)] rounded-xl px-3 py-2.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"/>
           </div>
           {correctifs.filter((c:any)=>c.kpi===correctifKpi).length > 0 && (
             <div>
@@ -492,39 +485,35 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
         </div>
       </DashboardModal>
 
-      {/* Modals existants */}
-      <DashboardModal isOpen={modalType!==null} onClose={()=>setModalType(null)} titre={modalType==='urgence'?"Fonds d'urgence — Objectif":modalType==='banques'?'Épargne Précaution — Soldes':modalType==='revenus'?`Revenus — ${MOIS_NOMS_FR[moisCourant]} ${anneeCourante}`:modalType==='depenses'?`Dépenses — ${MOIS_NOMS_FR[moisCourant]} ${anneeCourante}`:''}>
+      <DashboardModal isOpen={modalType!==null} onClose={()=>setModalType(null)} titre={modalType==='urgence'?"Fonds urgence — Objectif":modalType==='banques'?'Epargne Precaution — Soldes':modalType==='revenus'?`Revenus — ${MOIS_NOMS_FR[moisCourant]} ${anneeCourante}`:modalType==='depenses'?`Depenses — ${MOIS_NOMS_FR[moisCourant]} ${anneeCourante}`:''}>
         <div className="space-y-3">
-          {modalType==='urgence'&&(<div className="space-y-3"><div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Revenu mensuel de référence (FCFA)</label><input type="number" value={modalVals['revenu']??''} placeholder="Ex: 690 000" className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,revenu:e.target.value}))}/></div><div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Nombre de mois de précaution</label><input type="number" value={modalVals['nMois']??String(nMoisUrgence)} min="1" max="24" className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,nMois:e.target.value}))}/></div><div className="bg-primary/5 rounded-xl p-3"><p className="text-xs text-[var(--text-muted)]">Objectif calculé :</p><p className="text-lg font-bold text-primary mt-1">{formatFCFA((parseInt(modalVals['revenu']||'0')||0)*(parseInt(modalVals['nMois']||'6')||6))}</p></div></div>)}
-          {modalType==='banques'&&(<div className="space-y-2">{banques.map((b:any)=>(<div key={b.id} className="flex items-center gap-3"><span className="flex-1 text-sm text-[var(--text)] font-medium">🏦 {b.nomBanque}</span><input type="number" value={modalVals[b.id]??''} placeholder="0" className="w-36 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,[b.id]:e.target.value}))}/></div>))}</div>)}
-          {(modalType==='revenus'||modalType==='depenses')&&(<div className="space-y-2"><div className="grid grid-cols-2 gap-2 text-xs font-semibold text-[var(--text-muted)] uppercase pb-2 border-b border-[var(--border)]"><span>Catégorie</span><span className="text-right">{LABEL_PREVISION} → Réel</span></div>{budgetMois.filter((b:any)=>{if(modalType==='revenus')return b.categorie?.type==='revenu';if(modalType==='depenses')return b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette';return false;}).map((b:any)=>(<div key={b.categorieId} className="flex items-center gap-3"><span className="flex-1 text-sm text-[var(--text)] truncate">{b.categorie?.nom}</span><div className="flex items-center gap-1.5 flex-shrink-0"><span className="text-xs text-[var(--text-muted)] w-24 text-right">{b.montantAnticipe>0?formatFCFA(b.montantAnticipe):'—'}</span><input type="number" value={modalVals[b.categorieId]??''} placeholder="0" className="w-32 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,[b.categorieId]:e.target.value}))}/></div></div>))}</div>)}
+          {modalType==='urgence'&&(<div className="space-y-3"><div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Revenu mensuel de reference (FCFA)</label><input type="number" value={modalVals['revenu']??''} placeholder="Ex: 690 000" className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,revenu:e.target.value}))}/></div><div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Nombre de mois de precaution</label><input type="number" value={modalVals['nMois']??String(nMoisUrgence)} min="1" max="24" className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,nMois:e.target.value}))}/></div><div className="bg-primary/5 rounded-xl p-3"><p className="text-xs text-[var(--text-muted)]">Objectif calcule :</p><p className="text-lg font-bold text-primary mt-1">{formatFCFA((parseInt(modalVals['revenu']||'0')||0)*(parseInt(modalVals['nMois']||'6')||6))}</p></div></div>)}
+          {modalType==='banques'&&(<div className="space-y-2">{banques.map((b:any)=>(<div key={b.id} className="flex items-center gap-3"><span className="flex-1 text-sm text-[var(--text)] font-medium">{b.nomBanque}</span><input type="number" value={modalVals[b.id]??''} placeholder="0" className="w-36 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,[b.id]:e.target.value}))}/></div>))}</div>)}
+          {(modalType==='revenus'||modalType==='depenses')&&(<div className="space-y-2"><div className="grid grid-cols-2 gap-2 text-xs font-semibold text-[var(--text-muted)] uppercase pb-2 border-b border-[var(--border)]"><span>Categorie</span><span className="text-right">{LABEL_PREVISION} - Reel</span></div>{budgetMois.filter((b:any)=>{if(modalType==='revenus')return b.categorie?.type==='revenu';if(modalType==='depenses')return b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette';return false;}).map((b:any)=>(<div key={b.categorieId} className="flex items-center gap-3"><span className="flex-1 text-sm text-[var(--text)] truncate">{b.categorie?.nom}</span><div className="flex items-center gap-1.5 flex-shrink-0"><span className="text-xs text-[var(--text-muted)] w-24 text-right">{b.montantAnticipe>0?formatFCFA(b.montantAnticipe):'—'}</span><input type="number" value={modalVals[b.categorieId]??''} placeholder="0" className="w-32 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,[b.categorieId]:e.target.value}))}/></div></div>))}</div>)}
           <div className="flex justify-end gap-2 pt-3 border-t border-[var(--border)] mt-4"><button onClick={()=>setModalType(null)} className="px-4 py-2 rounded-xl text-sm border border-[var(--border)] text-[var(--text-muted)]">Annuler</button><button onClick={sauvegarderModal} disabled={savingModal} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium bg-primary text-white disabled:opacity-60"><Save size={14}/>{savingModal?'Sauvegarde...':'Sauvegarder'}</button></div>
         </div>
       </DashboardModal>
 
       <BannièreFinDeMois moisCourant={moisCourant} anneeCourante={anneeCourante}/>
 
-      {/* ═══════════════════════════════════════════ */}
-      {/* 1. MOIS COURANT                             */}
-      {/* ═══════════════════════════════════════════ */}
       <Separateur emoji="📅" label={`${MOIS_NOMS_FR[moisCourant]} ${anneeCourante} — Mois courant`}/>
       {!loadingMois && revenus.reel > 0 && (
         <BannièreContextuelle revenus={revenus.reel} depenses={depenses.reel} epargne={epargne.reel} solde={solde} score={score} anneeCourante={anneeCourante} moisCourant={moisCourant}/>
       )}
       {loadingMois ? <div className="flex items-center justify-center h-20"><div className="spinner"/></div> : (
         <div className="space-y-3">
-          {alertes.length > 0 && (<div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-3.5 flex items-start gap-2.5"><AlertTriangle size={17} className="text-red-500 mt-0.5 flex-shrink-0"/><div><p className="font-semibold text-red-600 dark:text-red-400 text-sm">⚠️ Dépassements détectés ce mois</p><p className="text-red-500 dark:text-red-400 text-sm mt-0.5">{alertes.join(' · ')}</p></div></div>)}
+          {alertes.length > 0 && (<div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-3.5 flex items-start gap-2.5"><AlertTriangle size={17} className="text-red-500 mt-0.5 flex-shrink-0"/><div><p className="font-semibold text-red-600 dark:text-red-400 text-sm">Depassements detectes ce mois</p><p className="text-red-500 dark:text-red-400 text-sm mt-0.5">{alertes.join(' - ')}</p></div></div>)}
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
             {[
               {titre:'Revenus',val:revenus.reel,ant:revenus.ant,type:'revenus',bg:'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',text:'text-blue-700 dark:text-blue-400',icon:TrendingUp,sparkColor:'#1E40AF',sparkData:sparklines.revenus},
-              {titre:'Dépenses',val:depenses.reel,ant:depenses.ant,type:'depenses',bg:'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',text:'text-red-600 dark:text-red-400',icon:TrendingDown,sparkColor:'#EF4444',sparkData:sparklines.depenses},
-              {titre:'Épargne',val:epargne.reel,ant:epargne.ant,type:'',bg:'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',text:'text-green-700 dark:text-green-400',icon:PiggyBank,sparkColor:'#10B981',sparkData:sparklines.epargne},
+              {titre:'Depenses',val:depenses.reel,ant:depenses.ant,type:'depenses',bg:'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',text:'text-red-600 dark:text-red-400',icon:TrendingDown,sparkColor:'#EF4444',sparkData:sparklines.depenses},
+              {titre:'Epargne',val:epargne.reel,ant:epargne.ant,type:'',bg:'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',text:'text-green-700 dark:text-green-400',icon:PiggyBank,sparkColor:'#10B981',sparkData:sparklines.epargne},
               {titre:'Solde',val:solde,ant:revenus.ant-epargne.ant-depenses.ant,type:'',bg:solde>=0?'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800':'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',text:solde>=0?'text-green-700 dark:text-green-400':'text-red-600 dark:text-red-400',icon:Wallet,sparkColor:solde>=0?'#10B981':'#EF4444',sparkData:sparklines.solde},
             ].map(k=>(
               <div key={k.titre} className={clsx('rounded-2xl border p-3.5 flex flex-col gap-0.5 transition-colors',k.bg)}>
                 <div className="flex items-center justify-between"><p className="text-xs font-medium opacity-60">{k.titre}</p><div className="flex items-center gap-1"><k.icon size={15} className="opacity-40"/>{k.type&&<button onClick={()=>ouvrirModal(k.type)} disabled={isLocked} title={isLocked?"Verrouillez pour modifier":"Modifier"} className={isLocked?"p-1 rounded-lg opacity-20 cursor-not-allowed":"p-1 rounded-lg hover:bg-white/40 dark:hover:bg-black/20 transition-colors"}><Pencil size={11} className="opacity-60"/></button>}</div></div>
                 <p className={clsx('text-lg font-bold',k.text)}>{formatFCFA(k.val)}</p>
-                <p className="text-xs opacity-55">Prévision : {formatFCFA(k.ant)}</p>
+                <p className="text-xs opacity-55">Prevision : {formatFCFA(k.ant)}</p>
                 {k.sparkData.length>=2&&<Sparkline data={k.sparkData} color={k.sparkColor} height={18} width={60}/>}
               </div>
             ))}
@@ -539,18 +528,13 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════ */}
-      {/* 2. ÉPARGNES & FONDS                         */}
-      {/* ═══════════════════════════════════════════ */}
-      <Separateur emoji="💰" label="Épargnes & Fonds"/>
+      <Separateur emoji="💰" label="Epargnes & Fonds"/>
 
-      {/* Épargne de Fonctionnement */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-[var(--text)]">Épargne de Fonctionnement</h3>
+          <h3 className="font-semibold text-[var(--text)]">Epargne de Fonctionnement</h3>
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold text-primary">{formatFCFA(totalFonds)}</span>
-            <span className="text-[10px] text-[var(--text-muted)] bg-slate-100 dark:bg-dark-card px-2 py-0.5 rounded-full hidden sm:inline">Cliquer sur un montant pour modifier</span>
           </div>
         </div>
         {(fondsRoulement??[]).length > 0 ? (
@@ -583,49 +567,32 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
                     </div>
                   )}
                   {evo.length>0&&<div className="flex gap-1 mt-1.5 flex-wrap">{evo.map((e:any,i:number)=><EvoBadge key={i} label={e.label} hausse={e.hausse} valStr={`${e.pct}%`}/>)}</div>}
-                  {isAlerteFond && !isEditing && (
-                    <div className="flex items-center gap-1 mt-0.5 text-xs text-red-500 font-semibold">
-                      <span>Sous le seuil ({formatFCFA(seuilFond)})</span>
-                    </div>
-                  )}
-                  {!isEditingSeuil && seuilFond > 0 && !isAlerteFond && (
-                    <p className="text-[10px] text-amber-500 mt-0.5">Seuil : {formatFCFA(seuilFond)}</p>
-                  )}
+                  {isAlerteFond && !isEditing && (<div className="flex items-center gap-1 mt-0.5 text-xs text-red-500 font-semibold"><span>Sous le seuil ({formatFCFA(seuilFond)})</span></div>)}
+                  {!isEditingSeuil && seuilFond > 0 && !isAlerteFond && (<p className="text-[10px] text-amber-500 mt-0.5">Seuil : {formatFCFA(seuilFond)}</p>)}
                   {isEditingSeuil && (
                     <div className="mt-2 flex items-center gap-1.5">
-                      <input type="number" value={editingFondSeuilVal} autoFocus placeholder="Seuil FCFA"
-                        onChange={e => setEditingFondSeuilVal(e.target.value)}
-                        onKeyDown={e => { if(e.key==="Enter") sauvegarderSeuilFond(f.id); if(e.key==="Escape") setEditingFondSeuilId(null); }}
-                        className="flex-1 text-xs border border-primary rounded-lg px-2 py-1 bg-[var(--card)] text-[var(--text)] outline-none min-w-0"/>
-                      <button onClick={() => sauvegarderSeuilFond(f.id)} disabled={savingFondSeuil}
-                        className="p-1.5 rounded-lg bg-green-500 text-white disabled:opacity-60 flex-shrink-0">
-                        {savingFondSeuil ? <Loader2 size={11} className="animate-spin"/> : <Check size={11}/>}
-                      </button>
-                      <button onClick={() => setEditingFondSeuilId(null)}
-                        className="p-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex-shrink-0">
-                        <X size={11}/>
-                      </button>
+                      <input type="number" value={editingFondSeuilVal} autoFocus placeholder="Seuil FCFA" onChange={e => setEditingFondSeuilVal(e.target.value)} onKeyDown={e => { if(e.key==="Enter") sauvegarderSeuilFond(f.id); if(e.key==="Escape") setEditingFondSeuilId(null); }} className="flex-1 text-xs border border-primary rounded-lg px-2 py-1 bg-[var(--card)] text-[var(--text)] outline-none min-w-0"/>
+                      <button onClick={() => sauvegarderSeuilFond(f.id)} disabled={savingFondSeuil} className="p-1.5 rounded-lg bg-green-500 text-white disabled:opacity-60 flex-shrink-0">{savingFondSeuil ? <Loader2 size={11} className="animate-spin"/> : <Check size={11}/>}</button>
+                      <button onClick={() => setEditingFondSeuilId(null)} className="p-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex-shrink-0"><X size={11}/></button>
                     </div>
                   )}
                   {!isEditing && !isEditingSeuil && (
                     <button onClick={() => { if(isLocked){openUnlockModal();return;} setEditingFondSeuilId(f.id); setEditingFondSeuilVal(String(seuilFond||"")); }}
-                      title={isAlerteFond ? "Solde sous le seuil — modifier" : seuilFond > 0 ? "Modifier le seuil" : "Definir un seuil d'alerte"}
                       className={clsx("absolute top-2 right-10 p-1.5 rounded-lg transition-all",
                         isAlerteFond ? "text-red-500 opacity-100" : seuilFond > 0 ? "text-amber-500 opacity-70 hover:opacity-100" : "opacity-0 group-hover:opacity-50 text-slate-400 hover:text-amber-500")}>
                       {isAlerteFond ? <AlertTriangle size={11}/> : <span className="text-xs">{seuilFond > 0 ? "S" : "+"}</span>}
                     </button>
                   )}
-                  {!isEditing&&<button onClick={()=>startEditFond(f)} disabled={isLocked} title={isLocked?"Verrouillez pour modifier":"Corriger le solde"} className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 bg-[var(--border)] hover:bg-primary/10 text-[var(--text-muted)] hover:text-primary transition-all"><Pencil size={11}/></button>}
+                  {!isEditing&&<button onClick={()=>startEditFond(f)} disabled={isLocked} className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 bg-[var(--border)] hover:bg-primary/10 text-[var(--text-muted)] hover:text-primary transition-all"><Pencil size={11}/></button>}
                 </div>
               );
             })}
           </div>
         ) : (
-          <p className="text-sm text-[var(--text-muted)] py-2">Aucun fond configuré. <a href="/parametres" className="text-primary underline">Ajouter dans Paramètres</a></p>
+          <p className="text-sm text-[var(--text-muted)] py-2">Aucun fond configure. <a href="/parametres" className="text-primary underline">Ajouter dans Parametres</a></p>
         )}
       </div>
 
-      {/* Épargne Précaution */}
       {banques.filter((b:any)=>Number(b.seuilAlerte||0)>0&&Number(b.solde||0)<Number(b.seuilAlerte||0)).length>0&&(
         <div className="flex items-start gap-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl px-4 py-3">
           <AlertTriangle size={16} className="text-red-500 flex-shrink-0 mt-0.5"/>
@@ -643,8 +610,8 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       )}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
         <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2"><Building2 size={17} className="text-primary"/><h3 className="font-semibold text-[var(--text)]">Épargne Précaution</h3></div>
-          <div className="flex items-center gap-2"><span className="text-sm font-bold text-primary">{formatFCFA(totalPrecaution)}</span><button onClick={()=>ouvrirModal('banques')} disabled={isLocked} title={isLocked?"Verrouillez pour modifier":undefined} className={isLocked?"p-1.5 rounded-lg border border-[var(--border)] opacity-30 cursor-not-allowed":"p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card transition-colors"}><Pencil size={13} className="text-[var(--text-muted)]"/></button></div>
+          <div className="flex items-center gap-2"><Building2 size={17} className="text-primary"/><h3 className="font-semibold text-[var(--text)]">Epargne Precaution</h3></div>
+          <div className="flex items-center gap-2"><span className="text-sm font-bold text-primary">{formatFCFA(totalPrecaution)}</span><button onClick={()=>ouvrirModal('banques')} disabled={isLocked} className={isLocked?"p-1.5 rounded-lg border border-[var(--border)] opacity-30 cursor-not-allowed":"p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card transition-colors"}><Pencil size={13} className="text-[var(--text-muted)]"/></button></div>
         </div>
         {(() => {
           const cats = data?._categories??[];
@@ -661,9 +628,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
                 <div className="flex items-center justify-between mb-1">
                   <p className="text-xs text-[var(--text-muted)] font-medium truncate">{b.nomBanque}</p>
                   <button onClick={() => { if(isLocked){openUnlockModal();return;} setEditingSeuilId(b.id); setEditingSeuilVal(String(seuil||"")); }}
-                    title={isAlerte ? "Solde en dessous du seuil" : seuil > 0 ? "Modifier le seuil" : "Definir un seuil d'alerte"}
-                    className={clsx("text-xs transition-all flex-shrink-0",
-                      isAlerte ? "text-red-500" : seuil > 0 ? "text-amber-500 opacity-70 hover:opacity-100" : "opacity-0 group-hover:opacity-50 text-slate-400 hover:text-amber-500")}>
+                    className={clsx("text-xs transition-all flex-shrink-0", isAlerte ? "text-red-500" : seuil > 0 ? "text-amber-500 opacity-70 hover:opacity-100" : "opacity-0 group-hover:opacity-50 text-slate-400 hover:text-amber-500")}>
                     {isAlerte ? "W" : seuil > 0 ? "S" : "+"}
                   </button>
                 </div>
@@ -671,26 +636,16 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
                 {seuil > 0 && pctSeuil !== null && (
                   <div className="mt-1.5">
                     <div className="h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                      <div className={clsx("h-full rounded-full transition-all", isAlerte ? "bg-red-500" : pctSeuil < 80 ? "bg-amber-400" : "bg-green-500")}
-                        style={{width:`${Math.min(100,pctSeuil)}%`}}/>
+                      <div className={clsx("h-full rounded-full transition-all", isAlerte ? "bg-red-500" : pctSeuil < 80 ? "bg-amber-400" : "bg-green-500")} style={{width:`${Math.min(100,pctSeuil)}%`}}/>
                     </div>
                     <p className="text-[10px] text-[var(--text-muted)] mt-0.5">Seuil : {formatFCFA(seuil)} ({pctSeuil}%)</p>
                   </div>
                 )}
                 {isEditingSeuil && (
                   <div className="mt-2 flex items-center gap-1.5">
-                    <input type="number" value={editingSeuilVal} autoFocus placeholder="Seuil FCFA"
-                      onChange={e => setEditingSeuilVal(e.target.value)}
-                      onKeyDown={e => { if(e.key==="Enter") sauvegarderSeuil(b.id); if(e.key==="Escape") setEditingSeuilId(null); }}
-                      className="flex-1 text-xs border border-primary rounded-lg px-2 py-1 bg-[var(--card)] text-[var(--text)] outline-none min-w-0"/>
-                    <button onClick={() => sauvegarderSeuil(b.id)} disabled={savingSeuil}
-                      className="p-1.5 rounded-lg bg-green-500 text-white disabled:opacity-60 flex-shrink-0">
-                      {savingSeuil ? <Loader2 size={11} className="animate-spin"/> : <Check size={11}/>}
-                    </button>
-                    <button onClick={() => setEditingSeuilId(null)}
-                      className="p-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex-shrink-0">
-                      <X size={11}/>
-                    </button>
+                    <input type="number" value={editingSeuilVal} autoFocus placeholder="Seuil FCFA" onChange={e => setEditingSeuilVal(e.target.value)} onKeyDown={e => { if(e.key==="Enter") sauvegarderSeuil(b.id); if(e.key==="Escape") setEditingSeuilId(null); }} className="flex-1 text-xs border border-primary rounded-lg px-2 py-1 bg-[var(--card)] text-[var(--text)] outline-none min-w-0"/>
+                    <button onClick={() => sauvegarderSeuil(b.id)} disabled={savingSeuil} className="p-1.5 rounded-lg bg-green-500 text-white disabled:opacity-60 flex-shrink-0">{savingSeuil ? <Loader2 size={11} className="animate-spin"/> : <Check size={11}/>}</button>
+                    <button onClick={() => setEditingSeuilId(null)} className="p-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex-shrink-0"><X size={11}/></button>
                   </div>
                 )}
                 {evo.length>0&&<div className="flex gap-1 mt-1.5 flex-wrap">{evo.map((e:any,i:number)=><EvoBadge key={i} label={e.label} hausse={e.hausse} valStr={e.montant>0?`${(e.montant/1000).toFixed(0)}k`:"="}/>)}</div>}
@@ -699,70 +654,65 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
           };
           const bp = banques.filter((b:any)=>!banquesInvestIds.has(b.id));
           const bi = banques.filter((b:any)=>banquesInvestIds.has(b.id));
-          return(<>{bp.length>0&&<div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">{bp.map((b:any)=>renderCard(b,'bg-[var(--surface)]','text-primary'))}</div>}{bi.length>0&&<div className="mt-2 pt-2 border-t border-[var(--border)]"><p className="text-xs text-[var(--text-muted)] mb-2">🔗 Compte lié (épargne investissement)</p><div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{bi.map((b:any)=>renderCard(b,'bg-green-50 dark:bg-green-900/10','text-green-700 dark:text-green-400'))}</div></div>}</>);
+          return(<>{bp.length>0&&<div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">{bp.map((b:any)=>renderCard(b,'bg-[var(--surface)]','text-primary'))}</div>}{bi.length>0&&<div className="mt-2 pt-2 border-t border-[var(--border)]"><p className="text-xs text-[var(--text-muted)] mb-2">Compte lie (epargne investissement)</p><div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{bi.map((b:any)=>renderCard(b,'bg-green-50 dark:bg-green-900/10','text-green-700 dark:text-green-400'))}</div></div>}</>);
         })()}
-        {banques.length===0&&<p className="text-sm text-[var(--text-muted)] py-2">Aucune banque configurée. <a href="/parametres" className="text-primary underline">Ajouter dans Paramètres → Banques</a></p>}
+        {banques.length===0&&<p className="text-sm text-[var(--text-muted)] py-2">Aucune banque configuree. <a href="/parametres" className="text-primary underline">Ajouter dans Parametres - Banques</a></p>}
       </div>
 
-      {/* Fonds d'urgence */}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-        <div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><Shield size={17} className="text-primary"/><h3 className="font-semibold text-[var(--text)]">Fonds d'urgence</h3></div><div className="flex items-center gap-2">{revenuRef>0&&<span className={clsx('text-sm font-bold',textColor)}>{pctFonds.toFixed(1)}%</span>}<button onClick={()=>ouvrirModal('urgence')} disabled={isLocked} title={isLocked?"Verrouillez pour modifier":undefined} className={isLocked?"p-1.5 rounded-lg border border-[var(--border)] opacity-30 cursor-not-allowed":"p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card"}><Pencil size={13} className="text-[var(--text-muted)]"/></button></div></div>
+        <div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><Shield size={17} className="text-primary"/><h3 className="font-semibold text-[var(--text)]">Fonds urgence</h3></div><div className="flex items-center gap-2">{revenuRef>0&&<span className={clsx('text-sm font-bold',textColor)}>{pctFonds.toFixed(1)}%</span>}<button onClick={()=>ouvrirModal('urgence')} disabled={isLocked} className={isLocked?"p-1.5 rounded-lg border border-[var(--border)] opacity-30 cursor-not-allowed":"p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card"}><Pencil size={13} className="text-[var(--text-muted)]"/></button></div></div>
         {revenuRef===0 ? (
-          <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl p-4"><p className="text-sm font-semibold text-orange-700 dark:text-orange-400 mb-1">⚠️ Revenu de référence non configuré</p><p className="text-xs text-orange-600 dark:text-orange-400 mb-3">L'objectif est calculé : Revenu mensuel × Nombre de mois.</p><div className="flex items-center justify-between"><div><p className="text-xs text-[var(--text-muted)]">Épargne précaution actuelle</p><p className="text-lg font-bold text-primary">{formatFCFA(fondsUrgence)}</p></div><button onClick={()=>ouvrirModal('urgence')} className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white rounded-xl text-xs font-medium"><Pencil size={12}/>Configurer</button></div></div>
+          <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl p-4"><p className="text-sm font-semibold text-orange-700 dark:text-orange-400 mb-1">Revenu de reference non configure</p><p className="text-xs text-orange-600 dark:text-orange-400 mb-3">Objectif calcule : Revenu mensuel x Nombre de mois.</p><div className="flex items-center justify-between"><div><p className="text-xs text-[var(--text-muted)]">Epargne precaution actuelle</p><p className="text-lg font-bold text-primary">{formatFCFA(fondsUrgence)}</p></div><button onClick={()=>ouvrirModal('urgence')} className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white rounded-xl text-xs font-medium"><Pencil size={12}/>Configurer</button></div></div>
         ) : (
-          <><div className="flex justify-between text-sm mb-2"><span className="font-medium text-[var(--text)]">{formatFCFA(fondsUrgence)}</span><span className="text-[var(--text-muted)]">Objectif : {formatFCFA(fondsObjectif)} <span className="text-xs">({nMoisUrgence}×{formatFCFA(revenuRef)})</span></span></div><div className="h-3 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden"><div className={clsx('h-full rounded-full transition-all',barColor)} style={{width:`${Math.min(100,pctFonds)}%`}}/></div><div className="flex justify-between mt-2 text-xs text-[var(--text-muted)]"><span className={clsx('font-medium',textColor)}>{pctFonds<50?'🔴 En dessous de 50%':pctFonds<80?'🟠 En bonne voie':'🟢 Objectif atteint'}</span><span>Reste : {formatFCFA(Math.max(0,fondsObjectif-fondsUrgence))}</span></div></>
+          <><div className="flex justify-between text-sm mb-2"><span className="font-medium text-[var(--text)]">{formatFCFA(fondsUrgence)}</span><span className="text-[var(--text-muted)]">Objectif : {formatFCFA(fondsObjectif)} <span className="text-xs">({nMoisUrgence}x{formatFCFA(revenuRef)})</span></span></div><div className="h-3 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden"><div className={clsx('h-full rounded-full transition-all',barColor)} style={{width:`${Math.min(100,pctFonds)}%`}}/></div><div className="flex justify-between mt-2 text-xs text-[var(--text-muted)]"><span className={clsx('font-medium',textColor)}>{pctFonds<50?'En dessous de 50%':pctFonds<80?'En bonne voie':'Objectif atteint'}</span><span>Reste : {formatFCFA(Math.max(0,fondsObjectif-fondsUrgence))}</span></div></>
         )}
       </div>
 
-      {/* ═══════════════════════════════════════════ */}
-      {/* 3. STATISTIQUES CUMULÉES                   */}
-      {/* ═══════════════════════════════════════════ */}
-      <Separateur emoji="📊" label="Statistiques cumulées — toutes années"/>
+      {/* ═══════ STATS CUMULEES ═══════════════════════════════════════════════ */}
+      <Separateur emoji="📊" label="Statistiques cumulees — toutes annees"/>
       {correctifs.length > 0 && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-2.5 flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
-          <span>⚙️ {correctifs.length} correctif{correctifs.length>1?'s':''} appliqué{correctifs.length>1?'s':''} sur les totaux cumulés.</span>
+          <span>{correctifs.length} correctif{correctifs.length>1?'s':''} applique{correctifs.length>1?'s':''} sur les totaux cumules.</span>
         </div>
       )}
+      {/* SUJET 3 : kpi:'solde' + cumSoldeAvecCorrectif ─────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {[
-          {label:'Revenus cumulés',   val:cumRev,   kpi:'revenus' as const, bg:'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',   text:'text-blue-700 dark:text-blue-400',   icon:TrendingUp},
-          {label:'Dépenses cumulées', val:cumDep,   kpi:'depenses' as const, bg:'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',       text:'text-red-600 dark:text-red-400',     icon:TrendingDown},
-          {label:'Épargne cumulée',   val:cumEp,    kpi:'epargne' as const, bg:'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800', text:'text-green-700 dark:text-green-400', icon:PiggyBank},
-          {label:'Solde net cumulé',  val:cumSolde, kpi:null,
-            bg:cumSolde>=0?'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-800':'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
-            text:cumSolde>=0?'text-teal-700 dark:text-teal-400':'text-red-600 dark:text-red-400',icon:Wallet},
-        ].map(k=>(
+        {([
+          {label:'Revenus cumules',   val:cumRev,               kpi:'revenus'  as const, bg:'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',   text:'text-blue-700 dark:text-blue-400',   icon:TrendingUp},
+          {label:'Depenses cumulees', val:cumDep,               kpi:'depenses' as const, bg:'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',       text:'text-red-600 dark:text-red-400',     icon:TrendingDown},
+          {label:'Epargne cumulee',   val:cumEp,                kpi:'epargne'  as const, bg:'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800', text:'text-green-700 dark:text-green-400', icon:PiggyBank},
+          {label:'Solde net cumule',  val:cumSoldeAvecCorrectif, kpi:'solde'   as const,
+            bg:cumSoldeAvecCorrectif>=0?'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-800':'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
+            text:cumSoldeAvecCorrectif>=0?'text-teal-700 dark:text-teal-400':'text-red-600 dark:text-red-400',icon:Wallet},
+        ] as const).map(k=>(
           <div key={k.label} className={clsx('rounded-2xl border p-4 transition-colors',k.bg)}>
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-medium opacity-60">{k.label}</p>
               <div className="flex items-center gap-1">
                 <k.icon size={15} className="opacity-40"/>
-                {k.kpi && <button onClick={()=>ouvrirCorrectif(k.kpi!)} disabled={isLocked} title={isLocked?"Verrouillez pour modifier":"Appliquer un correctif"} className={isLocked?"p-1 rounded-lg opacity-20 cursor-not-allowed":"p-1 rounded-lg hover:bg-white/40 dark:hover:bg-black/20 transition-colors"}><Pencil size={11} className="opacity-50"/></button>}
+                {k.kpi && <button onClick={()=>ouvrirCorrectif(k.kpi as 'revenus'|'depenses'|'epargne'|'solde')} disabled={isLocked} title={isLocked?"Verrouillez pour modifier":"Appliquer un correctif"} className={isLocked?"p-1 rounded-lg opacity-20 cursor-not-allowed":"p-1 rounded-lg hover:bg-white/40 dark:hover:bg-black/20 transition-colors"}><Pencil size={11} className="opacity-50"/></button>}
               </div>
             </div>
             <p className={clsx('text-lg font-bold',k.text)}>{formatFCFA(k.val)}</p>
-            {k.label==='Solde net cumulé' && (
-              <p className="text-[10px] text-[var(--text-muted)] mt-0.5">Rev − Dép − Épargne</p>
+            {k.label==='Solde net cumule' && (
+              <p className="text-[10px] text-[var(--text-muted)] mt-0.5">Rev - Dep - Epargne</p>
             )}
           </div>
         ))}
         <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 transition-colors col-span-2 lg:col-span-1">
           <p className="text-xs font-medium text-purple-500 dark:text-purple-400 mb-1">Score global</p>
           <p className={clsx('text-2xl font-bold',couleurScore(data?.scoreGlobal??score))}>{data?.scoreGlobal??score}<span className="text-sm text-[var(--text-muted)] font-normal">/20</span></p>
-          <p className="text-xs text-[var(--text-muted)] mt-1">{data?.nbMoisScore?`Moyenne sur ${data.nbMoisScore} mois`:'Toutes années'}</p>
+          <p className="text-xs text-[var(--text-muted)] mt-1">{data?.nbMoisScore?`Moyenne sur ${data.nbMoisScore} mois`:'Toutes annees'}</p>
         </div>
       </div>
 
-      {/* ═══════════════════════════════════════════ */}
-      {/* 4. AJOUTS & DÉCAISSEMENTS — 4 KPIs          */}
-      {/* ═══════════════════════════════════════════ */}
-      <Separateur emoji="🔄" label="Ajouts & Décaissements — cumul"/>
+      <Separateur emoji="🔄" label="Ajouts & Decaissements — cumul"/>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          {emoji:'📂',label:'Fonds ajoutés',   val:fondAjouts,    bg:'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',    text:'text-green-700 dark:text-green-400',   icon:ArrowUpCircle},
-          {emoji:'📂',label:'Fonds retirés',   val:fondRetraits,  bg:'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',            text:'text-red-600 dark:text-red-400',       icon:ArrowDownCircle},
-          {emoji:'🏦',label:'Banques ajoutées',val:banqueAjouts,  bg:'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',        text:'text-blue-700 dark:text-blue-400',     icon:ArrowUpCircle},
-          {emoji:'🏦',label:'Banques retirées',val:banqueRetraits,bg:'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800',text:'text-orange-600 dark:text-orange-400', icon:ArrowDownCircle},
+          {emoji:'📂',label:'Fonds ajoutes',    val:fondAjouts,    bg:'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',    text:'text-green-700 dark:text-green-400',   icon:ArrowUpCircle},
+          {emoji:'📂',label:'Fonds retires',    val:fondRetraits,  bg:'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',            text:'text-red-600 dark:text-red-400',       icon:ArrowDownCircle},
+          {emoji:'🏦',label:'Banques ajoutees', val:banqueAjouts,  bg:'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',        text:'text-blue-700 dark:text-blue-400',     icon:ArrowUpCircle},
+          {emoji:'🏦',label:'Banques retirees', val:banqueRetraits,bg:'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800',text:'text-orange-600 dark:text-orange-400', icon:ArrowDownCircle},
         ].map(k=>(
           <div key={k.label} className={clsx('rounded-2xl border p-4 flex items-center gap-3 transition-colors',k.bg)}>
             <span className="text-xl flex-shrink-0">{k.emoji}</span>
@@ -771,12 +721,9 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
         ))}
       </div>
 
-      {/* ═══════════════════════════════════════════ */}
-      {/* 5. ÉVOLUTION ANNUELLE                       */}
-      {/* ═══════════════════════════════════════════ */}
       {(evolutionAnnuelle??[]).length > 0 && (
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-          <h3 className="font-semibold text-[var(--text)] mb-4">Évolution annuelle</h3>
+          <h3 className="font-semibold text-[var(--text)] mb-4">Evolution annuelle</h3>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={evolutionAnnuelle} barGap={4}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)"/>
@@ -785,8 +732,8 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
               <Tooltip formatter={(v:number)=>formatFCFA(v)}/>
               <Legend/>
               <Bar dataKey="revenus"  name="Revenus"  fill="#1E40AF" radius={[3,3,0,0]}/>
-              <Bar dataKey="depenses" name="Dépenses" fill="#EF4444" radius={[3,3,0,0]}/>
-              <Bar dataKey="epargne"  name="Épargne"  fill="#10B981" radius={[3,3,0,0]}/>
+              <Bar dataKey="depenses" name="Depenses" fill="#EF4444" radius={[3,3,0,0]}/>
+              <Bar dataKey="epargne"  name="Epargne"  fill="#10B981" radius={[3,3,0,0]}/>
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -795,11 +742,13 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   );
 }
 
-// ── Onglet Récap (inchangé) ───────────────────────────────────────────────────
+// ── Onglet Recap ──────────────────────────────────────────────────────────────
 function OngletRecap({moisCourant}:{moisCourant:number}) {
   const { isLocked } = useLock();
   const anneeActuelle=new Date().getFullYear();
   const [anneeSelect,setAnneeSelect]=useState(anneeActuelle);
+
+  // SUJET 2 : recapData est la source principale (SWR)
   const { data: recapData, isLoading: recapLoading, mutate: mutateRecap } = useRecapAnnuel(anneeSelect, moisCourant);
   const [data,setData]=useState<any>(null);
   const [hist,setHist]=useState<any[]>([]);
@@ -808,25 +757,44 @@ function OngletRecap({moisCourant}:{moisCourant:number}) {
   const [anneesDispos,setAnneesDispos]=useState<number[]>([anneeActuelle]);
   const [groupsOpen,setGroupsOpen]=useState<Record<string,boolean>>({});
   const [decStats,setDecStats]=useState({fondAjouts:0,fondRetraits:0,banqueAjouts:0,banqueRetraits:0});
+
   useEffect(()=>{const def:Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{def[t]=false;});setGroupsOpen(def);},[]);
   const toggleGroup=(t:string)=>setGroupsOpen(p=>({...p,[t]:!p[t]}));
   const toutDeployer=()=>{const n:Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{n[t]=true;});setGroupsOpen(n);};
   const toutPlier=()=>{const n:Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{n[t]=false;});setGroupsOpen(n);};
+
   useEffect(()=>{fetch('/api/annees').then(r=>r.json()).then(d=>{if(d.annees?.length){setAnneesDispos(d.annees);if(!d.annees.includes(anneeActuelle))setAnneeSelect(d.annees[d.annees.length-1]);}}).catch(()=>{});},[]);
+
+  // SUJET 2 fix A — charger avec recapData dans les deps (evite race condition)
   const charger=useCallback(async()=>{
-  if (recapData) {
-    const cats = recapData.categories ?? [];
-    const budget = recapData.budget ?? [];
-    setDecStats(recapData.decStats ?? {fondAjouts:0,fondRetraits:0,banqueAjouts:0,banqueRetraits:0});
-    setData({budget,categories:cats});
-    setHist(recapData.hist ?? []);
-    setLoading(false);
-    return;
-  }
-  setLoading(true);try{const promises=Array.from({length:12},(_,i)=>fetch(`/api/budget?annee=${anneeSelect}&mois=${i+1}`).then(r=>r.ok?r.json():null));const results=await Promise.all(promises);const cats:any[]=results.find(r=>r?.categories?.length)?.categories??[];const budgetCumul:any[]=[];results.forEach(r=>{if(!r?.budget)return;r.budget.forEach((b:any)=>{const ex=budgetCumul.find(ab=>ab.categorieId===b.categorieId);if(ex){ex.montantAnticipe+=b.montantAnticipe??0;ex.montantReel+=b.montantReel??0;}else budgetCumul.push({...b,montantAnticipe:b.montantAnticipe??0,montantReel:b.montantReel??0});});});const histData=[];for(let i=5;i>=0;i--){let m=moisCourant-i,a=anneeSelect;if(m<=0){m+=12;a--;}const hr=results[m-1];histData.push({mois:MOIS_COURTS[m],ant:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantAnticipe,0)??0,reel:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantReel,0)??0});}const [resDec,resMvt]=await Promise.all([fetch(`/api/decaissements?annee=${anneeSelect}&limit=5000`),fetch('/api/banques/mouvements?limit=5000')]);let fondAjouts=0,fondRetraits=0,banqueAjouts=0,banqueRetraits=0;if(resDec.ok){const dd=await resDec.json();const decs=dd.decaissements??[];fondAjouts=decs.filter((d:any)=>d.typeMouvement==='ajout').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);fondRetraits=decs.filter((d:any)=>d.typeMouvement==='retrait').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);}if(resMvt.ok){const dm=await resMvt.json();const mvts=(dm.mouvements??[]).filter((m:any)=>new Date(m.dateOperation).getFullYear()===anneeSelect);banqueAjouts=mvts.filter((m:any)=>m.typeMouvement==='ajout').reduce((s:number,m:any)=>s+(m.montant||0),0);banqueRetraits=mvts.filter((m:any)=>m.typeMouvement==='retrait').reduce((s:number,m:any)=>s+(m.montant||0),0);}setDecStats({fondAjouts,fondRetraits,banqueAjouts,banqueRetraits});setData({budget:budgetCumul,categories:cats});setHist(histData);}catch(e){console.error(e);}setLoading(false);},[anneeSelect,moisCourant]);
+    if (recapData) {
+      const cats = recapData.categories ?? [];
+      const budget = recapData.budget ?? [];
+      setDecStats(recapData.decStats ?? {fondAjouts:0,fondRetraits:0,banqueAjouts:0,banqueRetraits:0});
+      setData({budget,categories:cats});
+      setHist(recapData.hist ?? []);
+      setLoading(false);
+      return;
+    }
+    // Fallback manuel quand SWR pas encore charge
+    setLoading(true);try{const promises=Array.from({length:12},(_,i)=>fetch(`/api/budget?annee=${anneeSelect}&mois=${i+1}`).then(r=>r.ok?r.json():null));const results=await Promise.all(promises);const cats:any[]=results.find(r=>r?.categories?.length)?.categories??[];const budgetCumul:any[]=[];results.forEach(r=>{if(!r?.budget)return;r.budget.forEach((b:any)=>{const ex=budgetCumul.find(ab=>ab.categorieId===b.categorieId);if(ex){ex.montantAnticipe+=b.montantAnticipe??0;ex.montantReel+=b.montantReel??0;}else budgetCumul.push({...b,montantAnticipe:b.montantAnticipe??0,montantReel:b.montantReel??0});});});const histData=[];for(let i=5;i>=0;i--){let m=moisCourant-i,a=anneeSelect;if(m<=0){m+=12;a--;}const hr=results[m-1];histData.push({mois:MOIS_COURTS[m],ant:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantAnticipe,0)??0,reel:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantReel,0)??0});}const [resDec,resMvt]=await Promise.all([fetch(`/api/decaissements?annee=${anneeSelect}&limit=5000`),fetch('/api/banques/mouvements?limit=5000')]);let fondAjouts=0,fondRetraits=0,banqueAjouts=0,banqueRetraits=0;if(resDec.ok){const dd=await resDec.json();const decs=dd.decaissements??[];fondAjouts=decs.filter((d:any)=>d.typeMouvement==='ajout').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);fondRetraits=decs.filter((d:any)=>d.typeMouvement==='retrait').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);}if(resMvt.ok){const dm=await resMvt.json();const mvts=(dm.mouvements??[]).filter((m:any)=>new Date(m.dateOperation).getFullYear()===anneeSelect);banqueAjouts=mvts.filter((m:any)=>m.typeMouvement==='ajout').reduce((s:number,m:any)=>s+(m.montant||0),0);banqueRetraits=mvts.filter((m:any)=>m.typeMouvement==='retrait').reduce((s:number,m:any)=>s+(m.montant||0),0);}setDecStats({fondAjouts,fondRetraits,banqueAjouts,banqueRetraits});setData({budget:budgetCumul,categories:cats});setHist(histData);}catch(e){console.error(e);}setLoading(false);
+  // SUJET 2 fix B — recapData dans les deps (re-run quand SWR resout)
+  },[anneeSelect,moisCourant,recapData]);
+
   useEffect(()=>{charger();},[charger]);
-  const exportExcel=async()=>{if(!window.confirm(`📊 Exporter GestBudget-${anneeSelect}.xlsx ?`))return;setExporting('excel');const res=await fetch(`/api/export/excel?annee=${anneeSelect}`);if(res.ok){const blob=await res.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`GestBudget-${anneeSelect}.xlsx`;a.click();}setExporting(null);};
-  const exportPDF=async()=>{if(!window.confirm(`📄 Exporter PDF ${anneeSelect} ?`))return;setExporting('pdf');const res=await fetch(`/api/export/pdf?annee=${anneeSelect}&mois=${moisCourant}`);if(res.ok){const blob=await res.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`GestBudget-${anneeSelect}-${String(moisCourant).padStart(2,'0')}.pdf`;a.click();}setExporting(null);};
+
+  // SUJET 2 fix C — sync direct depuis SWR (filet de securite)
+  useEffect(()=>{
+    if(!recapData)return;
+    setDecStats(recapData.decStats??{fondAjouts:0,fondRetraits:0,banqueAjouts:0,banqueRetraits:0});
+    setData({budget:recapData.budget??[],categories:recapData.categories??[]});
+    setHist(recapData.hist??[]);
+    setLoading(false);
+  },[recapData]);
+
+  const exportExcel=async()=>{if(!window.confirm(`Exporter GestBudget-${anneeSelect}.xlsx ?`))return;setExporting('excel');const res=await fetch(`/api/export/excel?annee=${anneeSelect}`);if(res.ok){const blob=await res.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`GestBudget-${anneeSelect}.xlsx`;a.click();}setExporting(null);};
+  const exportPDF=async()=>{if(!window.confirm(`Exporter PDF ${anneeSelect} ?`))return;setExporting('pdf');const res=await fetch(`/api/export/pdf?annee=${anneeSelect}&mois=${moisCourant}`);if(res.ok){const blob=await res.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`GestBudget-${anneeSelect}-${String(moisCourant).padStart(2,'0')}.pdf`;a.click();}setExporting(null);};
+
   if(loading)return<div className="flex items-center justify-center h-64"><div className="spinner scale-150"/></div>;
   const budget=data?.budget??[],cats=data?.categories??[];
   const totType=(type:string,field:'montantAnticipe'|'montantReel')=>budget.filter((b:any)=>type==='depense'?(b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette'):b.categorie?.type===type).reduce((s:number,b:any)=>s+b[field],0);
@@ -834,24 +802,24 @@ function OngletRecap({moisCourant}:{moisCourant:number}) {
   const fondsCategories=cats.filter((c:any)=>c.type==='epargne_autre');
   const totalFondsRecap=fondsCategories.reduce((s:number,cat:any)=>{const b=budget.find((b:any)=>b.categorieId===cat.id);return s+(b?.montantReel??0);},0);
   const donut=Object.entries(budget.filter((b:any)=>b.categorie?.type?.startsWith('depense')&&b.montantReel>0).reduce((acc:any,b:any)=>{const k=b.categorie?.sousType??'Autre';acc[k]=(acc[k]??0)+b.montantReel;return acc;},{})).map(([name,value])=>({name,value}));
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2"><span className="text-sm font-medium text-[var(--text-muted)]">Année :</span><div className="flex gap-1">{anneesDispos.map(a=>(<button key={a} onClick={()=>setAnneeSelect(a)} className={clsx('px-3 py-1.5 rounded-xl text-sm font-semibold transition-all',anneeSelect===a?'bg-primary text-white':'border border-[var(--border)] text-[var(--text-muted)] hover:border-primary hover:text-primary')}>{a}</button>))}</div></div>
-        <div className="flex gap-2"><button onClick={exportExcel} disabled={exporting==='excel' || isLocked} title={isLocked?"Verrouillez pour modifier":undefined} className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] rounded-xl px-3.5 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-dark-card disabled:opacity-60">⬇ {exporting==='excel'?'Export...':'Excel'}</button><button onClick={exportPDF} disabled={exporting==='pdf'} className="flex items-center gap-1.5 bg-primary text-white rounded-xl px-3.5 py-2 text-sm font-medium disabled:opacity-60">📄 {exporting==='pdf'?'Export...':'PDF'}</button></div>
+        <div className="flex items-center gap-2"><span className="text-sm font-medium text-[var(--text-muted)]">Annee :</span><div className="flex gap-1">{anneesDispos.map(a=>(<button key={a} onClick={()=>setAnneeSelect(a)} className={clsx('px-3 py-1.5 rounded-xl text-sm font-semibold transition-all',anneeSelect===a?'bg-primary text-white':'border border-[var(--border)] text-[var(--text-muted)] hover:border-primary hover:text-primary')}>{a}</button>))}</div></div>
+        <div className="flex gap-2"><button onClick={exportExcel} disabled={exporting==='excel'||isLocked} className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] rounded-xl px-3.5 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-dark-card disabled:opacity-60">{exporting==='excel'?'Export...':'Excel'}</button><button onClick={exportPDF} disabled={exporting==='pdf'} className="flex items-center gap-1.5 bg-primary text-white rounded-xl px-3.5 py-2 text-sm font-medium disabled:opacity-60">{exporting==='pdf'?'Export...':'PDF'}</button></div>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[{label:`Revenus ${anneeSelect}`,val:revReel,cls:'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400'},{label:`Depenses ${anneeSelect}`,val:depReel,cls:'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'},{label:`Epargne ${anneeSelect}`,val:epReel,cls:'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400'},{label:'Solde annuel',val:solde,cls:solde>=0?'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-400':'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'},].map(k=>(<div key={k.label} className={clsx('rounded-2xl border p-3.5 transition-colors',k.cls)}><p className="text-xs font-medium opacity-60">{k.label}</p><p className="text-lg font-bold mt-0.5">{formatFCFA(k.val)}</p></div>))}</div>
-      {fondsCategories.length>0&&(<div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors"><div className="flex items-center justify-between mb-3"><h3 className="font-semibold text-[var(--text)]">Épargne de Fonctionnement {anneeSelect}</h3><span className="text-sm font-bold text-primary">{formatFCFA(totalFondsRecap)}</span></div><div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{fondsCategories.map((cat:any)=>{const b=budget.find((b:any)=>b.categorieId===cat.id);return(<div key={cat.id} className="bg-slate-50 dark:bg-dark-card rounded-xl p-3 text-center"><p className="text-xs text-[var(--text-muted)] font-medium truncate">{cat.nom}</p><p className="text-base font-bold text-primary mt-1">{formatFCFA(b?.montantReel??0)}</p></div>);})}</div></div>)}
-      <Separateur emoji="🔄" label={`Ajouts & Décaissements — ${anneeSelect}`}/>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[{emoji:'📂',label:'Fonds ajoutés',val:decStats.fondAjouts,bg:'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',text:'text-green-700 dark:text-green-400'},{emoji:'📂',label:'Fonds retirés',val:decStats.fondRetraits,bg:'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',text:'text-red-600 dark:text-red-400'},{emoji:'🏦',label:'Banques ajoutées',val:decStats.banqueAjouts,bg:'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',text:'text-blue-700 dark:text-blue-400'},{emoji:'🏦',label:'Banques retirées',val:decStats.banqueRetraits,bg:'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800',text:'text-orange-600 dark:text-orange-400'},].map(k=>(<div key={k.label} className={clsx('rounded-2xl border p-4 flex items-center gap-3 transition-colors',k.bg)}><span className="text-xl flex-shrink-0">{k.emoji}</span><div><p className={clsx('text-xs font-medium opacity-70',k.text)}>{k.label}</p><p className={clsx('text-base font-bold',k.text)}>{formatFCFA(k.val)}</p></div></div>))}</div>
+      {fondsCategories.length>0&&(<div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors"><div className="flex items-center justify-between mb-3"><h3 className="font-semibold text-[var(--text)]">Epargne de Fonctionnement {anneeSelect}</h3><span className="text-sm font-bold text-primary">{formatFCFA(totalFondsRecap)}</span></div><div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{fondsCategories.map((cat:any)=>{const b=budget.find((b:any)=>b.categorieId===cat.id);return(<div key={cat.id} className="bg-slate-50 dark:bg-dark-card rounded-xl p-3 text-center"><p className="text-xs text-[var(--text-muted)] font-medium truncate">{cat.nom}</p><p className="text-base font-bold text-primary mt-1">{formatFCFA(b?.montantReel??0)}</p></div>);})}</div></div>)}
+      <Separateur emoji="🔄" label={`Ajouts & Decaissements — ${anneeSelect}`}/>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[{emoji:'📂',label:'Fonds ajoutes',val:decStats.fondAjouts,bg:'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',text:'text-green-700 dark:text-green-400'},{emoji:'📂',label:'Fonds retires',val:decStats.fondRetraits,bg:'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',text:'text-red-600 dark:text-red-400'},{emoji:'🏦',label:'Banques ajoutees',val:decStats.banqueAjouts,bg:'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',text:'text-blue-700 dark:text-blue-400'},{emoji:'🏦',label:'Banques retirees',val:decStats.banqueRetraits,bg:'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800',text:'text-orange-600 dark:text-orange-400'},].map(k=>(<div key={k.label} className={clsx('rounded-2xl border p-4 flex items-center gap-3 transition-colors',k.bg)}><span className="text-xl flex-shrink-0">{k.emoji}</span><div><p className={clsx('text-xs font-medium opacity-70',k.text)}>{k.label}</p><p className={clsx('text-base font-bold',k.text)}>{formatFCFA(k.val)}</p></div></div>))}</div>
       <div className="grid lg:grid-cols-2 gap-5">
-        <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors"><h3 className="font-semibold text-[var(--text)] mb-3">Répartition dépenses</h3>{donut.length>0?(<ResponsiveContainer width="100%" height={220}><PieChart><Pie data={donut} cx="50%" cy="50%" innerRadius={60} outerRadius={90} dataKey="value" paddingAngle={2}>{donut.map((_:any,i:number)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie><Tooltip formatter={(v:number)=>formatFCFA(v)}/></PieChart></ResponsiveContainer>):(<div className="h-40 flex items-center justify-center text-[var(--text-muted)] text-sm">Aucune dépense cette année</div>)}</div>
-        <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors"><h3 className="font-semibold text-[var(--text)] mb-3">Dépenses — 6 derniers mois</h3><ResponsiveContainer width="100%" height={220}><BarChart data={hist} barGap={3}><CartesianGrid strokeDasharray="3 3" stroke="var(--border)"/><XAxis dataKey="mois" tick={{fontSize:11,fill:'var(--text-muted)'}}/><YAxis tick={{fontSize:10,fill:'var(--text-muted)'}} tickFormatter={v=>(v/1000).toFixed(0)+'k'}/><Tooltip formatter={(v:number)=>formatFCFA(v)}/><Legend/><Bar dataKey="ant" name="Prévision" fill="#DBEAFE" radius={[3,3,0,0]}/><Bar dataKey="reel" name="Réel" fill="#1E40AF" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></div>
+        <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors"><h3 className="font-semibold text-[var(--text)] mb-3">Repartition depenses</h3>{donut.length>0?(<ResponsiveContainer width="100%" height={220}><PieChart><Pie data={donut} cx="50%" cy="50%" innerRadius={60} outerRadius={90} dataKey="value" paddingAngle={2}>{donut.map((_:any,i:number)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie><Tooltip formatter={(v:number)=>formatFCFA(v)}/></PieChart></ResponsiveContainer>):(<div className="h-40 flex items-center justify-center text-[var(--text-muted)] text-sm">Aucune depense cette annee</div>)}</div>
+        <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors"><h3 className="font-semibold text-[var(--text)] mb-3">Depenses — 6 derniers mois</h3><ResponsiveContainer width="100%" height={220}><BarChart data={hist} barGap={3}><CartesianGrid strokeDasharray="3 3" stroke="var(--border)"/><XAxis dataKey="mois" tick={{fontSize:11,fill:'var(--text-muted)'}}/><YAxis tick={{fontSize:10,fill:'var(--text-muted)'}} tickFormatter={v=>(v/1000).toFixed(0)+'k'}/><Tooltip formatter={(v:number)=>formatFCFA(v)}/><Legend/><Bar dataKey="ant" name="Prevision" fill="#DBEAFE" radius={[3,3,0,0]}/><Bar dataKey="reel" name="Reel" fill="#1E40AF" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></div>
       </div>
     </div>
   );
 }
-
 
 // ── Page principale ───────────────────────────────────────────────────────────
 export default function DashboardPage() {
@@ -866,11 +834,11 @@ export default function DashboardPage() {
   return (
     <div className="space-y-5 animate-fadeIn">
       <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-bold text-[var(--text)]">Tableau de bord</h1><p className="text-[var(--text-muted)] text-sm">{onglet==='global'?'Vue globale — toutes années':'Récapitulatif annuel'}</p></div>
-        {!estMoisCourant&&(<button onClick={()=>{setMois(moisCourantReel);setAnnee(anneeCouranteReelle);}} className="px-3.5 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary-dark transition-all flex items-center gap-1.5">📅 Mois courant</button>)}
+        <div><h1 className="text-2xl font-bold text-[var(--text)]">Tableau de bord</h1><p className="text-[var(--text-muted)] text-sm">{onglet==='global'?'Vue globale — toutes annees':'Recapitulatif annuel'}</p></div>
+        {!estMoisCourant&&(<button onClick={()=>{setMois(moisCourantReel);setAnnee(anneeCouranteReelle);}} className="px-3.5 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary-dark transition-all flex items-center gap-1.5">Mois courant</button>)}
       </div>
       <div className="flex gap-1 bg-slate-100 dark:bg-dark-card rounded-xl p-1 w-fit">
-        {([['global','🌍 Global'],['recap','📋 Récapitulatif']] as const).map(([key,label])=>(<button key={key} onClick={()=>setOnglet(key)} className={clsx('px-4 py-2 rounded-lg text-sm font-medium transition-all',onglet===key?'bg-white dark:bg-dark-surface text-primary shadow-sm':'text-[var(--text-muted)] hover:text-[var(--text)]')}>{label}</button>))}
+        {([['global','Global'],['recap','Recapitulatif']] as const).map(([key,label])=>(<button key={key} onClick={()=>setOnglet(key)} className={clsx('px-4 py-2 rounded-lg text-sm font-medium transition-all',onglet===key?'bg-white dark:bg-dark-surface text-primary shadow-sm':'text-[var(--text-muted)] hover:text-[var(--text)]')}>{label}</button>))}
       </div>
       {onglet==='global'?(<OngletGlobal moisCourant={mois} anneeCourante={annee} budgetMois={data?.budget??[]} loadingMois={loading}/>):(<OngletRecap moisCourant={mois}/>)}
     </div>

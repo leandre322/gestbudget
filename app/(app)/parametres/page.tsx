@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Plus, Pencil, Trash2, Check, X, Upload, Save, Link, Link2Off,
-         ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Lock } from 'lucide-react';
+         ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Lock, AlertTriangle } from 'lucide-react';
 import { TYPE_LABELS, ORDRE_TYPES, formatFCFA } from '@/types';
 import { clsx } from 'clsx';
 import { useLock } from '../layout';
@@ -12,6 +12,9 @@ const GRANDES_CATEGORIES = [
   'depense_fixe','depense_variable','depense_occasionnelle','remboursement_dette',
 ] as const;
 type GrandeCategorie = typeof GRANDES_CATEGORIES[number];
+
+// ── Cle localStorage pour le mode de saisie ──────────────────────────────────
+const LS_MODE_KEY = 'gb_cat_input_mode';
 
 export default function ParametresPage() {
   const { isLocked, openUnlockModal } = useLock();
@@ -38,10 +41,27 @@ export default function ParametresPage() {
   const [suppLoading,      setSuppLoading]      = useState(false);
   const [suppResult,       setSuppResult]       = useState<string>('');
   const [activeTab,        setActiveTab]        = useState<'categories'|'comptes'|'banques'|'import'|'donnees'>('categories');
-  const [tauxRef,          setTauxRef]          = useState<Record<GrandeCategorie, number>>({} as Record<GrandeCategorie, number>);
-  const [revenuRef,        setRevenuRef]        = useState<number>(0);
-  const [savingTaux,       setSavingTaux]       = useState(false);
-  const [savedTaux,        setSavedTaux]        = useState(false);
+
+  // ── Taux & Revenus ────────────────────────────────────────────────────────
+  const [tauxRef,    setTauxRef]    = useState<Record<GrandeCategorie, number>>({} as Record<GrandeCategorie, number>);
+  const [montantRef, setMontantRef] = useState<Record<GrandeCategorie, number>>({} as Record<GrandeCategorie, number>);
+  const [revenuRef,  setRevenuRef]  = useState<number>(0);
+  const [savingTaux, setSavingTaux] = useState(false);
+  const [savedTaux,  setSavedTaux]  = useState(false);
+  const [tauxError,  setTauxError]  = useState<string | null>(null);
+
+  // ── Mode saisie (Montant FCFA ou Taux %) persisté localStorage ───────────
+  const [inputMode, setInputMode] = useState<'montant' | 'taux'>('montant');
+  useEffect(() => {
+    const saved = localStorage.getItem(LS_MODE_KEY);
+    if (saved === 'taux' || saved === 'montant') setInputMode(saved);
+  }, []);
+
+  const toggleInputMode = (mode: 'montant' | 'taux') => {
+    setInputMode(mode);
+    localStorage.setItem(LS_MODE_KEY, mode);
+  };
+
   const [savingLien,       setSavingLien]       = useState<string|null>(null);
   const [savingBanqueLien, setSavingBanqueLien] = useState<string|null>(null);
   const [catGroupsOpen,    setCatGroupsOpen]    = useState<Record<string,boolean>>({});
@@ -51,6 +71,38 @@ export default function ParametresPage() {
   const plierTousCats  = () => setCatGroupsOpen({});
   const isDirty        = useRef(false);
 
+  // ── Fonctions de conversion ───────────────────────────────────────────────
+  // Taux -> Montant : affichage en mode Taux
+  const tauxToMontant = (taux: number): number =>
+    revenuRef > 0 ? Math.round((taux / 100) * revenuRef) : 0;
+
+  // Montant -> Taux : arrondi classique 2 decimales (REGLE : pas de ceiling)
+  const montantToTaux = (montant: number): number =>
+    revenuRef > 0 ? Math.round((montant / revenuRef) * 10000) / 100 : 0;
+
+  // Total taux alloue
+  const totalTaux = GRANDES_CATEGORIES.reduce((s, t) => s + (tauxRef[t] ?? 0), 0);
+
+  // ── Couleur barre totale selon P4 ────────────────────────────────────────
+  const totalBgCls = totalTaux > 100
+    ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+    : totalTaux >= 90
+      ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'
+      : 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800';
+
+  const totalTextCls = totalTaux > 100
+    ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
+    : totalTaux >= 90
+      ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400'
+      : 'bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400';
+
+  const totalBarCls = totalTaux > 100
+    ? 'bg-red-500'
+    : totalTaux >= 90
+      ? 'bg-amber-400'
+      : 'bg-green-500';
+
+  // ── Charger ───────────────────────────────────────────────────────────────
   const charger = useCallback(async (force=false) => {
     setLoading(true);
     try {
@@ -63,15 +115,21 @@ export default function ParametresPage() {
       if (rCats.ok)   { const d=await rCats.json();    setCategories(d.categories??[]); }
       if (rComptes.ok){ const d=await rComptes.json(); setComptes(d.comptes??[]); }
       if (rParams.ok) {
-        const d=await rParams.json();
-        if (!isDirty.current||force) {
-          setRevenuRef(d.revenuMensuelReference??0);
-          const taux={} as Record<GrandeCategorie,number>;
+        const d = await rParams.json();
+        if (!isDirty.current || force) {
+          const revenu = d.revenuMensuelReference ?? 0;
+          setRevenuRef(revenu);
+          const taux = {} as Record<GrandeCategorie, number>;
+          const montants = {} as Record<GrandeCategorie, number>;
           GRANDES_CATEGORIES.forEach(type => {
-            const cats=(d.categories??[]).filter((c:any)=>c.type===type);
-            taux[type]=cats.reduce((max:number,c:any)=>Math.max(max,c.tauxReference??0),0);
+            const cats = (d.categories ?? []).filter((c:any) => c.type === type);
+            const t = cats.reduce((max:number,c:any) => Math.max(max, c.tauxReference ?? 0), 0);
+            taux[type]    = t;
+            montants[type] = revenu > 0 ? Math.round((t / 100) * revenu) : 0;
           });
-          setTauxRef(taux); isDirty.current=false;
+          setTauxRef(taux);
+          setMontantRef(montants);
+          isDirty.current = false;
         }
       }
     } catch(e){ console.error('charger error:',e); }
@@ -79,6 +137,22 @@ export default function ParametresPage() {
   },[]);
 
   useEffect(() => { charger(); },[charger]);
+
+  // Quand revenuRef change par l'utilisateur -> recalculer montantRef depuis tauxRef courant
+  const handleRevenuChange = (newRevenu: number) => {
+    if (isLocked) return;
+    isDirty.current = true;
+    setTauxError(null);
+    setRevenuRef(newRevenu);
+    // Recalculer les montants avec le nouveau revenu (taux inchanges)
+    setMontantRef(prev => {
+      const m = { ...prev } as Record<GrandeCategorie, number>;
+      GRANDES_CATEGORIES.forEach(type => {
+        m[type] = newRevenu > 0 ? Math.round((tauxRef[type] ?? 0) / 100 * newRevenu) : 0;
+      });
+      return m;
+    });
+  };
 
   const chargerOnglet = useCallback(async (tab:string) => {
     try {
@@ -98,23 +172,39 @@ export default function ParametresPage() {
 
   useEffect(() => { chargerOnglet(activeTab); },[activeTab,chargerOnglet]);
 
-  const montantPourTaux=(taux:number)=>revenuRef>0?Math.round((taux/100)*revenuRef):0;
-  const totalTaux=GRANDES_CATEGORIES.reduce((s,t)=>s+(tauxRef[t]??0),0);
+  // ── Sauvegarder taux ──────────────────────────────────────────────────────
+  const sauvegarderTaux = async () => {
+    if (isLocked) { openUnlockModal(); return; }
 
-  // ── Fonctions protegees par isLocked ─────────────────────────────────────
-  const sauvegarderTaux=async()=>{
-    if(isLocked){openUnlockModal();return;}
+    // OPTION B : bloquer si total > 100%
+    if (totalTaux > 100) {
+      setTauxError('Total depasse 100% : reduire les depenses ou augmenter le revenu de reference.');
+      return;
+    }
+    setTauxError(null);
+
     setSavingTaux(true);
     try {
-      const res=await fetch('/api/parametres',{method:'PUT',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({revenuMensuelReference:revenuRef,tauxReference:tauxRef})});
-      if(res.ok){isDirty.current=false;setSavedTaux(true);setTimeout(()=>setSavedTaux(false),3000);await charger(true);}
-      else{const err=await res.json();alert(`Erreur : ${err.error??'Inconnue'}`);}
-    } catch(e){console.error(e);}
-    finally{setSavingTaux(false);}
+      const res = await fetch('/api/parametres', {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ revenuMensuelReference: revenuRef, tauxReference: tauxRef }),
+      });
+      if (res.ok) {
+        isDirty.current = false;
+        setSavedTaux(true);
+        setTimeout(() => setSavedTaux(false), 3000);
+        await charger(true);
+      } else {
+        const err = await res.json();
+        alert(`Erreur : ${err.error ?? 'Inconnue'}`);
+      }
+    } catch(e){ console.error(e); }
+    finally{ setSavingTaux(false); }
   };
 
-  const sauvegarderBanqueLien=async(catId:string,banqueId:string|null)=>{
+  // ── Handlers categories / comptes / banques ────────────────────────────────
+  const sauvegarderBanqueLien = async (catId:string, banqueId:string|null) => {
     if(isLocked)return;
     setSavingBanqueLien(catId);
     try {
@@ -124,7 +214,7 @@ export default function ParametresPage() {
     finally{setSavingBanqueLien(null);}
   };
 
-  const sauvegarderLien=async(catId:string,compteFondsId:string|null)=>{
+  const sauvegarderLien = async (catId:string, compteFondsId:string|null) => {
     if(isLocked)return;
     setSavingLien(catId);
     try {
@@ -134,47 +224,47 @@ export default function ParametresPage() {
     finally{setSavingLien(null);}
   };
 
-  const ajouterCategorie=async()=>{
+  const ajouterCategorie = async () => {
     if(isLocked){openUnlockModal();return;}
     if(!newCat.nom)return;
     await fetch('/api/categories',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(newCat)});
     setNewCat({nom:'',type:'depense_variable',sousType:''});setShowNewCat(false);chargerOnglet('categories');
   };
 
-  const sauvegarderCat=async()=>{
+  const sauvegarderCat = async () => {
     if(isLocked)return;
     if(!editCat)return;
     await fetch('/api/categories',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(editCat)});
     setEditCat(null);chargerOnglet('categories');
   };
 
-  const supprimerCat=async(id:string)=>{
+  const supprimerCat = async (id:string) => {
     if(isLocked){openUnlockModal();return;}
     if(!confirm('Desactiver cette categorie ?'))return;
     await fetch(`/api/categories?id=${id}`,{method:'DELETE'});chargerOnglet('categories');
   };
 
-  const ajouterCompte=async()=>{
+  const ajouterCompte = async () => {
     if(isLocked){openUnlockModal();return;}
     if(!newCompte)return;
     await fetch('/api/comptes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nom:newCompte,ordre:comptes.length})});
     setNewCompte('');setShowNewCompte(false);chargerOnglet('comptes');
   };
 
-  const sauvegarderCompte=async()=>{
+  const sauvegarderCompte = async () => {
     if(isLocked)return;
     if(!editCompte)return;
     await fetch('/api/comptes',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(editCompte)});
     setEditCompte(null);chargerOnglet('comptes');
   };
 
-  const supprimerCompte=async(id:string)=>{
+  const supprimerCompte = async (id:string) => {
     if(isLocked){openUnlockModal();return;}
     if(!confirm('Desactiver ce compte ?'))return;
     await fetch(`/api/comptes?id=${id}`,{method:'DELETE'});chargerOnglet('comptes');
   };
 
-  const importerExcel=async(e:React.ChangeEvent<HTMLInputElement>)=>{
+  const importerExcel = async (e:React.ChangeEvent<HTMLInputElement>) => {
     if(isLocked){openUnlockModal();return;}
     const file=e.target.files?.[0];if(!file)return;
     setImporting(true);setImportResult(null);
@@ -185,13 +275,13 @@ export default function ParametresPage() {
 
   if(loading)return<div className="flex items-center justify-center h-64"><div className="spinner scale-150"/></div>;
 
-  const catsByType=ORDRE_TYPES.map(type=>({type,cats:categories.filter(c=>c.type===type&&c.isActive)})).filter(g=>g.cats.length>0);
-  const fondsActifs=comptes.filter(c=>c.isActive);
-  const inputCls="w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none transition-all";
-  const actionBtn=(lk:boolean)=>clsx('flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium transition-all',
+  const catsByType   = ORDRE_TYPES.map(type=>({type,cats:categories.filter(c=>c.type===type&&c.isActive)})).filter(g=>g.cats.length>0);
+  const fondsActifs  = comptes.filter(c=>c.isActive);
+  const inputCls     = "w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none transition-all";
+  const actionBtn    = (lk:boolean) => clsx('flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium transition-all',
     lk?'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed':'bg-primary hover:bg-primary-dark text-white');
-  const iconBtn=(lk:boolean)=>clsx('transition-colors',lk?'text-slate-200 dark:text-slate-700 cursor-not-allowed':'text-slate-300 dark:text-slate-600 hover:text-primary');
-  const iconBtnDanger=(lk:boolean)=>clsx('transition-colors',lk?'text-slate-200 dark:text-slate-700 cursor-not-allowed':'text-slate-300 dark:text-slate-600 hover:text-red-500');
+  const iconBtn      = (lk:boolean) => clsx('transition-colors',lk?'text-slate-200 dark:text-slate-700 cursor-not-allowed':'text-slate-300 dark:text-slate-600 hover:text-primary');
+  const iconBtnDanger = (lk:boolean) => clsx('transition-colors',lk?'text-slate-200 dark:text-slate-700 cursor-not-allowed':'text-slate-300 dark:text-slate-600 hover:text-red-500');
 
   return (
     <div className="space-y-5 animate-fadeIn">
@@ -210,31 +300,66 @@ export default function ParametresPage() {
         ))}
       </div>
 
-      {/* CATEGORIES */}
+      {/* ── CATEGORIES ─────────────────────────────────────────────────────── */}
       {activeTab==='categories'&&(
         <div className="space-y-5">
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-            <div className="flex items-center justify-between mb-4">
+
+            {/* En-tete : titre + toggle mode + bouton sauvegarder */}
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
               <div>
                 <h3 className="font-semibold text-[var(--text)]">Budget de reference</h3>
-                <p className="text-xs text-[var(--text-muted)] mt-0.5">Revenu mensuel et taux par grande categorie</p>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">Revenu mensuel et allocation par grande categorie</p>
               </div>
-              <button onClick={sauvegarderTaux} disabled={savingTaux||isLocked}
-                title={isLocked?'Verrouillez pour modifier':undefined}
-                className={clsx('flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium transition-all disabled:opacity-60',
-                  isLocked?'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed':'bg-primary hover:bg-primary-dark text-white')}>
-                {isLocked?<Lock size={13}/>:<Save size={14}/>}
-                {savingTaux?'Sauvegarde...':savedTaux?'Sauvegarde OK':isLocked?'Verrouille':'Sauvegarder'}
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Toggle Montant / Taux */}
+                <div className="flex gap-0.5 bg-slate-100 dark:bg-dark-card rounded-lg p-0.5 border border-[var(--border)]">
+                  {(['montant','taux'] as const).map(mode=>(
+                    <button key={mode} onClick={()=>toggleInputMode(mode)}
+                      className={clsx('px-3 py-1 rounded-md text-xs font-semibold transition-all',
+                        inputMode===mode
+                          ?'bg-white dark:bg-dark-surface text-primary shadow-sm'
+                          :'text-[var(--text-muted)] hover:text-[var(--text)]')}>
+                      {mode==='montant'?'Montant FCFA':'Taux %'}
+                    </button>
+                  ))}
+                </div>
+                {/* Bouton sauvegarder — rouge si >100% */}
+                <button
+                  onClick={sauvegarderTaux}
+                  disabled={savingTaux || isLocked || totalTaux > 100}
+                  title={isLocked?'Verrouillez pour modifier':totalTaux>100?'Total depasse 100%':undefined}
+                  className={clsx(
+                    'flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium transition-all disabled:opacity-60',
+                    isLocked
+                      ? 'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed'
+                      : totalTaux > 100
+                        ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 cursor-not-allowed'
+                        : 'bg-primary hover:bg-primary-dark text-white'
+                  )}>
+                  {isLocked ? <Lock size={13}/> : totalTaux > 100 ? <AlertTriangle size={13}/> : <Save size={14}/>}
+                  {savingTaux?'Sauvegarde...':savedTaux?'OK':isLocked?'Verrouille':totalTaux>100?'Depasse':'Sauvegarder'}
+                </button>
+              </div>
             </div>
+
+            {/* Revenu de reference */}
             <div className="mb-5 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-800">
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex-1 min-w-48">
-                  <label className="text-xs font-semibold text-blue-700 dark:text-blue-400 mb-1 block">Revenu mensuel de reference (FCFA)</label>
-                  <input type="number" value={revenuRef||''} placeholder="Ex: 500000" disabled={isLocked}
-                    onChange={e=>{if(isLocked)return;isDirty.current=true;setRevenuRef(parseInt(e.target.value)||0);}}
+                  <label className="text-xs font-semibold text-blue-700 dark:text-blue-400 mb-1 block">
+                    Revenu mensuel de reference (FCFA)
+                  </label>
+                  <input
+                    type="number"
+                    value={revenuRef||''}
+                    placeholder="Ex: 700000"
+                    disabled={isLocked}
+                    onChange={e=>handleRevenuChange(parseInt(e.target.value)||0)}
                     className={clsx('w-full border rounded-xl px-3 py-2 text-sm outline-none',
-                      isLocked?'border-blue-200 dark:border-blue-800 bg-slate-50 dark:bg-dark-card text-[var(--text-muted)] cursor-not-allowed':'border-blue-300 dark:border-blue-700 bg-white dark:bg-dark-card text-[var(--text)] focus:border-primary')}/>
+                      isLocked
+                        ?'border-blue-200 dark:border-blue-800 bg-slate-50 dark:bg-dark-card text-[var(--text-muted)] cursor-not-allowed'
+                        :'border-blue-300 dark:border-blue-700 bg-white dark:bg-dark-card text-[var(--text)] focus:border-primary')}/>
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-blue-600 dark:text-blue-400">100%</p>
@@ -243,47 +368,136 @@ export default function ParametresPage() {
                 </div>
               </div>
             </div>
+
+            {/* Lignes par grande categorie */}
             <div className="space-y-3">
-              {GRANDES_CATEGORIES.map(type=>{
-                const taux=tauxRef[type]??0,isOver=totalTaux>100;
-                return(
+              {GRANDES_CATEGORIES.map(type => {
+                const taux = tauxRef[type] ?? 0;
+                return (
                   <div key={type} className="space-y-1.5">
                     <div className="flex items-center gap-3 flex-wrap">
-                      <span className="text-sm font-medium text-[var(--text)] w-52 flex-shrink-0">{TYPE_LABELS[type as keyof typeof TYPE_LABELS]}</span>
-                      <div className="flex items-center gap-1.5">
-                        <input type="number" min="0" max="100" step="0.5" value={taux||''} placeholder="0" disabled={isLocked}
-                          onChange={e=>{if(isLocked)return;isDirty.current=true;setTauxRef(p=>({...p,[type]:parseFloat(e.target.value)||0}));}}
-                          className={clsx('w-20 text-right border rounded-lg px-2 py-1.5 text-sm outline-none',
-                            isLocked?'border-[var(--border)] bg-slate-50 dark:bg-dark-card text-[var(--text-muted)] cursor-not-allowed':'border-[var(--border)] bg-[var(--card)] text-[var(--text)] focus:border-primary')}/>
-                        <span className="text-sm text-[var(--text-muted)]">%</span>
-                      </div>
-                      <span className="text-sm font-semibold text-primary w-36">{revenuRef>0?formatFCFA(montantPourTaux(taux)):'--'}</span>
+                      <span className="text-sm font-medium text-[var(--text)] w-52 flex-shrink-0">
+                        {TYPE_LABELS[type as keyof typeof TYPE_LABELS]}
+                      </span>
+
+                      {/* Input conditionnel selon le mode */}
+                      {inputMode === 'montant' ? (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min="0"
+                            step="1000"
+                            value={montantRef[type] || ''}
+                            placeholder="0"
+                            disabled={isLocked}
+                            onChange={e => {
+                              if (isLocked) return;
+                              isDirty.current = true;
+                              setTauxError(null);
+                              const m = parseInt(e.target.value) || 0;
+                              const newTaux = montantToTaux(m);
+                              setMontantRef(prev => ({ ...prev, [type]: m }));
+                              setTauxRef(prev => ({ ...prev, [type]: newTaux }));
+                            }}
+                            className={clsx('w-32 text-right border rounded-lg px-2 py-1.5 text-sm outline-none',
+                              isLocked
+                                ?'border-[var(--border)] bg-slate-50 dark:bg-dark-card text-[var(--text-muted)] cursor-not-allowed'
+                                :'border-[var(--border)] bg-[var(--card)] text-[var(--text)] focus:border-primary')}/>
+                          <span className="text-xs text-[var(--text-muted)]">FCFA</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.5"
+                            value={taux||''}
+                            placeholder="0"
+                            disabled={isLocked}
+                            onChange={e => {
+                              if (isLocked) return;
+                              isDirty.current = true;
+                              setTauxError(null);
+                              const newTaux = parseFloat(e.target.value) || 0;
+                              setTauxRef(prev => ({ ...prev, [type]: newTaux }));
+                              setMontantRef(prev => ({ ...prev, [type]: tauxToMontant(newTaux) }));
+                            }}
+                            className={clsx('w-20 text-right border rounded-lg px-2 py-1.5 text-sm outline-none',
+                              isLocked
+                                ?'border-[var(--border)] bg-slate-50 dark:bg-dark-card text-[var(--text-muted)] cursor-not-allowed'
+                                :'border-[var(--border)] bg-[var(--card)] text-[var(--text)] focus:border-primary')}/>
+                          <span className="text-sm text-[var(--text-muted)]">%</span>
+                        </div>
+                      )}
+
+                      {/* Valeur derivee (l'autre mode) */}
+                      <span className="text-sm font-semibold text-primary w-40">
+                        {inputMode === 'montant'
+                          ? (taux > 0 ? `${taux.toFixed(2)}%` : '0%')
+                          : (revenuRef > 0 && taux > 0 ? formatFCFA(tauxToMontant(taux)) : '--')}
+                      </span>
                     </div>
+
+                    {/* Barre progression individuelle */}
                     <div className="flex items-center gap-2">
                       <div className="flex-1 h-2 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
-                        <div className={clsx('h-full rounded-full transition-all',isOver?'bg-red-500':taux>30?'bg-blue-500':taux>15?'bg-green-500':'bg-amber-400')} style={{width:`${Math.min(100,taux)}%`}}/>
+                        <div
+                          className={clsx('h-full rounded-full transition-all',
+                            totalTaux > 100 ? 'bg-red-500' : taux > 30 ? 'bg-blue-500' : taux > 15 ? 'bg-green-500' : 'bg-amber-400')}
+                          style={{width:`${Math.min(100,taux)}%`}}/>
                       </div>
-                      <span className="text-xs text-[var(--text-muted)] w-10 text-right">{taux}%</span>
+                      <span className="text-xs text-[var(--text-muted)] w-12 text-right">
+                        {taux.toFixed(2)}%
+                      </span>
                     </div>
                   </div>
                 );
               })}
-              <div className={clsx('mt-4 pt-4 border-t border-[var(--border)] flex items-center justify-between rounded-xl px-3 py-2',
-                totalTaux>100?'bg-red-50 dark:bg-red-900/20':totalTaux===100?'bg-green-50 dark:bg-green-900/20':'bg-amber-50 dark:bg-amber-900/20')}>
+
+              {/* Barre de progression globale P4 */}
+              <div className="mt-3 mb-1">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-[var(--text-muted)]">Allocation totale</span>
+                  <span className={clsx('text-xs font-bold',
+                    totalTaux > 100 ? 'text-red-500' : totalTaux >= 90 ? 'text-amber-500' : 'text-green-600')}>
+                    {totalTaux.toFixed(2)}%
+                  </span>
+                </div>
+                <div className="h-3 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
+                  <div
+                    className={clsx('h-full rounded-full transition-all duration-300', totalBarCls)}
+                    style={{width:`${Math.min(100, totalTaux)}%`}}/>
+                </div>
+              </div>
+
+              {/* Ligne totale */}
+              <div className={clsx('mt-2 pt-3 border-t border-[var(--border)] flex items-center justify-between rounded-xl px-3 py-2', totalBgCls)}>
                 <span className="text-sm font-bold text-[var(--text)]">Total alloue</span>
                 <div className="flex items-center gap-3">
-                  {revenuRef>0&&<span className="text-sm text-[var(--text-muted)]">{formatFCFA(Math.round((totalTaux/100)*revenuRef))} / {formatFCFA(revenuRef)}</span>}
-                  <span className={clsx('text-sm font-bold px-3 py-1 rounded-lg',
-                    totalTaux>100?'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400':
-                    totalTaux===100?'bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400':
-                    'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400')}>
-                    {totalTaux}%{totalTaux>100?' (depassement)':totalTaux<100?` (reste ${(100-totalTaux).toFixed(1)}%)`:''}
+                  {revenuRef > 0 && (
+                    <span className="text-sm text-[var(--text-muted)]">
+                      {formatFCFA(Math.round((totalTaux/100)*revenuRef))} / {formatFCFA(revenuRef)}
+                    </span>
+                  )}
+                  <span className={clsx('text-sm font-bold px-3 py-1 rounded-lg', totalTextCls)}>
+                    {totalTaux.toFixed(2)}%
+                    {totalTaux > 100 ? ' (depassement)' : totalTaux < 100 ? ` (reste ${(100-totalTaux).toFixed(2)}%)` : ''}
                   </span>
                 </div>
               </div>
+
+              {/* Message erreur blocage sauvegarde */}
+              {tauxError && (
+                <div className="flex items-center gap-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl px-3 py-2.5">
+                  <AlertTriangle size={14} className="text-red-500 flex-shrink-0"/>
+                  <span className="text-xs text-red-600 dark:text-red-400 font-medium">{tauxError}</span>
+                </div>
+              )}
             </div>
           </div>
 
+          {/* Liste categories par type */}
           <div className="flex justify-between items-center flex-wrap gap-2">
             <p className="text-sm text-[var(--text-muted)]">{categories.filter(c=>c.isActive).length} categories actives</p>
             <div className="flex items-center gap-2">
@@ -312,7 +526,11 @@ export default function ParametresPage() {
                   <span className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wide">{TYPE_LABELS[type as keyof typeof TYPE_LABELS]}</span>
                   <span className="text-xs text-[var(--text-muted)] opacity-60">({cats.length})</span>
                 </div>
-                {(tauxRef[type as GrandeCategorie]??0)>0&&<span className="text-xs font-semibold text-primary">{tauxRef[type as GrandeCategorie]}% -- {formatFCFA(montantPourTaux(tauxRef[type as GrandeCategorie]))}</span>}
+                {(tauxRef[type as GrandeCategorie]??0)>0&&(
+                  <span className="text-xs font-semibold text-primary">
+                    {(tauxRef[type as GrandeCategorie]).toFixed(2)}% — {formatFCFA(tauxToMontant(tauxRef[type as GrandeCategorie]))}
+                  </span>
+                )}
               </div>
               {catGroupsOpen[type]&&(
                 <div className="divide-y divide-[var(--border)]">
@@ -365,7 +583,7 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* FONDS */}
+      {/* ── FONDS ────────────────────────────────────────────────────────────── */}
       {activeTab==='comptes'&&(
         <div className="space-y-4">
           <div className="flex justify-between items-center">
@@ -404,7 +622,7 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* BANQUES */}
+      {/* ── BANQUES ───────────────────────────────────────────────────────────── */}
       {activeTab==='banques'&&(
         <div className="space-y-4">
           <div className="flex justify-between items-center">
@@ -446,7 +664,7 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* DONNEES */}
+      {/* ── DONNEES ───────────────────────────────────────────────────────────── */}
       {activeTab==='donnees'&&(
         <div className="space-y-4">
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
@@ -499,7 +717,7 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* IMPORT */}
+      {/* ── IMPORT ────────────────────────────────────────────────────────────── */}
       {activeTab==='import'&&(
         <div className="space-y-4">
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-6 transition-colors">
