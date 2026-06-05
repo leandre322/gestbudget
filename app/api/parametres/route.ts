@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (e: any) {
     console.error('GET /api/parametres:', e?.message);
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
   }
 }
 
@@ -50,7 +50,7 @@ export async function PUT(req: NextRequest) {
     const rawParams = await req.json();
     const { data: paramsData, error: zodParamsErr } = validateBody(ParametresSchema, rawParams);
     if (zodParamsErr) return zodParamsErr;
-    const { revenuMensuelReference, tauxReference, nMoisUrgence } = paramsData!;
+    const { revenuMensuelReference, tauxReference, nMoisUrgence, rapportEmailActif, rapportEmailJour, rapportEmailHeure, seuilAnomaliesPct } = paramsData!;
 
     await prisma.parametres.upsert({
       where:  { userId: session.user.id },
@@ -82,6 +82,6 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (e: any) {
     console.error('PUT /api/parametres:', e?.message);
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
   }
 }

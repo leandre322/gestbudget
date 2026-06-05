@@ -32,8 +32,9 @@ export async function GET(req: NextRequest) {
     ));
 
     // 2 — Rapports email
+    const jourActuel = maintenant.getDate();
     const parametresListe = await (prisma as any).parametres.findMany({
-      where:   { rapportEmailActif: true },
+      where:   { rapportEmailActif: true, rapportEmailJour: jourActuel },
       include: { user: { select: { email: true, nom: true } } },
     });
 

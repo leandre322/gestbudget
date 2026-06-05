@@ -55,6 +55,10 @@ export const ParametresSchema = z.object({
   revenuMensuelReference: z.number().min(0).max(9_999_999_999).optional(),
   nMoisUrgence:           z.number().int().min(1).max(60).optional(),
   tauxReference:          z.record(z.string(), z.number().min(0).max(100)).optional(),
+  rapportEmailActif:      z.boolean().optional(),
+  rapportEmailJour:       z.number().int().min(1).max(28).optional(),
+  rapportEmailHeure:      z.number().int().min(0).max(23).optional(),
+  seuilAnomaliesPct:      z.number().int().min(10).max(200).optional(),
 });
 
 export const BudgetPutSchema = z.object({

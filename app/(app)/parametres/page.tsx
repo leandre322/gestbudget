@@ -40,7 +40,7 @@ export default function ParametresPage() {
   const [confirmText,      setConfirmText]      = useState('');
   const [suppLoading,      setSuppLoading]      = useState(false);
   const [suppResult,       setSuppResult]       = useState<string>('');
-  const [activeTab,        setActiveTab]        = useState<'categories'|'comptes'|'banques'|'import'|'donnees'>('categories');
+  const [activeTab,        setActiveTab]        = useState<'categories'|'comptes'|'banques'|'import'|'donnees'|'alertes'>('categories');
 
   // ── Taux & Revenus ────────────────────────────────────────────────────────
   const [tauxRef,    setTauxRef]    = useState<Record<GrandeCategorie, number>>({} as Record<GrandeCategorie, number>);
@@ -65,6 +65,12 @@ export default function ParametresPage() {
   const [savingLien,       setSavingLien]       = useState<string|null>(null);
   const [savingBanqueLien, setSavingBanqueLien] = useState<string|null>(null);
   const [catGroupsOpen,    setCatGroupsOpen]    = useState<Record<string,boolean>>({});
+  const [rapportEmailActif, setRapportEmailActif] = useState(true);
+  const [rapportEmailJour,  setRapportEmailJour]  = useState(1);
+  const [rapportEmailHeure, setRapportEmailHeure] = useState(8);
+  const [seuilAnomaliesPct, setSeuilAnomaliesPct] = useState(50);
+  const [savingAlertes,     setSavingAlertes]     = useState(false);
+  const [savedAlertes,      setSavedAlertes]      = useState(false);
 
   const toggleCatGroup = (type: string) => setCatGroupsOpen(p => ({ ...p, [type]: !p[type] }));
   const ouvrirTousCats = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t]=true; }); setCatGroupsOpen(n); };
@@ -129,6 +135,10 @@ export default function ParametresPage() {
           });
           setTauxRef(taux);
           setMontantRef(montants);
+          setRapportEmailActif(d.rapportEmailActif ?? true);
+          setRapportEmailJour(d.rapportEmailJour   ?? 1);
+          setRapportEmailHeure(d.rapportEmailHeure  ?? 8);
+          setSeuilAnomaliesPct(d.seuilAnomaliesPct  ?? 50);
           isDirty.current = false;
         }
       }
@@ -152,6 +162,19 @@ export default function ParametresPage() {
       });
       return m;
     });
+  };
+
+  const sauvegarderAlertes = async () => {
+    if (isLocked) { openUnlockModal(); return; }
+    setSavingAlertes(true);
+    try {
+      const res = await fetch('/api/parametres', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rapportEmailActif, rapportEmailJour, rapportEmailHeure, seuilAnomaliesPct }),
+      });
+      if (res.ok) { setSavedAlertes(true); setTimeout(() => setSavedAlertes(false), 3000); }
+    } catch(e){ console.error(e); }
+    finally{ setSavingAlertes(false); }
   };
 
   const chargerOnglet = useCallback(async (tab:string) => {
@@ -291,11 +314,11 @@ export default function ParametresPage() {
       </div>
 
       <div className="flex gap-1 bg-slate-100 dark:bg-dark-card rounded-xl p-1 w-fit border border-[var(--border)] flex-wrap">
-        {(['categories','comptes','banques','import','donnees'] as const).map(tab=>(
+        {(['categories','comptes','banques','import','donnees','alertes'] as const).map(tab=>(
           <button key={tab} onClick={()=>setActiveTab(tab)}
             className={clsx('px-4 py-2 rounded-lg text-sm font-medium transition-all',
               activeTab===tab?'bg-[var(--surface)] text-primary shadow-sm':'text-[var(--text-muted)] hover:text-[var(--text)]')}>
-            {tab==='categories'?'Categories':tab==='comptes'?'Fonds':tab==='banques'?'Banques':tab==='donnees'?'Donnees':'Import Excel'}
+            {tab==='categories'?'Categories':tab==='comptes'?'Fonds':tab==='banques'?'Banques':tab==='donnees'?'Donnees':tab==='alertes'?'Alertes':'Import Excel'}
           </button>
         ))}
       </div>
@@ -714,6 +737,68 @@ export default function ParametresPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── ALERTES ─────────────────────────────────────────────────────────────── */}
+      {activeTab==='alertes'&&(
+        <div className="space-y-5">
+          <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-semibold text-[var(--text)]">Rapport mensuel par email</h3>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">Bilan automatique : score, KPIs, epargne et anomalies</p>
+              </div>
+              <button onClick={()=>{if(isLocked){openUnlockModal();return;}setRapportEmailActif(p=>!p);}} disabled={isLocked}
+                className={clsx('relative w-11 h-6 rounded-full transition-all flex-shrink-0',rapportEmailActif?'bg-green-500':'bg-slate-300 dark:bg-slate-600',isLocked&&'opacity-40 cursor-not-allowed')}>
+                <span className={clsx('absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform',rapportEmailActif?'translate-x-5':'translate-x-0')}/>
+              </button>
+            </div>
+            {rapportEmailActif&&(
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Jour du mois (1-28)</label>
+                    <input type="number" min="1" max="28" value={rapportEmailJour} disabled={isLocked}
+                      onChange={e=>{if(isLocked)return;setRapportEmailJour(Math.min(28,Math.max(1,parseInt(e.target.value)||1)));}}
+                      className="w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"/></div>
+                  <div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Heure UTC (0-23)</label>
+                    <input type="number" min="0" max="23" value={rapportEmailHeure} disabled={isLocked}
+                      onChange={e=>{if(isLocked)return;setRapportEmailHeure(Math.min(23,Math.max(0,parseInt(e.target.value)||0)));}}
+                      className="w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"/></div>
+                </div>
+                <p className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl px-3 py-2">
+                  Cron quotidien 8h UTC — envoi le jour {rapportEmailJour} du mois a chaque utilisateur ayant configure ce jour.
+                </p>
+              </div>
+            )}
+          </div>
+          <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
+            <h3 className="font-semibold text-[var(--text)] mb-1">Detection d'anomalies</h3>
+            <p className="text-xs text-[var(--text-muted)] mb-4">Alerte Dashboard et email si une depense depasse la moyenne des 3 mois precedents</p>
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 flex-wrap">
+                <label className="text-sm font-medium text-[var(--text)] flex-shrink-0 w-48">Seuil de declenchement</label>
+                <input type="number" min="10" max="200" step="5" value={seuilAnomaliesPct} disabled={isLocked}
+                  onChange={e=>{if(isLocked)return;setSeuilAnomaliesPct(Math.min(200,Math.max(10,parseInt(e.target.value)||50)));}}
+                  className="w-24 border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none text-right"/>
+                <span className="text-sm font-bold text-primary">%</span>
+              </div>
+              <div className="h-2 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden">
+                <div className={clsx('h-full rounded-full transition-all',seuilAnomaliesPct>100?'bg-slate-400':seuilAnomaliesPct>50?'bg-amber-400':'bg-orange-500')}
+                  style={{width:`${Math.min(100,(seuilAnomaliesPct/200)*100)}%`}}/>
+              </div>
+              <p className="text-xs text-[var(--text-muted)]">
+                {seuilAnomaliesPct<=30?'Tres sensible':seuilAnomaliesPct<=60?'Sensibilite standard':'Peu sensible'} — alerte si depense {'>'} {seuilAnomaliesPct}% au-dessus de la moyenne
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <button onClick={sauvegarderAlertes} disabled={savingAlertes||isLocked}
+              className={clsx('flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-medium transition-all disabled:opacity-60',isLocked?'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed':'bg-primary hover:bg-primary-dark text-white')}>
+              {isLocked?<Lock size={13}/>:<Save size={13}/>}
+              {savingAlertes?'Sauvegarde...':savedAlertes?'OK':isLocked?'Verrouille':'Sauvegarder'}
+            </button>
+          </div>
         </div>
       )}
 
