@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { serial } from '@/lib/serial';
+import { csrfCheck } from '@/lib/api-helpers';
+import { logAudit } from '@/lib/audit';
 
 // GET /api/correctifs-kpi
 export async function GET(req: NextRequest) {
@@ -17,7 +19,7 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json(serial({ correctifs }));
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
   }
 }
 
@@ -28,6 +30,8 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.id)
       return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
 
+    const csrf = csrfCheck(req);
+    if (csrf) return csrf;
     const { kpi, montant, motif } = await req.json();
 
     // SUJET 3 — 'solde' ajoute aux KPIs corrigibles
@@ -46,9 +50,10 @@ export async function POST(req: NextRequest) {
         motif:   motif.trim(),
       },
     });
+    await logAudit({ userId: session.user.id, action: 'create', entityType: 'correctif_kpi', entityId: correctif.id, details: { kpi, motif }, req });
     return NextResponse.json(serial({ success: true, id: correctif.id }), { status: 201 });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
   }
 }
 
@@ -59,6 +64,8 @@ export async function DELETE(req: NextRequest) {
     if (!session?.user?.id)
       return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
 
+    const csrf = csrfCheck(req);
+    if (csrf) return csrf;
     const id = new URL(req.url).searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
 
@@ -69,8 +76,9 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Correctif introuvable' }, { status: 404 });
 
     await (prisma as any).correctifKpi.delete({ where: { id } });
+    await logAudit({ userId: session.user.id, action: 'delete', entityType: 'correctif_kpi', entityId: id, details: { kpi: existing.kpi, motif: existing.motif }, req });
     return NextResponse.json({ success: true });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
   }
 }
