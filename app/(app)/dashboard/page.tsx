@@ -11,7 +11,7 @@ import { formatFCFA, MOIS_COURTS, TYPE_LABELS, calculerScore, couleurScore,
          ORDRE_TYPES, LABEL_PREVISION } from '@/types';
 import { useToast } from '@/components/Toast';
 import { usePushNotifications } from '@/lib/hooks/usePushNotifications';
-import { useDashboardGlobal, useBanques, useComptes, useCategories, useDashboardCumul, useRecapAnnuel } from '@/lib/hooks/useDashboard';
+import { useDashboardGlobal, useBanques, useComptes, useCategories, useDashboardCumul, useRecapAnnuel, useAnomalies } from '@/lib/hooks/useDashboard';
 import useSWR from 'swr';
 import { clsx } from 'clsx';
 
@@ -120,6 +120,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     { revalidateOnFocus: false, dedupingInterval: 30_000 }
   );
 
+  const { data: anomaliesData } = useAnomalies(moisCourant, anneeCourante);
   const banques = _banquesRaw?.banques ?? [];
   const _comptesAvecObj = _comptesRaw?.comptes ?? [];
   const _fondsAvecSeuil = (_globalRaw?.fondsRoulement ?? []).map((f: any) => ({
@@ -384,6 +385,13 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const nMoisUrgence  = data?.nMoisUrgence??6;
   const fondsObjectif = revenuRef>0?revenuRef*nMoisUrgence:0;
   const {score,details} = calculerScore({totalDepenses:depenses.reel,totalDepAnt:depenses.ant,totalEpargne:epargne.reel,totalRevenus:revenus.reel,solde,fondsUrgence,fondsObjectif:fondsObjectif||3720000});
+  const scoreTendance = (() => {
+    if (sparklines.revenus.length < 2) return null;
+    const n = sparklines.revenus.length;
+    const calcS = (i: number) => { const rev = sparklines.revenus[i]??0, dep = sparklines.depenses[i]??0, ep = sparklines.epargne[i]??0; return calculerScore({ totalDepenses:dep, totalDepAnt:dep, totalEpargne:ep, totalRevenus:rev, solde:rev-dep-ep, fondsUrgence, fondsObjectif:fondsObjectif||3720000 }).score; };
+    const prev = calcS(n-2), curr = calcS(n-1);
+    return { hausse: curr >= prev, pts: Math.abs(curr - prev) };
+  })();
   const alertes = budgetMois.filter((b:any)=>b.categorie?.type?.startsWith('depense')&&b.montantAnticipe>0&&b.montantReel>b.montantAnticipe).map((b:any)=>b.categorie?.nom);
 
   const ouvrirModal = (type:string) => {
@@ -495,6 +503,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       </DashboardModal>
 
       <BannièreFinDeMois moisCourant={moisCourant} anneeCourante={anneeCourante}/>
+      {(anomaliesData?.anomalies?.length ?? 0) > 0 && (<div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl px-4 py-3 flex items-start gap-2.5"><AlertTriangle size={16} className="text-orange-500 flex-shrink-0 mt-0.5"/><div><p className="text-sm font-semibold text-orange-800 dark:text-orange-300">{anomaliesData.anomalies.length} anomalie(s) ce mois vs moyenne 3 mois</p><div className="flex flex-wrap gap-1.5 mt-1">{anomaliesData.anomalies.map((a:any,i:number)=>(<span key={i} className="text-xs bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 px-2 py-0.5 rounded-full">{a.categorie} +{a.ecartPct}%</span>))}</div></div></div>)}
 
       <Separateur emoji="📅" label={`${MOIS_NOMS_FR[moisCourant]} ${anneeCourante} — Mois courant`}/>
       {!loadingMois && revenus.reel > 0 && (
@@ -520,6 +529,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
             <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 col-span-2 lg:col-span-1 flex flex-col items-center justify-center gap-2 transition-colors">
               <p className="text-xs font-medium text-purple-500 dark:text-purple-400">Score financier</p>
               <JaugeCirculaire score={score} max={20}/>
+              {scoreTendance && (<div className={clsx('flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full mt-0.5',scoreTendance.hausse?'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400':'bg-red-100 dark:bg-red-900/30 text-red-500 dark:text-red-400')}>{scoreTendance.pts > 0 ? (scoreTendance.hausse ? '+' : '-') + scoreTendance.pts + 'pt' : '='} vs M-1</div>)}
               <div className="w-full space-y-1 mt-1">{details.map((d:any,i:number)=>(
                 <div key={i} className="flex items-center gap-1.5"><div className="flex-1 h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden"><div className={clsx('h-full rounded-full transition-all',d.pts>=d.max?'bg-green-500':d.pts>=d.max/2?'bg-amber-400':'bg-red-400')} style={{width:`${(d.pts/d.max)*100}%`}}/></div><span className="text-[10px] text-[var(--text-muted)] w-6 text-right">{d.pts}/{d.max}</span></div>
               ))}</div>

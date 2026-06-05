@@ -57,6 +57,15 @@ export function useDashboardCumul() {
     refreshInterval:      0,
   });
 }
+// Anomalies — cache 5 min
+export function useAnomalies(mois: number, annee: number) {
+  return useSWR(
+    `/api/anomalies?mois=${mois}&annee=${annee}`,
+    fetcher,
+    { revalidateOnFocus: false, dedupingInterval: 5 * 60 * 1000 }
+  );
+}
+
 // Recap annuel — cache fort (donnees historiques)
 export function useRecapAnnuel(annee: number, moisCourant: number) {
   return useSWR(
