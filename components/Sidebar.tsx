@@ -1,10 +1,12 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
+import { signOut } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, CalendarCheck2, Wallet,
-  RefreshCcw, Settings, X, TrendingUp
+  RefreshCcw, Settings, X, TrendingUp, LogOut
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -23,6 +25,7 @@ interface SidebarProps {
 
 export default function Sidebar({ open, onClose }: SidebarProps) {
   const pathname = usePathname();
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   return (
     <>
@@ -155,6 +158,11 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           <div className="mb-3 h-px"
             style={{ background: 'linear-gradient(90deg, transparent, var(--border), transparent)' }} />
 
+          <button onClick={() => setShowLogoutModal(true)} className="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl mb-3 text-sm font-medium text-red-500 hover:bg-red-500/10 transition-all group">
+            <LogOut size={15} className="flex-shrink-0" />
+            <span>Se deconnecter</span>
+          </button>
+
           {/* Devise + version */}
           <div className="flex items-center justify-between px-1">
             <span className="text-[10px] text-[var(--text-muted)]">Devise : F CFA</span>
@@ -169,6 +177,27 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           </div>
         </div>
       </aside>
+
+      {showLogoutModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowLogoutModal(false)} />
+          <div className="relative bg-[var(--surface)] rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-[var(--border)] bg-red-50 dark:bg-red-900/20">
+              <LogOut size={18} className="text-red-500" />
+              <h3 className="font-bold text-red-700 dark:text-red-400">Se deconnecter ?</h3>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-[var(--text-muted)]">Votre session sera fermee. Vous devrez vous reconnecter pour acceder a GestBudget.</p>
+              <div className="flex gap-2">
+                <button onClick={() => setShowLogoutModal(false)} className="flex-1 py-2.5 rounded-xl border border-[var(--border)] text-sm text-[var(--text-muted)] hover:bg-slate-50 dark:hover:bg-dark-card transition-all">Annuler</button>
+                <button onClick={() => signOut({ callbackUrl: '/login' })} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition-all">
+                  <LogOut size={14} />Confirmer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

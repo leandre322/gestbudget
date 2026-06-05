@@ -250,6 +250,10 @@ model Parametres {
   objectifRevenusAnnuel       BigInt @default(0)
   objectifRemboursementAnnuel BigInt @default(0)
   nMoisUrgence                Int    @default(6)
+  rapportEmailActif            Boolean @default(true)
+  rapportEmailJour             Int     @default(1)
+  rapportEmailHeure            Int     @default(8)
+  seuilAnomaliesPct            Int     @default(50)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
