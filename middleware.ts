@@ -6,8 +6,17 @@ import { neon } from '@neondatabase/serverless';
 const rlFallback = new Map<string, { count: number; resetAt: number }>();
 
 async function checkRL(key: string, limit: number, windowMs: number): Promise<boolean> {
+  if (!process.env.DATABASE_URL_UNPOOLED) {
+    // Fallback in-memory si variable absente
+    const now = Date.now();
+    const e = rlFallback.get(key);
+    if (!e || now > e.resetAt) { rlFallback.set(key, { count: 1, resetAt: now + windowMs }); return true; }
+    if (e.count >= limit) return false;
+    e.count++;
+    return true;
+  }
   try {
-    const sql = neon(process.env.DATABASE_URL_UNPOOLED!);
+    const sql = neon(process.env.DATABASE_URL_UNPOOLED);
     const resetAt = new Date(Date.now() + windowMs).toISOString();
     const rows = await sql`
       INSERT INTO rate_limits (key, count, reset_at)
