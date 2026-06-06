@@ -167,13 +167,13 @@ function ModaleVersement({
         </div>
 
         <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-sm text-blue-700 dark:text-blue-400">
-          Restant Ã  atteindre : <strong>{formatMontant(restant)}</strong>
+          Restant a  atteindre : <strong>{formatMontant(restant)}</strong>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Montant Ã  verser (FCFA) <span className="text-red-500">*</span>
+              Montant a  verser (FCFA) <span className="text-red-500">*</span>
             </label>
             <input
               type="number" value={montant}
@@ -278,7 +278,7 @@ function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => 
         {mode === 'duree' && (
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Ã‰pargne mensuelle (FCFA)
+              Epargne mensuelle (FCFA)
             </label>
             <input type="number" value={valeur} onChange={e => setValeur(e.target.value)}
               placeholder="Ex : 50000" min="1"
@@ -348,7 +348,7 @@ function ModaleCreerProjet({
     e.preventDefault()
     if (!montantCible || Number(montantCible) <= 0) { toast.error('Montant cible invalide'); return }
     if (!dateCible) { toast.error('Date cible requise'); return }
-    if (new Date(dateCible) <= new Date(dateDebut)) { toast.error('Date cible doit Ãªtre après date de début'); return }
+    if (new Date(dateCible) <= new Date(dateDebut)) { toast.error('Date cible doit etre après date de début'); return }
 
     setLoading(true)
     try {
@@ -483,7 +483,7 @@ function CarteProjet({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: projet.id, statut }),
     })
-    if (res.ok) { toast.success('Statut mis Ã  jour'); onMutate() }
+    if (res.ok) { toast.success('Statut mis a  jour'); onMutate() }
     else toast.error('Erreur')
   }
 
@@ -496,7 +496,7 @@ function CarteProjet({
           ? 'border-amber-300 dark:border-amber-700'
           : 'border-gray-200 dark:border-gray-700'
       }`}>
-        {/* En-tÃªte */}
+        {/* En-tete */}
         <div className="flex items-start gap-3">
           <JaugeCirculaire pourcentage={projet.pourcentage} atteint={atteint} taille={72} />
           <div className="flex-1 min-w-0">
@@ -524,7 +524,7 @@ function CarteProjet({
             {/* Dépassement */}
             {depasse && (
               <p className="text-xs text-gray-400 dark:text-gray-500">
-                +{formatMontant(projet.montantActuel - projet.montantCible)} au-delÃ  de l'objectif
+                +{formatMontant(projet.montantActuel - projet.montantCible)} au-delà de l'objectif
               </p>
             )}
           </div>
