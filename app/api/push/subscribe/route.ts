@@ -2,44 +2,71 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import { logAudit } from '@/lib/audit';
-import { csrfCheck } from '@/lib/api-helpers';
 
+/**
+ * POST /api/push/subscribe
+ * Enregistre un abonnement push pour l'utilisateur courant.
+ * Body (objet PushSubscription sérialisé) :
+ *   { endpoint: string, keys: { p256dh: string, auth: string } }
+ *
+ * Schéma Prisma : @@unique([userId, endpoint])
+ * → clé Prisma : userId_endpoint (composite)
+ */
 export async function POST(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id)
+    return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
+
   try {
-    const csrfErr = csrfCheck(req); if (csrfErr) return csrfErr;
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
+    const body = await req.json();
+    const { endpoint, keys } = body ?? {};
+    const { p256dh, auth } = keys ?? {};
 
-    const { endpoint, keys } = await req.json();
-    if (!endpoint || !keys?.p256dh || !keys?.auth)
-      return NextResponse.json({ error: 'Subscription invalide' }, { status: 400 });
+    if (!endpoint || !p256dh || !auth) {
+      return NextResponse.json(
+        { error: 'Subscription invalide — endpoint, p256dh et auth requis' },
+        { status: 400 }
+      );
+    }
 
+    // FIX : @@unique([userId, endpoint]) → where avec clé composite userId_endpoint
+    // Pas @unique sur endpoint seul → `where: { endpoint }` lèverait une erreur Prisma
     await prisma.pushSubscription.upsert({
-      where: { userId_endpoint: { userId: session.user.id, endpoint } },
-      update: { p256dh: keys.p256dh, auth: keys.auth },
-      create: { userId: session.user.id, endpoint, p256dh: keys.p256dh, auth: keys.auth },
+      where:  { userId_endpoint: { userId: session.user.id, endpoint } },
+      update: { p256dh, auth },
+      create: { endpoint, p256dh, auth, userId: session.user.id },
     });
 
-    await logAudit({ userId: session.user.id, action: 'push_subscribe', entityType: 'push', req });
-    return NextResponse.json({ success: true });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error('[push/subscribe] POST:', err);
+    return NextResponse.json({ error: 'Erreur serveur' }, { status: 500 });
   }
 }
 
+/**
+ * DELETE /api/push/subscribe
+ * Supprime l'abonnement push de l'utilisateur courant.
+ * Body : { endpoint: string }
+ */
 export async function DELETE(req: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id)
+    return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
 
-    const { endpoint } = await req.json();
+  try {
+    const { endpoint } = (await req.json()) ?? {};
+    if (!endpoint)
+      return NextResponse.json({ error: 'Endpoint manquant' }, { status: 400 });
+
+    // deleteMany : pas de contrainte unique requise, filtre par userId + endpoint
     await prisma.pushSubscription.deleteMany({
-      where: { userId: session.user.id, endpoint },
+      where: { endpoint, userId: session.user.id },
     });
 
-    return NextResponse.json({ success: true });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error('[push/subscribe] DELETE:', err);
+    return NextResponse.json({ error: 'Erreur serveur' }, { status: 500 });
   }
 }

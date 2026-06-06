@@ -42,6 +42,7 @@ async function checkRL(key: string, limit: number, windowMs: number): Promise<bo
   }
 }
 
+// ── Règles IP-based (routes publiques sensibles) ─────────────────────────────
 const RATE_RULES = [
   { path: '/api/auth',            limit: 10, window:  60_000 },
   { path: '/api/register',        limit:  3, window: 300_000 },
@@ -50,18 +51,24 @@ const RATE_RULES = [
   { path: '/api/push/subscribe',  limit: 20, window:  60_000 },
 ];
 
+// ── Règles userId-based (routes lourdes authentifiées) — S5 NOUVEAU ──────────
+const AUTH_RATE_RULES = [
+  { path: '/api/analytiques', limit: 60, window: 60_000 }, // 60 req/min par userId
+  { path: '/api/export/pdf',  limit: 10, window: 60_000 }, // 10 exports/min par userId
+];
+
 const PROTECTED_PAGES = [
   '/dashboard', '/suivi', '/recapitulatif',
   '/budget', '/decaissements', '/parametres', '/ajout-retrait-fonds',
-  '/projets', // D3 — planificateur projets
-  "/analytiques",
+  '/projets',
+  '/analytiques', // ← S5 : était dans PROTECTED_PAGES mais manquait dans le matcher
 ];
 
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
   const ip = (req.headers.get('x-forwarded-for') ?? '127.0.0.1').split(',')[0].trim();
 
-  // 1. Rate limiting persistant
+  // 1. Rate limiting IP (routes publiques sensibles)
   for (const rule of RATE_RULES) {
     if (pathname.startsWith(rule.path)) {
       const allowed = await checkRL(`${ip}:${rule.path}`, rule.limit, rule.window);
@@ -76,7 +83,7 @@ export async function middleware(req: NextRequest) {
   }
 
   // 2. CSRF mutations API
-  const isMutation = ['POST','PUT','DELETE','PATCH'].includes(req.method.toUpperCase());
+  const isMutation = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method.toUpperCase());
   const isApiRoute = pathname.startsWith('/api/') && !pathname.startsWith('/api/auth');
   if (isMutation && isApiRoute) {
     const origin  = req.headers.get('origin')  ?? '';
@@ -84,7 +91,9 @@ export async function middleware(req: NextRequest) {
     const appUrl  = process.env.NEXT_PUBLIC_APP_URL ?? '';
     if (appUrl) {
       const allowed = new URL(appUrl).origin;
-      const isCron  = pathname.startsWith('/api/push/cron');
+      // FIX S5 : /api/cron/* ajouté — Vercel cron n'envoie pas l'origin de l'app
+      // Avant : seul /api/push/cron était exempté → /api/cron/bilan-hebdo bloqué en 403
+      const isCron = pathname.startsWith('/api/cron') || pathname.startsWith('/api/push/cron');
       if (!isCron && !origin.startsWith(allowed) && !referer.startsWith(allowed)) {
         return new NextResponse(
           JSON.stringify({ error: 'Requete non autorisee (CSRF)' }),
@@ -94,19 +103,41 @@ export async function middleware(req: NextRequest) {
     }
   }
 
-  // 3. Auth protection pages
+  // 3. Auth (pages protégées) + rate limiting userId (routes lourdes)
+  //    getToken mutualisé : un seul appel JWT pour les deux vérifications
   const isProtected = PROTECTED_PAGES.some(p => pathname.startsWith(p));
-  if (isProtected) {
+  const isAuthRL    = AUTH_RATE_RULES.some(r => pathname.startsWith(r.path));
+
+  if (isProtected || isAuthRL) {
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-    if (!token) {
+
+    // 3a. Redirect login si page protégée sans session
+    if (isProtected && !token) {
       const url = req.nextUrl.clone();
       url.pathname = '/login';
       url.searchParams.set('callbackUrl', pathname);
       return NextResponse.redirect(url);
     }
+
+    // 3b. Rate limiting userId sur routes lourdes authentifiées
+    //     Clé : uid:{userId}:{path} — séparé des clés IP pour ne pas mélanger
+    if (isAuthRL && token?.sub) {
+      for (const rule of AUTH_RATE_RULES) {
+        if (pathname.startsWith(rule.path)) {
+          const allowed = await checkRL(`uid:${token.sub}:${rule.path}`, rule.limit, rule.window);
+          if (!allowed) {
+            const retryAfter = Math.ceil(rule.window / 1000);
+            return new NextResponse(
+              JSON.stringify({ error: `Trop de requetes. Reessayez dans ${retryAfter} secondes.` }),
+              { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': String(retryAfter) } }
+            );
+          }
+        }
+      }
+    }
   }
 
-  // 4. Headers securite
+  // 4. Headers sécurité
   // NOTE : microphone PAS restreint — requis pour Web Speech API (D1 vocal)
   const res = NextResponse.next();
   res.headers.set('X-Frame-Options',        'SAMEORIGIN');
@@ -126,11 +157,14 @@ export const config = {
     '/decaissements/:path*',
     '/parametres/:path*',
     '/ajout-retrait-fonds/:path*',
-    '/projets/:path*',           // D3
+    '/projets/:path*',
+    '/analytiques/:path*',       // ← FIX S5 : manquait → /analytiques non protégée sans ça
     '/api/auth/:path*',
     '/api/register',
     '/api/forgot-password',
     '/api/reset-password',
     '/api/push/:path*',
+    '/api/analytiques/:path*',   // ← NOUVEAU S5 : rate limiting userId + CSRF
+    '/api/export/:path*',        // ← NOUVEAU S5 : rate limiting userId
   ],
 };

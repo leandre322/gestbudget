@@ -5,6 +5,7 @@ import { Plus, Pencil, Trash2, Check, X, Upload, Save, Link, Link2Off,
          ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Lock, AlertTriangle } from 'lucide-react';
 import { TYPE_LABELS, ORDRE_TYPES, formatFCFA } from '@/types';
 import { clsx } from 'clsx';
+import { PushSubscribeButton } from '@/components/notifications/PushSubscribeButton';
 import { useLock } from '../layout';
 
 const GRANDES_CATEGORIES = [
@@ -774,6 +775,19 @@ export default function ParametresPage() {
                 Parametre sauvegarde avec les alertes ci-dessous
               </span>
             </div>
+          </div>
+          
+           {/* ── Notifications push ───────────────────────────────────────── */}
+          <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
+            <h3 className="font-semibold text-[var(--text)] mb-1">Notifications push</h3>
+            <p className="text-xs text-[var(--text-muted)] mb-4">
+              Recevez le bilan hebdomadaire chaque lundi à 8h directement sur
+              cet appareil, sans application.{' '}
+              <span className="text-amber-500 dark:text-amber-400">
+                Safari iOS : l'app doit être ajoutée à l'écran d'accueil.
+              </span>
+            </p>
+            <PushSubscribeButton />
           </div>
 
           {/* Bouton sauvegarder */}
