@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+﻿import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -7,7 +7,7 @@ import { logAudit } from '@/lib/audit'
 import { serial } from '@/lib/serial'
 import { sendPushToUser } from '@/lib/push'
 
-// ── Schemas Zod ────────────────────────────────────────────────────────────────
+// â”€â”€ Schemas Zod â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const ProjetCreateSchema = z.object({
   nom: z.string().min(1).max(100),
   description: z.string().max(500).optional().nullable(),
@@ -40,7 +40,7 @@ const VersementSchema = z.object({
   compteId: z.string().optional().nullable(),
 })
 
-// ── Serialisation BigInt ───────────────────────────────────────────────────────
+// â”€â”€ Serialisation BigInt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function serializeProjet(p: any) {
   return {
     ...p,
@@ -56,7 +56,7 @@ function serializeProjet(p: any) {
   }
 }
 
-// ── GET — Liste des projets ────────────────────────────────────────────────────
+// â”€â”€ GET â€” Liste des projets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
         ...(statut ? { statut } : {}),
       },
       include: {
-        categorie: { select: { id: true, nom: true, couleur: true } },
+        categorie: { select: { id: true, nom: true } },
         compteFonds: { select: { id: true, nom: true } },
       },
       orderBy: [
@@ -104,7 +104,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// ── POST — Creer un projet ─────────────────────────────────────────────────────
+// â”€â”€ POST â€” Creer un projet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -139,19 +139,18 @@ export async function POST(req: NextRequest) {
         dateDebut: new Date(data.dateDebut),
         dateCible: new Date(data.dateCible),
         statut: 'actif',
-        categorieId: data.categorieId ?? null,
         compteFondsId: data.compteFondsId ?? null,
         notifSeuils: data.notifSeuils,
       },
       include: {
-        categorie: { select: { id: true, nom: true, couleur: true } },
+        categorie: { select: { id: true, nom: true } },
         compteFonds: { select: { id: true, nom: true } },
       },
     })
 
     await logAudit({
       userId: session.user.id,
-      action: 'CREATE',
+      action: 'create',
       entityType: 'projet',
       entityId: projet.id,
       details: { nom: data.nom, montantCible: data.montantCible },
@@ -165,7 +164,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// ── PUT — Mettre a jour un projet (inclut versement) ──────────────────────────
+// â”€â”€ PUT â€” Mettre a jour un projet (inclut versement) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function PUT(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -217,14 +216,14 @@ export async function PUT(req: NextRequest) {
         ...(data.notifSeuils !== undefined ? { notifSeuils: data.notifSeuils } : {}),
       },
       include: {
-        categorie: { select: { id: true, nom: true, couleur: true } },
+        categorie: { select: { id: true, nom: true } },
         compteFonds: { select: { id: true, nom: true } },
       },
     })
 
     await logAudit({
       userId: session.user.id,
-      action: 'UPDATE',
+      action: 'update',
       entityType: 'projet',
       entityId: data.id,
       details: data,
@@ -238,7 +237,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-// ── DELETE — Supprimer un projet ───────────────────────────────────────────────
+// â”€â”€ DELETE â€” Supprimer un projet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function DELETE(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -261,7 +260,7 @@ export async function DELETE(req: NextRequest) {
 
     await logAudit({
       userId: session.user.id,
-      action: 'DELETE',
+      action: 'delete',
       entityType: 'projet',
       entityId: id,
       details: { nom: existing.nom },
@@ -275,7 +274,7 @@ export async function DELETE(req: NextRequest) {
   }
 }
 
-// ── Handler versement ─────────────────────────────────────────────────────────
+// â”€â”€ Handler versement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function handleVersement(
   userId: string,
   data: z.infer<typeof VersementSchema>,
@@ -305,7 +304,7 @@ async function handleVersement(
           statut: nouveau >= cible ? 'atteint' : 'actif',
         },
         include: {
-          categorie: { select: { id: true, nom: true, couleur: true } },
+          categorie: { select: { id: true, nom: true } },
           compteFonds: { select: { id: true, nom: true } },
         },
       }),
@@ -313,11 +312,9 @@ async function handleVersement(
       prisma.decaissement.create({
         data: {
           userId,
-          date: new Date(),
-          description: `Versement projet : ${projet.nom}`,
-          montant: BigInt(data.montant),
-          categorieId: data.categorieId ?? null,
-          compteId: data.compteId ?? null,
+                    description: `Versement projet : ${projet.nom}`,
+          dateOperation: new Date(),
+          montantTotal: BigInt(data.montant),
           sourceVocale: false,
         },
       }),
@@ -325,7 +322,7 @@ async function handleVersement(
 
     await logAudit({
       userId,
-      action: 'VERSEMENT',
+      action: 'create',
       entityType: 'projet',
       entityId: data.projetId,
       details: { montant: data.montant, ancienPct, nouveauPct },
@@ -341,10 +338,10 @@ async function handleVersement(
     for (const seuil of seuils) {
       if (ancienPct < seuil && nouveauPct >= seuil) {
         const msg = seuil === 100
-          ? `🎯 Objectif "${projet.nom}" atteint !`
-          : `📈 Projet "${projet.nom}" : ${seuil}% atteint`
+          ? `ðŸŽ¯ Objectif "${projet.nom}" atteint !`
+          : `ðŸ“ˆ Projet "${projet.nom}" : ${seuil}% atteint`
         await sendPushToUser(userId, {
-          title: 'GestBudget — Projet',
+          title: 'GestBudget â€” Projet',
           body: msg,
           icon: '/icons/icon-192x192.png',
         }).catch(() => {})

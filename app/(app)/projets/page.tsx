@@ -1,11 +1,11 @@
-'use client'
+﻿'use client'
 
 import { useState, useCallback, useMemo } from 'react'
 import { useSession } from 'next-auth/react'
 import useSWR from 'swr'
 import { toast } from 'react-hot-toast'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 interface Projet {
   id: string
   nom: string
@@ -28,7 +28,7 @@ interface Projet {
 interface Categorie { id: string; nom: string; couleur?: string; type: string }
 interface Compte    { id: string; nom: string; solde: number }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
 function formatMontant(m: number) {
@@ -45,7 +45,7 @@ function montantContribMensuelle(montantCible: number, montantActuel: number, da
   return Math.ceil(restant / mois)
 }
 
-// ── Jauge circulaire ──────────────────────────────────────────────────────────
+// â”€â”€ Jauge circulaire â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function JaugeCirculaire({ pourcentage, atteint, taille = 80 }: {
   pourcentage: number
   atteint: boolean
@@ -84,10 +84,10 @@ function JaugeCirculaire({ pourcentage, atteint, taille = 80 }: {
           style={{ transition: 'stroke-dashoffset 0.6s ease-in-out' }}
         />
       </svg>
-      {/* Texte centré */}
+      {/* Texte centrÃ© */}
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         {atteint ? (
-          <span style={{ fontSize: taille * 0.28 }}>🎯</span>
+          <span style={{ fontSize: taille * 0.28 }}>ðŸŽ¯</span>
         ) : (
           <span className="font-bold text-gray-800 dark:text-white leading-none" style={{ fontSize: taille * 0.22 }}>
             {pourcentage}%
@@ -98,7 +98,7 @@ function JaugeCirculaire({ pourcentage, atteint, taille = 80 }: {
   )
 }
 
-// ── Modale versement ──────────────────────────────────────────────────────────
+// â”€â”€ Modale versement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function ModaleVersement({
   projet,
   categories,
@@ -142,11 +142,11 @@ function ModaleVersement({
         toast.error(err.message || 'Erreur versement')
         return
       }
-      toast.success('Versement enregistré')
+      toast.success('Versement enregistrÃ©')
       onSuccess()
       onClose()
     } catch {
-      toast.error('Erreur réseau')
+      toast.error('Erreur rÃ©seau')
     } finally {
       setLoading(false)
     }
@@ -157,7 +157,7 @@ function ModaleVersement({
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Verser sur « {projet.nom} »
+            Verser sur Â« {projet.nom} Â»
           </h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
@@ -167,13 +167,13 @@ function ModaleVersement({
         </div>
 
         <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-sm text-blue-700 dark:text-blue-400">
-          Restant à atteindre : <strong>{formatMontant(restant)}</strong>
+          Restant Ã  atteindre : <strong>{formatMontant(restant)}</strong>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Montant à verser (FCFA) <span className="text-red-500">*</span>
+              Montant Ã  verser (FCFA) <span className="text-red-500">*</span>
             </label>
             <input
               type="number" value={montant}
@@ -184,10 +184,10 @@ function ModaleVersement({
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Catégorie du décaissement</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">CatÃ©gorie du dÃ©caissement</label>
             <select value={categorieId} onChange={e => setCategorieId(e.target.value)}
               className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-              <option value="">Sans catégorie</option>
+              <option value="">Sans catÃ©gorie</option>
               {categories.filter((b: Categorie) => b.type === 'depense').map((c: Categorie) => (
                 <option key={c.id} value={c.id}>{c.nom}</option>
               ))}
@@ -220,7 +220,7 @@ function ModaleVersement({
   )
 }
 
-// ── Modale simulateur ─────────────────────────────────────────────────────────
+// â”€â”€ Modale simulateur â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => void }) {
   const [mode, setMode] = useState<'duree' | 'epargne'>('duree')
   const [valeur, setValeur] = useState('')
@@ -249,7 +249,7 @@ function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => 
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Simulateur — {projet.nom}</h3>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Simulateur â€” {projet.nom}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
               <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
@@ -259,7 +259,7 @@ function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => 
 
         <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-sm text-gray-600 dark:text-gray-400">
           Restant : <strong className="text-gray-900 dark:text-white">{formatMontant(restant)}</strong>
-          {' · '}Date cible : <strong className="text-gray-900 dark:text-white">{formatDate(projet.dateCible)}</strong>
+          {' Â· '}Date cible : <strong className="text-gray-900 dark:text-white">{formatDate(projet.dateCible)}</strong>
         </div>
 
         {/* Toggle mode */}
@@ -278,7 +278,7 @@ function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => 
         {mode === 'duree' && (
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Épargne mensuelle (FCFA)
+              Ã‰pargne mensuelle (FCFA)
             </label>
             <input type="number" value={valeur} onChange={e => setValeur(e.target.value)}
               placeholder="Ex : 50000" min="1"
@@ -288,7 +288,7 @@ function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => 
           </div>
         )}
 
-        {/* Résultat */}
+        {/* RÃ©sultat */}
         {resultat && (
           <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
             {mode === 'duree' && 'mois' in resultat && (
@@ -299,7 +299,7 @@ function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => 
             )}
             {mode === 'epargne' && 'montantMensuel' in resultat && (
               <div className="text-center">
-                <p className="text-2xl font-bold text-blue-700 dark:text-blue-400">{formatMontant(resultat.montantMensuel)}</p>
+                <p className="text-2xl font-bold text-blue-700 dark:text-blue-400">{formatMontant(resultat.montantMensuel??0)}</p>
                 <p className="text-sm text-blue-600 dark:text-blue-500 mt-1">par mois pendant {resultat.mois} mois</p>
               </div>
             )}
@@ -315,7 +315,7 @@ function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => 
   )
 }
 
-// ── Modale création projet ────────────────────────────────────────────────────
+// â”€â”€ Modale crÃ©ation projet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function ModaleCreerProjet({
   categories,
   comptes,
@@ -348,7 +348,7 @@ function ModaleCreerProjet({
     e.preventDefault()
     if (!montantCible || Number(montantCible) <= 0) { toast.error('Montant cible invalide'); return }
     if (!dateCible) { toast.error('Date cible requise'); return }
-    if (new Date(dateCible) <= new Date(dateDebut)) { toast.error('Date cible doit être après date de début'); return }
+    if (new Date(dateCible) <= new Date(dateDebut)) { toast.error('Date cible doit Ãªtre aprÃ¨s date de dÃ©but'); return }
 
     setLoading(true)
     try {
@@ -365,14 +365,14 @@ function ModaleCreerProjet({
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        toast.error(err.message || 'Erreur création')
+        toast.error(err.message || 'Erreur crÃ©ation')
         return
       }
-      toast.success('Projet créé')
+      toast.success('Projet crÃ©Ã©')
       onSuccess()
       onClose()
     } catch {
-      toast.error('Erreur réseau')
+      toast.error('Erreur rÃ©seau')
     } finally {
       setLoading(false)
     }
@@ -407,7 +407,7 @@ function ModaleCreerProjet({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date de début</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date de dÃ©but</label>
               <input type="date" value={dateDebut} onChange={e => setDateDebut(e.target.value)}
                 className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
             </div>
@@ -420,12 +420,12 @@ function ModaleCreerProjet({
           {/* Suggestion contribution mensuelle */}
           {contribMensuelle > 0 && (
             <div className="p-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-lg text-sm text-emerald-700 dark:text-emerald-400">
-              💡 Contribution mensuelle suggérée : <strong>{formatMontant(contribMensuelle)}</strong>
+              ðŸ’¡ Contribution mensuelle suggÃ©rÃ©e : <strong>{formatMontant(contribMensuelle)}</strong>
             </div>
           )}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Catégorie</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">CatÃ©gorie</label>
               <select value={categorieId} onChange={e => setCategorieId(e.target.value)}
                 className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                 <option value="">Aucune</option>
@@ -449,7 +449,7 @@ function ModaleCreerProjet({
             <button type="submit" disabled={loading}
               className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg px-4 py-2 text-sm font-semibold transition-colors flex items-center justify-center gap-2">
               {loading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-              Créer le projet
+              CrÃ©er le projet
             </button>
           </div>
         </form>
@@ -458,7 +458,7 @@ function ModaleCreerProjet({
   )
 }
 
-// ── Carte projet ──────────────────────────────────────────────────────────────
+// â”€â”€ Carte projet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function CarteProjet({
   projet,
   categories,
@@ -483,7 +483,7 @@ function CarteProjet({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: projet.id, statut }),
     })
-    if (res.ok) { toast.success('Statut mis à jour'); onMutate() }
+    if (res.ok) { toast.success('Statut mis Ã  jour'); onMutate() }
     else toast.error('Erreur')
   }
 
@@ -496,7 +496,7 @@ function CarteProjet({
           ? 'border-amber-300 dark:border-amber-700'
           : 'border-gray-200 dark:border-gray-700'
       }`}>
-        {/* En-tête */}
+        {/* En-tÃªte */}
         <div className="flex items-start gap-3">
           <JaugeCirculaire pourcentage={projet.pourcentage} atteint={atteint} taille={72} />
           <div className="flex-1 min-w-0">
@@ -521,10 +521,10 @@ function CarteProjet({
               <span className="font-semibold text-gray-800 dark:text-gray-200">{formatMontant(projet.montantActuel)}</span>
               <span className="text-gray-400 dark:text-gray-500"> / {formatMontant(projet.montantCible)}</span>
             </div>
-            {/* Dépassement */}
+            {/* DÃ©passement */}
             {depasse && (
               <p className="text-xs text-gray-400 dark:text-gray-500">
-                +{formatMontant(projet.montantActuel - projet.montantCible)} au-delà de l'objectif
+                +{formatMontant(projet.montantActuel - projet.montantCible)} au-delÃ  de l'objectif
               </p>
             )}
           </div>
@@ -532,7 +532,7 @@ function CarteProjet({
 
         {/* Dates */}
         <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-          <span>Début : {formatDate(projet.dateDebut)}</span>
+          <span>DÃ©but : {formatDate(projet.dateDebut)}</span>
           <span className={projet.enRetard ? 'text-red-500 dark:text-red-400 font-medium' : ''}>
             Cible : {formatDate(projet.dateCible)}
             {projet.joursRestants !== null && projet.joursRestants > 0 && (
@@ -541,10 +541,10 @@ function CarteProjet({
           </span>
         </div>
 
-        {/* Contribution suggérée (actif seulement) */}
+        {/* Contribution suggÃ©rÃ©e (actif seulement) */}
         {projet.statut === 'actif' && !atteint && contrib > 0 && (
           <div className="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-3 py-1.5 rounded-lg">
-            💡 {formatMontant(contrib)}/mois pour atteindre l'objectif
+            ðŸ’¡ {formatMontant(contrib)}/mois pour atteindre l'objectif
           </div>
         )}
 
@@ -562,7 +562,7 @@ function CarteProjet({
             <button onClick={() => handleStatut('abandonne')}
               className="bg-gray-100 dark:bg-gray-700 hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg px-3 py-1.5 text-xs transition-colors"
               title="Abandonner">
-              ✕
+              âœ•
             </button>
           </div>
         )}
@@ -572,7 +572,7 @@ function CarteProjet({
           <div className="flex gap-2">
             <button onClick={() => handleStatut('actif')}
               className="flex-1 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors">
-              Réactiver
+              RÃ©activer
             </button>
           </div>
         )}
@@ -591,7 +591,7 @@ function CarteProjet({
   )
 }
 
-// ── Page principale ───────────────────────────────────────────────────────────
+// â”€â”€ Page principale â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function ProjetsPage() {
   useSession({ required: true })
 
@@ -612,7 +612,7 @@ export default function ProjetsPage() {
   const projetsArchives = tousLesProjets.filter((p: Projet) => p.statut === 'abandonne')
   const nbRetard       = projetsRes?.nbRetard ?? 0
 
-  const affichés = onglet === 'actifs' ? projetsActifs : projetsArchives
+  const affiches = onglet === 'actifs' ? projetsActifs : projetsArchives
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-6">
@@ -629,7 +629,7 @@ export default function ProjetsPage() {
             )}
           </h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-            Planifiez et suivez vos objectifs d'épargne
+            Planifiez et suivez vos objectifs d'Ã©pargne
           </p>
         </div>
         <button
@@ -659,12 +659,12 @@ export default function ProjetsPage() {
               ? 'bg-white dark:bg-gray-600 shadow-sm text-gray-900 dark:text-white'
               : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
           }`}>
-          Archivés ({projetsArchives.length})
+          ArchivÃ©s ({projetsArchives.length})
         </button>
       </div>
 
       {/* Liste */}
-      {affichés.length === 0 ? (
+      {affiches.length === 0 ? (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-10 text-center">
           <div className="w-14 h-14 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-3">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-7 h-7 text-gray-400">
@@ -673,19 +673,19 @@ export default function ProjetsPage() {
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             {onglet === 'actifs'
-              ? 'Aucun projet actif. Créez votre premier projet !'
-              : 'Aucun projet archivé.'}
+              ? 'Aucun projet actif. CrÃ©ez votre premier projet !'
+              : 'Aucun projet archivÃ©.'}
           </p>
           {onglet === 'actifs' && (
             <button onClick={() => setShowCreer(true)}
               className="mt-3 text-sm text-blue-600 dark:text-blue-400 hover:underline font-medium">
-              Créer un projet →
+              CrÃ©er un projet â†’
             </button>
           )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {affichés.map((p: Projet) => (
+          {affiches.map((p: Projet) => (
             <CarteProjet
               key={p.id} projet={p}
               categories={categories} comptes={comptes}
