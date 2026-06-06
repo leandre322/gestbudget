@@ -6,7 +6,7 @@ import { signOut } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, CalendarCheck2, Wallet,
-  RefreshCcw, Settings, X, TrendingUp, LogOut, Target
+  RefreshCcw, Settings, X, TrendingUp, LogOut, Target, BarChart2
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useNbProjetsEnRetard } from '@/lib/hooks/useDashboard';
@@ -17,6 +17,7 @@ const NAV = [
   { href: '/budget',              label: 'Budget mensuel',      icon: Wallet          },
   { href: '/ajout-retrait-fonds', label: 'Ajout/Retrait Fonds', icon: RefreshCcw      },
   { href: '/projets',             label: 'Projets',             icon: Target          },
+  { href: '/analytiques',         label: 'Analytiques',         icon: BarChart2       },
   { href: '/parametres',          label: 'Parametres',          icon: Settings        },
 ];
 

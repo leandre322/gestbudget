@@ -54,6 +54,7 @@ const PROTECTED_PAGES = [
   '/dashboard', '/suivi', '/recapitulatif',
   '/budget', '/decaissements', '/parametres', '/ajout-retrait-fonds',
   '/projets', // D3 — planificateur projets
+  "/analytiques",
 ];
 
 export async function middleware(req: NextRequest) {
