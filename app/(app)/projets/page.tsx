@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import { useState, useCallback, useMemo } from 'react'
 import { useSession } from 'next-auth/react'
@@ -84,7 +84,7 @@ function JaugeCirculaire({ pourcentage, atteint, taille = 80 }: {
           style={{ transition: 'stroke-dashoffset 0.6s ease-in-out' }}
         />
       </svg>
-      {/* Texte centrÃ© */}
+      {/* Texte centré */}
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         {atteint ? (
           <span style={{ fontSize: taille * 0.28 }}>ðŸŽ¯</span>
@@ -142,11 +142,11 @@ function ModaleVersement({
         toast.error(err.message || 'Erreur versement')
         return
       }
-      toast.success('Versement enregistrÃ©')
+      toast.success('Versement enregistré')
       onSuccess()
       onClose()
     } catch {
-      toast.error('Erreur rÃ©seau')
+      toast.error('Erreur réseau')
     } finally {
       setLoading(false)
     }
@@ -184,10 +184,10 @@ function ModaleVersement({
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">CatÃ©gorie du dÃ©caissement</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Catégorie du décaissement</label>
             <select value={categorieId} onChange={e => setCategorieId(e.target.value)}
               className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-              <option value="">Sans catÃ©gorie</option>
+              <option value="">Sans catégorie</option>
               {categories.filter((b: Categorie) => b.type === 'depense').map((c: Categorie) => (
                 <option key={c.id} value={c.id}>{c.nom}</option>
               ))}
@@ -288,7 +288,7 @@ function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => 
           </div>
         )}
 
-        {/* RÃ©sultat */}
+        {/* Résultat */}
         {resultat && (
           <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
             {mode === 'duree' && 'mois' in resultat && (
@@ -315,7 +315,7 @@ function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => 
   )
 }
 
-// â”€â”€ Modale crÃ©ation projet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ Modale création projet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function ModaleCreerProjet({
   categories,
   comptes,
@@ -348,7 +348,7 @@ function ModaleCreerProjet({
     e.preventDefault()
     if (!montantCible || Number(montantCible) <= 0) { toast.error('Montant cible invalide'); return }
     if (!dateCible) { toast.error('Date cible requise'); return }
-    if (new Date(dateCible) <= new Date(dateDebut)) { toast.error('Date cible doit Ãªtre aprÃ¨s date de dÃ©but'); return }
+    if (new Date(dateCible) <= new Date(dateDebut)) { toast.error('Date cible doit Ãªtre après date de début'); return }
 
     setLoading(true)
     try {
@@ -365,14 +365,14 @@ function ModaleCreerProjet({
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        toast.error(err.message || 'Erreur crÃ©ation')
+        toast.error(err.message || 'Erreur création')
         return
       }
-      toast.success('Projet crÃ©Ã©')
+      toast.success('Projet créé')
       onSuccess()
       onClose()
     } catch {
-      toast.error('Erreur rÃ©seau')
+      toast.error('Erreur réseau')
     } finally {
       setLoading(false)
     }
@@ -407,7 +407,7 @@ function ModaleCreerProjet({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date de dÃ©but</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date de début</label>
               <input type="date" value={dateDebut} onChange={e => setDateDebut(e.target.value)}
                 className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
             </div>
@@ -420,12 +420,12 @@ function ModaleCreerProjet({
           {/* Suggestion contribution mensuelle */}
           {contribMensuelle > 0 && (
             <div className="p-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-lg text-sm text-emerald-700 dark:text-emerald-400">
-              ðŸ’¡ Contribution mensuelle suggÃ©rÃ©e : <strong>{formatMontant(contribMensuelle)}</strong>
+              ðŸ’¡ Contribution mensuelle suggérée : <strong>{formatMontant(contribMensuelle)}</strong>
             </div>
           )}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">CatÃ©gorie</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Catégorie</label>
               <select value={categorieId} onChange={e => setCategorieId(e.target.value)}
                 className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                 <option value="">Aucune</option>
@@ -449,7 +449,7 @@ function ModaleCreerProjet({
             <button type="submit" disabled={loading}
               className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg px-4 py-2 text-sm font-semibold transition-colors flex items-center justify-center gap-2">
               {loading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-              CrÃ©er le projet
+              Créer le projet
             </button>
           </div>
         </form>
@@ -521,7 +521,7 @@ function CarteProjet({
               <span className="font-semibold text-gray-800 dark:text-gray-200">{formatMontant(projet.montantActuel)}</span>
               <span className="text-gray-400 dark:text-gray-500"> / {formatMontant(projet.montantCible)}</span>
             </div>
-            {/* DÃ©passement */}
+            {/* Dépassement */}
             {depasse && (
               <p className="text-xs text-gray-400 dark:text-gray-500">
                 +{formatMontant(projet.montantActuel - projet.montantCible)} au-delÃ  de l'objectif
@@ -532,7 +532,7 @@ function CarteProjet({
 
         {/* Dates */}
         <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-          <span>DÃ©but : {formatDate(projet.dateDebut)}</span>
+          <span>Début : {formatDate(projet.dateDebut)}</span>
           <span className={projet.enRetard ? 'text-red-500 dark:text-red-400 font-medium' : ''}>
             Cible : {formatDate(projet.dateCible)}
             {projet.joursRestants !== null && projet.joursRestants > 0 && (
@@ -541,7 +541,7 @@ function CarteProjet({
           </span>
         </div>
 
-        {/* Contribution suggÃ©rÃ©e (actif seulement) */}
+        {/* Contribution suggérée (actif seulement) */}
         {projet.statut === 'actif' && !atteint && contrib > 0 && (
           <div className="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-3 py-1.5 rounded-lg">
             ðŸ’¡ {formatMontant(contrib)}/mois pour atteindre l'objectif
@@ -572,7 +572,7 @@ function CarteProjet({
           <div className="flex gap-2">
             <button onClick={() => handleStatut('actif')}
               className="flex-1 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors">
-              RÃ©activer
+              Réactiver
             </button>
           </div>
         )}
@@ -629,7 +629,7 @@ export default function ProjetsPage() {
             )}
           </h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-            Planifiez et suivez vos objectifs d'Ã©pargne
+            Planifiez et suivez vos objectifs d'épargne
           </p>
         </div>
         <button
@@ -659,7 +659,7 @@ export default function ProjetsPage() {
               ? 'bg-white dark:bg-gray-600 shadow-sm text-gray-900 dark:text-white'
               : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
           }`}>
-          ArchivÃ©s ({projetsArchives.length})
+          Archivés ({projetsArchives.length})
         </button>
       </div>
 
@@ -673,13 +673,13 @@ export default function ProjetsPage() {
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             {onglet === 'actifs'
-              ? 'Aucun projet actif. CrÃ©ez votre premier projet !'
-              : 'Aucun projet archivÃ©.'}
+              ? 'Aucun projet actif. Créez votre premier projet !'
+              : 'Aucun projet archivé.'}
           </p>
           {onglet === 'actifs' && (
             <button onClick={() => setShowCreer(true)}
               className="mt-3 text-sm text-blue-600 dark:text-blue-400 hover:underline font-medium">
-              CrÃ©er un projet â†’
+              Créer un projet â†’
             </button>
           )}
         </div>
