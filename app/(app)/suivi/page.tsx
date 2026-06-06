@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useCallback, useRef, Fragment } from 'react';
 import { Copy, Save, ChevronsDownUp, ChevronsUpDown, Plus, Trash2, Pencil,
@@ -12,6 +12,7 @@ import { useMois, useLock } from '../layout';
 import { formatFCFA, MOIS_LABELS, ORDRE_TYPES, TYPE_LABELS,
          LABEL_PREVISION, LABEL_REEL, LABEL_ECART, LABEL_EXEC } from '@/types';
 import { clsx } from 'clsx';
+import EnveloppesSection from '@/components/EnveloppesSection';
 
 // ── Bloquer les caractères non numériques ─────────────────────────────────────
 const onlyNumbers = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -591,6 +592,7 @@ export default function SuiviPage() {
   return (
     <div className="space-y-5 animate-fadeIn">
 
+      <EnveloppesSection mois={mois} annee={annee} readOnly />
       <BandeauMoisAnterieur mois={mois} annee={annee}
         onMoisCourant={() => { setMois(moisCourantReel); setAnnee(anneeCouranteReelle); }} />
 

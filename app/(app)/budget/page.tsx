@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useCallback } from 'react';
 import {
@@ -10,6 +10,7 @@ import CollapsibleGroup, { useCollapseAll } from '@/components/CollapsibleGroup'
 import BandeauMoisAnterieur from '@/components/BandeauMoisAnterieur';
 import { formatFCFA, ORDRE_TYPES, TYPE_LABELS, MOIS_LABELS, LABEL_PREVISION } from '@/types';
 import { clsx } from 'clsx';
+import EnveloppesSection from '@/components/EnveloppesSection';
 import { useMois, useLock } from '../layout';
 
 /* ────────────────────────────────────────────────────────────── */
@@ -244,6 +245,7 @@ export default function BudgetPage() {
     <div className="space-y-5 animate-fadeIn">
 
       {/* Bandeau mois antérieur */}
+      <EnveloppesSection mois={mois} annee={annee} />
       <BandeauMoisAnterieur mois={mois} annee={annee}
         onMoisCourant={() => { setMois(moisCourantReel); setAnnee(anneeCouranteReelle); }}
       />
