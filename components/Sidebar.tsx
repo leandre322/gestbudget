@@ -9,14 +9,15 @@ import {
   RefreshCcw, Settings, X, TrendingUp, LogOut, Target
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useNbProjetsEnRetard } from '@/lib/hooks/useDashboard';
 
 const NAV = [
   { href: '/dashboard',           label: 'Tableau de bord',     icon: LayoutDashboard },
   { href: '/suivi',               label: 'Suivi mensuel',       icon: CalendarCheck2  },
   { href: '/budget',              label: 'Budget mensuel',      icon: Wallet          },
   { href: '/ajout-retrait-fonds', label: 'Ajout/Retrait Fonds', icon: RefreshCcw      },
-  { href: '/projets',             label: 'Projets',             icon: Target          }, // D3
-  { href: '/parametres',          label: 'Paramètres',          icon: Settings        },
+  { href: '/projets',             label: 'Projets',             icon: Target          },
+  { href: '/parametres',          label: 'Parametres',          icon: Settings        },
 ];
 
 interface SidebarProps {
@@ -27,6 +28,7 @@ interface SidebarProps {
 export default function Sidebar({ open, onClose }: SidebarProps) {
   const pathname = usePathname();
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const nbRetard = useNbProjetsEnRetard();
 
   return (
     <>
@@ -69,7 +71,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                 GestBudget
               </p>
               <p className="text-[10px] text-[var(--text-muted)] leading-none mt-0.5">
-                Gestion budgétaire
+                Gestion budgetaire
               </p>
             </div>
           </div>
@@ -84,14 +86,15 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           </button>
         </div>
 
-        {/* Diviseur dégradé */}
+        {/* Diviseur degrade */}
         <div className="mx-4 mb-2 h-px"
           style={{ background: 'linear-gradient(90deg, transparent, var(--border), transparent)' }} />
 
         {/* ── Navigation ── */}
         <nav className="flex-1 px-3 py-1 space-y-0.5 overflow-y-auto">
           {NAV.map((item, i) => {
-            const isActive = pathname.startsWith(item.href);
+            const isActive  = pathname.startsWith(item.href);
+            const isProjets = item.href === '/projets';
 
             return (
               <Link
@@ -128,6 +131,23 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
                 <span className="flex-1 truncate">{item.label}</span>
 
+                {/* Badge projets en retard — masque si 0 */}
+                {isProjets && nbRetard > 0 && (
+                  <span
+                    title={`${nbRetard} projet${nbRetard > 1 ? 's' : ''} en retard`}
+                    className={clsx(
+                      'flex-shrink-0 min-w-[18px] h-[18px] px-1',
+                      'flex items-center justify-center',
+                      'rounded-full text-[10px] font-bold leading-none',
+                      'bg-red-500 text-white',
+                      'shadow-[0_0_6px_rgba(239,68,68,0.60)]',
+                      'animate-pulse',
+                    )}
+                  >
+                    {nbRetard > 99 ? '99+' : nbRetard}
+                  </span>
+                )}
+
                 {isActive && (
                   <div className={clsx(
                     'w-1 h-4 rounded-full flex-shrink-0',
@@ -161,12 +181,12 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           <div className="mt-2 flex items-center gap-1.5 px-1">
             <div className="w-1.5 h-1.5 rounded-full bg-green-400
               shadow-[0_0_6px_rgba(16,185,129,0.80)] animate-pulse" />
-            <span className="text-[10px] text-[var(--text-muted)]">Connecté · Sécurisé</span>
+            <span className="text-[10px] text-[var(--text-muted)]">Connecte · Securise</span>
           </div>
         </div>
       </aside>
 
-      {/* ── Modale déconnexion ── */}
+      {/* ── Modale deconnexion ── */}
       {showLogoutModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60" onClick={() => setShowLogoutModal(false)} />
