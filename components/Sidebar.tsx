@@ -33,7 +33,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
   return (
     <>
-      {/* ── Overlay mobile ── */}
+      {/* â”€â”€ Overlay mobile â”€â”€ */}
       {open && (
         <div
           className="lg:hidden fixed inset-0 z-40 bg-black/60"
@@ -43,7 +43,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         />
       )}
 
-      {/* ── Sidebar panel ── */}
+      {/* â”€â”€ Sidebar panel â”€â”€ */}
       <aside
         className={clsx(
           'fixed lg:static inset-y-0 left-0',
@@ -55,7 +55,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         )}
       >
 
-        {/* ── Header brand ── */}
+        {/* â”€â”€ Header brand â”€â”€ */}
         <div className="flex items-center justify-between px-5 pt-6 pb-4">
           <div className="flex items-center gap-3">
             <div className={clsx(
@@ -91,7 +91,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         <div className="mx-4 mb-2 h-px"
           style={{ background: 'linear-gradient(90deg, transparent, var(--border), transparent)' }} />
 
-        {/* ── Navigation ── */}
+        {/* â”€â”€ Navigation â”€â”€ */}
         <nav className="flex-1 px-3 py-1 space-y-0.5 overflow-y-auto">
           {NAV.map((item, i) => {
             const isActive  = pathname.startsWith(item.href);
@@ -132,7 +132,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
                 <span className="flex-1 truncate">{item.label}</span>
 
-                {/* Badge projets en retard — masque si 0 */}
+                {/* Badge projets en retard â€” masque si 0 */}
                 {isProjets && nbRetard > 0 && (
                   <span
                     title={`${nbRetard} projet${nbRetard > 1 ? 's' : ''} en retard`}
@@ -161,7 +161,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           })}
         </nav>
 
-        {/* ── Footer ── */}
+        {/* â”€â”€ Footer â”€â”€ */}
         <div className="p-4 pb-6">
           <div className="mb-3 h-px"
             style={{ background: 'linear-gradient(90deg, transparent, var(--border), transparent)' }} />
@@ -182,12 +182,12 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           <div className="mt-2 flex items-center gap-1.5 px-1">
             <div className="w-1.5 h-1.5 rounded-full bg-green-400
               shadow-[0_0_6px_rgba(16,185,129,0.80)] animate-pulse" />
-            <span className="text-[10px] text-[var(--text-muted)]">Connecte · Securise</span>
+            <span className="text-[10px] text-[var(--text-muted)]">Connecte Â· Securise</span>
           </div>
         </div>
       </aside>
 
-      {/* ── Modale deconnexion ── */}
+      {/* â”€â”€ Modale deconnexion â”€â”€ */}
       {showLogoutModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60" onClick={() => setShowLogoutModal(false)} />
