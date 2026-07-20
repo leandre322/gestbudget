@@ -139,12 +139,14 @@ export async function middleware(req: NextRequest) {
 
   // 4. Headers sécurité
   // NOTE : microphone PAS restreint — requis pour Web Speech API (D1 vocal)
+  // HSTS déplacé ici depuis next.config.js (centralisation des headers en un seul endroit)
   const res = NextResponse.next();
-  res.headers.set('X-Frame-Options',        'SAMEORIGIN');
-  res.headers.set('X-Content-Type-Options', 'nosniff');
-  res.headers.set('X-XSS-Protection',       '1; mode=block');
-  res.headers.set('Referrer-Policy',        'strict-origin-when-cross-origin');
-  res.headers.set('Permissions-Policy',     'camera=(), geolocation=()');
+  res.headers.set('X-Frame-Options',           'SAMEORIGIN');
+  res.headers.set('X-Content-Type-Options',    'nosniff');
+  res.headers.set('X-XSS-Protection',          '1; mode=block');
+  res.headers.set('Referrer-Policy',           'strict-origin-when-cross-origin');
+  res.headers.set('Permissions-Policy',        'camera=(), geolocation=()');
+  res.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
   return res;
 }
 

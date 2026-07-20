@@ -4,6 +4,10 @@ const withPWA = require("next-pwa")({
   skipWaiting:     true,
   disable:         process.env.NODE_ENV === "development",
   customWorkerDir: "worker",
+  // FIX : app-build-manifest.json est un fichier interne Next non servi en prod (404).
+  // Sans cette exclusion, le precache Workbox echoue -> SW redondant -> jamais actif
+  // -> navigator.serviceWorker.ready ne resout jamais -> spinner infini sur le bouton push.
+  buildExcludes: [/app-build-manifest\.json$/],
   runtimeCaching: [
     { urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i, handler: "CacheFirst",
       options: { cacheName: "google-fonts-cache", expiration: { maxEntries: 10, maxAgeSeconds: 31536000 } } },
@@ -16,21 +20,13 @@ const withPWA = require("next-pwa")({
   ],
 });
 
-const securityHeaders = [
-  { key: "X-Frame-Options",           value: "SAMEORIGIN" },
-  { key: "X-Content-Type-Options",    value: "nosniff" },
-  { key: "X-XSS-Protection",          value: "1; mode=block" },
-  { key: "Referrer-Policy",           value: "strict-origin-when-cross-origin" },
-  { key: "Permissions-Policy",        value: "camera=(), microphone=(), geolocation=()" },
-  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
-];
-
+// NOTE : les headers de securite sont geres UNIQUEMENT dans middleware.ts.
+// Auparavant ils etaient dupliques ici avec "microphone=()" qui ecrasait
+// l'intention du middleware (microphone autorise pour la dictee vocale / Web Speech API).
+// Un seul point de verite = plus de conflit. HSTS a ete deplace dans le middleware.
 const nextConfig = {
   reactStrictMode: true,
   experimental: { serverComponentsExternalPackages: ["@prisma/client", "bcryptjs"] },
-  async headers() {
-    return [{ source: "/(.*)", headers: securityHeaders }];
-  },
 };
 
 module.exports = withPWA(nextConfig);
