@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Bell, BellOff, Loader2 } from 'lucide-react';
+import { Bell, BellOff, Loader2, Send, Check, X } from 'lucide-react';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -13,10 +13,12 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 }
 
 type PushState = 'checking' | 'unsupported' | 'unsubscribed' | 'subscribed' | 'denied';
+type TestStatus = 'idle' | 'sending' | 'sent' | 'error';
 
 export function PushSubscribeButton() {
   const [state, setState] = useState<PushState>('checking');
   const [loading, setLoading] = useState(false);
+  const [testStatus, setTestStatus] = useState<TestStatus>('idle');
 
   useEffect(() => {
     // Navigateur incompatible → pas de bouton
@@ -88,10 +90,29 @@ export function PushSubscribeButton() {
         });
       }
       setState('unsubscribed');
+      setTestStatus('idle'); // reset du test si on se désabonne
     } catch (err) {
       console.error('[push:unsubscribe]', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleTest = async () => {
+    setTestStatus('sending');
+    try {
+      const res = await fetch('/api/push/test', { method: 'POST' });
+      if (res.ok) {
+        setTestStatus('sent');
+      } else {
+        setTestStatus('error');
+      }
+    } catch (err) {
+      console.error('[push:test]', err);
+      setTestStatus('error');
+    } finally {
+      // Repasse à l'état neutre après 3s pour pouvoir retester
+      setTimeout(() => setTestStatus('idle'), 3000);
     }
   };
 
@@ -132,6 +153,38 @@ export function PushSubscribeButton() {
           ? 'Désactiver les notifications'
           : 'Activer les notifications'}
       </button>
+
+      {/* ── Bouton test : visible uniquement si abonné ── */}
+      {state === 'subscribed' && (
+        <button
+          onClick={handleTest}
+          disabled={testStatus === 'sending'}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium
+            transition-all disabled:opacity-50 disabled:cursor-not-allowed border ${
+            testStatus === 'sent'
+              ? 'bg-green-900/30 border-green-700 text-green-400'
+              : testStatus === 'error'
+                ? 'bg-red-900/30 border-red-700 text-red-400'
+                : 'bg-gray-900 border-gray-700 text-gray-300 hover:bg-gray-800'
+          }`}
+        >
+          {testStatus === 'sending'
+            ? <Loader2 className="w-4 h-4 animate-spin" />
+            : testStatus === 'sent'
+              ? <Check className="w-4 h-4" />
+              : testStatus === 'error'
+                ? <X className="w-4 h-4" />
+                : <Send className="w-4 h-4" />
+          }
+          {testStatus === 'sending'
+            ? 'Envoi...'
+            : testStatus === 'sent'
+              ? 'Notification envoyée !'
+              : testStatus === 'error'
+                ? 'Échec — réessayer'
+                : 'Envoyer une notification test'}
+        </button>
+      )}
 
       {state === 'subscribed' && (
         <p className="text-xs text-gray-500">

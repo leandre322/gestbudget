@@ -9,7 +9,7 @@ import {
 import { useToast } from '@/components/Toast';
 import { ConfirmModal, useAudit } from '@/components/ConfirmModal';
 import { formatFCFA } from '@/types';
-import { useLock } from '../layout';
+import { useLock } from '../contexts';
 import { clsx } from 'clsx';
 
 const MOIS_COURTS = ['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];

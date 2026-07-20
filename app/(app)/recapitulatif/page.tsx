@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 import { Download, FileText, Lock } from 'lucide-react';
-import { useMois, useLock } from '../layout';
+import { useMois, useLock } from '../contexts';
 import { formatFCFA, TYPE_LABELS, ORDRE_TYPES } from '@/types';
 import { clsx } from 'clsx';
 

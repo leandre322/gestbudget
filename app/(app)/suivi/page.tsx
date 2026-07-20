@@ -8,7 +8,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import BandeauMoisAnterieur from '@/components/BandeauMoisAnterieur';
 import ModalKPI from '@/components/ModalKPI';
 import { useToast } from '@/components/Toast';
-import { useMois, useLock } from '../layout';
+import { useMois, useLock } from '../contexts';
 import { formatFCFA, MOIS_LABELS, ORDRE_TYPES, TYPE_LABELS,
          LABEL_PREVISION, LABEL_REEL, LABEL_ECART, LABEL_EXEC } from '@/types';
 import { clsx } from 'clsx';

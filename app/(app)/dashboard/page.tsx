@@ -6,7 +6,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
 import { TrendingUp, TrendingDown, PiggyBank, Wallet, AlertTriangle,
          Shield, ChevronDown, ChevronRight, Building2, Pencil, X, Save,
          ArrowDownCircle, ArrowUpCircle, Bell, Loader2, Check, Plus, Minus } from 'lucide-react';
-import { useMois, useLock } from '../layout';
+import { useMois, useLock } from '../contexts';
 import { formatFCFA, MOIS_COURTS, TYPE_LABELS, calculerScore, couleurScore,
          ORDRE_TYPES, LABEL_PREVISION } from '@/types';
 import { useToast } from '@/components/Toast';

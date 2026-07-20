@@ -6,7 +6,7 @@ import { Plus, Pencil, Trash2, Check, X, Upload, Save, Link, Link2Off,
 import { TYPE_LABELS, ORDRE_TYPES, formatFCFA } from '@/types';
 import { clsx } from 'clsx';
 import { PushSubscribeButton } from '@/components/notifications/PushSubscribeButton';
-import { useLock } from '../layout';
+import { useLock } from '../contexts';
 
 const GRANDES_CATEGORIES = [
   'epargne_precaution','epargne_investissement','epargne_autre',

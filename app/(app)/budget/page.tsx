@@ -11,7 +11,7 @@ import BandeauMoisAnterieur from '@/components/BandeauMoisAnterieur';
 import { formatFCFA, ORDRE_TYPES, TYPE_LABELS, MOIS_LABELS, LABEL_PREVISION } from '@/types';
 import { clsx } from 'clsx';
 import EnveloppesSection from '@/components/EnveloppesSection';
-import { useMois, useLock } from '../layout';
+import { useMois, useLock } from '../contexts';
 
 /* ────────────────────────────────────────────────────────────── */
 const TYPES_OUVERTS: string[] = []; // Tout plié par défaut

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, createContext, useContext, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { SessionProvider, useSession } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
@@ -13,33 +13,17 @@ import { InactivityWarning } from '@/lib/inactivity';
 import { clsx } from 'clsx';
 import { ToastProvider } from '@/components/Toast';
 import PWARegister from '@/components/PWARegister';
+import { MoisContext, LockContext } from './contexts';
 
-const MOIS_NOMS_FR: Record<number,string> = {
-  1:'Janvier',2:'Février',3:'Mars',4:'Avril',5:'Mai',6:'Juin',
-  7:'Juillet',8:'Août',9:'Septembre',10:'Octobre',11:'Novembre',12:'Décembre',
+const MOIS_NOMS_FR: Record<number, string> = {
+  1: 'Janvier', 2: 'Février', 3: 'Mars', 4: 'Avril', 5: 'Mai', 6: 'Juin',
+  7: 'Juillet', 8: 'Août', 9: 'Septembre', 10: 'Octobre', 11: 'Novembre', 12: 'Décembre',
 };
-
-// ── MoisContext ───────────────────────────────────────────────────────────────
-interface MoisCtx { mois:number; annee:number; setMois:(m:number)=>void; setAnnee:(a:number)=>void; }
-export const MoisContext = createContext<MoisCtx>({ mois:1, annee:2026, setMois:()=>{}, setAnnee:()=>{} });
-export const useMois = () => useContext(MoisContext);
-
-// ── LockContext ───────────────────────────────────────────────────────────────
-interface LockCtx {
-  isLocked:       boolean;
-  unlockToken:    string | null;
-  lock:           () => void;
-  openUnlockModal:() => void;
-}
-const LockContext = createContext<LockCtx>({
-  isLocked:true, unlockToken:null, lock:()=>{}, openUnlockModal:()=>{},
-});
-export const useLock = () => useContext(LockContext);
 
 // ── Composant LockBanner ─────────────────────────────────────────────────────
 function LockBanner({ isLocked, mois, annee, isMoisCourant, onOpen, onLock }: {
-  isLocked:boolean; mois:number; annee:number; isMoisCourant:boolean;
-  onOpen:()=>void; onLock:()=>void;
+  isLocked: boolean; mois: number; annee: number; isMoisCourant: boolean;
+  onOpen: () => void; onLock: () => void;
 }) {
   if (!isLocked) {
     return (
@@ -90,7 +74,7 @@ function LockBanner({ isLocked, mois, annee, isMoisCourant, onOpen, onLock }: {
   );
 }
 
-// ── Topbar ────────────────────────────────────────────────────────────────────
+// ── Topbar ───────────────────────────────────────────────────────────────────
 function Topbar({ onMenu, mois, annee, onPrev, onNext, saveStatus, isOffline,
                   onMoisCourant, estMoisCourant, isLocked }: any) {
   const { data: session } = useSession();
@@ -110,9 +94,9 @@ function Topbar({ onMenu, mois, annee, onPrev, onNext, saveStatus, isOffline,
           {isLocked ? <Lock size={13}/> : <LockOpen size={13}/>}
         </span>
       </div>
-      {saveStatus==='saving' && <span className="text-xs text-amber-500 font-medium hidden sm:block">Sauvegarde...</span>}
-      {saveStatus==='saved'  && <span className="text-xs text-green-500 font-medium hidden sm:block">Sauvegardé ✓</span>}
-      {saveStatus==='error'  && <span className="text-xs text-red-500 font-medium hidden sm:block">Erreur ⚠️</span>}
+      {saveStatus === 'saving' && <span className="text-xs text-amber-500 font-medium hidden sm:block">Sauvegarde...</span>}
+      {saveStatus === 'saved'  && <span className="text-xs text-green-500 font-medium hidden sm:block">Sauvegardé ✓</span>}
+      {saveStatus === 'error'  && <span className="text-xs text-red-500 font-medium hidden sm:block">Erreur ⚠️</span>}
       <div className="flex-1"/>
       {isOffline && (
         <div className="flex items-center gap-1.5 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 text-amber-600 dark:text-amber-400 rounded-full px-3 py-1 text-xs font-medium">
@@ -142,20 +126,20 @@ function Topbar({ onMenu, mois, annee, onPrev, onNext, saveStatus, isOffline,
   );
 }
 
-// ── BottomNav ─────────────────────────────────────────────────────────────────
+// ── BottomNav ────────────────────────────────────────────────────────────────
 function BottomNav() {
   const pathname = usePathname();
   const items = [
-    {href:'/dashboard',label:'Dashboard',icon:'📊'},{href:'/suivi',label:'Suivi',icon:'📅'},
-    {href:'/decaissements',label:'Dépenses',icon:'📒'},{href:'/budget',label:'Budget',icon:'💰'},
-    {href:'/parametres',label:'Paramètres',icon:'⚙️'},
+    { href: '/dashboard', label: 'Dashboard', icon: '📊' }, { href: '/suivi', label: 'Suivi', icon: '📅' },
+    { href: '/decaissements', label: 'Dépenses', icon: '📒' }, { href: '/budget', label: 'Budget', icon: '💰' },
+    { href: '/parametres', label: 'Paramètres', icon: '⚙️' },
   ];
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-[var(--surface)] border-t border-[var(--border)] z-20 flex transition-colors">
-      {items.map(item=>(
+      {items.map(item => (
         <a key={item.href} href={item.href}
           className={clsx('flex-1 flex flex-col items-center py-2 text-xs transition-all',
-            pathname.startsWith(item.href)?'text-primary font-semibold':'text-[var(--text-muted)]')}>
+            pathname.startsWith(item.href) ? 'text-primary font-semibold' : 'text-[var(--text-muted)]')}>
           <span className="text-lg leading-none mb-0.5">{item.icon}</span>{item.label}
         </a>
       ))}
@@ -163,18 +147,18 @@ function BottomNav() {
   );
 }
 
-// ── Layout interne ────────────────────────────────────────────────────────────
+// ── Layout interne ───────────────────────────────────────────────────────────
 function InnerLayout({ children }: { children: React.ReactNode }) {
-  const now  = new Date();
+  const now = new Date();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [mois,        setMois]        = useState(now.getMonth() + 1);
   const [annee,       setAnnee]       = useState(now.getFullYear());
   const [saveStatus,  setSaveStatus]  = useState('idle');
   const [isOffline,   setIsOffline]   = useState(false);
 
-  // ── Lock state ──────────────────────────────────────────────────────────────
+  // ── Lock state ─────────────────────────────────────────────────────────────
   const [isLocked,     setIsLocked]     = useState(true);
-  const [unlockToken,  setUnlockToken]  = useState<string|null>(null);
+  const [unlockToken,  setUnlockToken]  = useState<string | null>(null);
   const [showModal,    setShowModal]    = useState(false);
   const [confirmed,    setConfirmed]    = useState(false);
   const [unlocking,    setUnlocking]    = useState(false);
@@ -191,13 +175,13 @@ function InnerLayout({ children }: { children: React.ReactNode }) {
 
   // Exposer le token globalement dès qu'il change
   useEffect(() => {
-    try { if(unlockToken) sessionStorage.setItem('gb_unlock', unlockToken); else sessionStorage.removeItem('gb_unlock'); } catch {}
+    try { if (unlockToken) sessionStorage.setItem('gb_unlock', unlockToken); else sessionStorage.removeItem('gb_unlock'); } catch {}
   }, [unlockToken]);
 
   const lock = useCallback(() => {
     setIsLocked(true);
     setUnlockToken(null);
-    try { sessionStorage.removeItem('gb_unlock'); } catch {};
+    try { sessionStorage.removeItem('gb_unlock'); } catch {}
   }, []);
 
   const openUnlockModal = useCallback(() => {
@@ -227,7 +211,7 @@ function InnerLayout({ children }: { children: React.ReactNode }) {
 
   const closeModal = () => { setShowModal(false); setConfirmed(false); };
 
-  // ── Navigation mois ─────────────────────────────────────────────────────────
+  // ── Navigation mois ────────────────────────────────────────────────────────
   useEffect(() => {
     (window as any).__setSaveStatus = setSaveStatus;
     const upd = () => setIsOffline(!navigator.onLine);
@@ -236,8 +220,8 @@ function InnerLayout({ children }: { children: React.ReactNode }) {
     return () => { window.removeEventListener('online', upd); window.removeEventListener('offline', upd); };
   }, []);
 
-  const prev = () => { if(mois===1){setMois(12);setAnnee(a=>a-1);}else setMois(m=>m-1); };
-  const next = () => { if(mois===12){setMois(1);setAnnee(a=>a+1);}else setMois(m=>m+1); };
+  const prev = () => { if (mois === 1) { setMois(12); setAnnee(a => a - 1); } else setMois(m => m - 1); };
+  const next = () => { if (mois === 12) { setMois(1); setAnnee(a => a + 1); } else setMois(m => m + 1); };
   const moisCourantReel     = new Date().getMonth() + 1;
   const anneeCouranteReelle = new Date().getFullYear();
   const estMoisCourant      = mois === moisCourantReel && annee === anneeCouranteReelle;
@@ -247,7 +231,7 @@ function InnerLayout({ children }: { children: React.ReactNode }) {
     <MoisContext.Provider value={{ mois, annee, setMois, setAnnee }}>
       <LockContext.Provider value={{ isLocked, unlockToken, lock, openUnlockModal }}>
 
-        {/* ── Modal de confirmation déverrouillage ──────────────────────────── */}
+        {/* ── Modal de confirmation déverrouillage ── */}
         {showModal && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center">
             <div className="absolute inset-0 bg-black/50" onClick={closeModal}/>
@@ -266,7 +250,9 @@ function InnerLayout({ children }: { children: React.ReactNode }) {
                     ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300'
                     : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300')}>
                   <p className="font-semibold mb-1">
-                    {estMoisCourant ? `📝 Édition de ${MOIS_NOMS_FR[mois]} ${annee}` : `⚠️ Données historiques — ${MOIS_NOMS_FR[mois]} ${annee}`}
+                    {estMoisCourant
+                      ? `📝 Mode édition — ${MOIS_NOMS_FR[mois]} ${annee}`
+                      : `📝 Données historiques — ${MOIS_NOMS_FR[mois]} ${annee}`}
                   </p>
                   <p className="text-xs opacity-80">
                     {estMoisCourant
