@@ -19,3 +19,4 @@ yarn-error.log*
 next-env.d.ts
 
 .env
+_utf8-backup-*

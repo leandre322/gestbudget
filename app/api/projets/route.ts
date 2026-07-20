@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -7,7 +7,7 @@ import { logAudit } from '@/lib/audit'
 import { serial } from '@/lib/serial'
 import { sendPushToUser } from '@/lib/push'
 
-// â”€â”€ Schemas Zod â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Schemas Zod ────────────────────────────────────────────────────────────────
 const ProjetCreateSchema = z.object({
   nom: z.string().min(1).max(100),
   description: z.string().max(500).optional().nullable(),
@@ -40,7 +40,7 @@ const VersementSchema = z.object({
   compteId: z.string().optional().nullable(),
 })
 
-// â”€â”€ Serialisation BigInt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Serialisation BigInt ───────────────────────────────────────────────────────
 function serializeProjet(p: any) {
   return {
     ...p,
@@ -56,7 +56,7 @@ function serializeProjet(p: any) {
   }
 }
 
-// â”€â”€ GET â€” Liste des projets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── GET — Liste des projets ────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -104,7 +104,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// â”€â”€ POST â€” Creer un projet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── POST — Creer un projet ─────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -164,7 +164,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// â”€â”€ PUT â€” Mettre a jour un projet (inclut versement) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── PUT — Mettre a jour un projet (inclut versement) ──────────────────────────
 export async function PUT(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -237,7 +237,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-// â”€â”€ DELETE â€” Supprimer un projet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── DELETE — Supprimer un projet ───────────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -274,7 +274,7 @@ export async function DELETE(req: NextRequest) {
   }
 }
 
-// â”€â”€ Handler versement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Handler versement ─────────────────────────────────────────────────────────
 async function handleVersement(
   userId: string,
   data: z.infer<typeof VersementSchema>,
@@ -338,10 +338,10 @@ async function handleVersement(
     for (const seuil of seuils) {
       if (ancienPct < seuil && nouveauPct >= seuil) {
         const msg = seuil === 100
-          ? `ðŸŽ¯ Objectif "${projet.nom}" atteint !`
-          : `ðŸ“ˆ Projet "${projet.nom}" : ${seuil}% atteint`
+          ? `🎯 Objectif "${projet.nom}" atteint !`
+          : `📈 Projet "${projet.nom}" : ${seuil}% atteint`
         await sendPushToUser(userId, {
-          title: 'GestBudget â€” Projet',
+          title: 'GestBudget — Projet',
           body: msg,
           icon: '/icons/icon-192x192.png',
         }).catch(() => {})

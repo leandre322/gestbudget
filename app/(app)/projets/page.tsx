@@ -5,7 +5,7 @@ import { useSession } from 'next-auth/react'
 import useSWR from 'swr'
 import { toast } from 'react-hot-toast'
 
-// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Types ─────────────────────────────────────────────────────────────────────
 interface Projet {
   id: string
   nom: string
@@ -28,7 +28,7 @@ interface Projet {
 interface Categorie { id: string; nom: string; couleur?: string; type: string }
 interface Compte    { id: string; nom: string; solde: number }
 
-// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Helpers ───────────────────────────────────────────────────────────────────
 const fetcher = (url: string) => fetch(url).then(r => r.json())
 
 function formatMontant(m: number) {
@@ -45,7 +45,7 @@ function montantContribMensuelle(montantCible: number, montantActuel: number, da
   return Math.ceil(restant / mois)
 }
 
-// â”€â”€ Jauge circulaire â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Jauge circulaire ──────────────────────────────────────────────────────────
 function JaugeCirculaire({ pourcentage, atteint, taille = 80 }: {
   pourcentage: number
   atteint: boolean
@@ -87,7 +87,7 @@ function JaugeCirculaire({ pourcentage, atteint, taille = 80 }: {
       {/* Texte centré */}
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         {atteint ? (
-          <span style={{ fontSize: taille * 0.28 }}>ðŸŽ¯</span>
+          <span style={{ fontSize: taille * 0.28 }}>🎯</span>
         ) : (
           <span className="font-bold text-gray-800 dark:text-white leading-none" style={{ fontSize: taille * 0.22 }}>
             {pourcentage}%
@@ -98,7 +98,7 @@ function JaugeCirculaire({ pourcentage, atteint, taille = 80 }: {
   )
 }
 
-// â”€â”€ Modale versement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Modale versement ──────────────────────────────────────────────────────────
 function ModaleVersement({
   projet,
   categories,
@@ -157,7 +157,7 @@ function ModaleVersement({
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Verser sur Â« {projet.nom} Â»
+            Verser sur « {projet.nom} »
           </h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
@@ -220,7 +220,7 @@ function ModaleVersement({
   )
 }
 
-// â”€â”€ Modale simulateur â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Modale simulateur ─────────────────────────────────────────────────────────
 function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => void }) {
   const [mode, setMode] = useState<'duree' | 'epargne'>('duree')
   const [valeur, setValeur] = useState('')
@@ -249,7 +249,7 @@ function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => 
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Simulateur â€” {projet.nom}</h3>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Simulateur — {projet.nom}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
               <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
@@ -259,7 +259,7 @@ function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => 
 
         <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-sm text-gray-600 dark:text-gray-400">
           Restant : <strong className="text-gray-900 dark:text-white">{formatMontant(restant)}</strong>
-          {' Â· '}Date cible : <strong className="text-gray-900 dark:text-white">{formatDate(projet.dateCible)}</strong>
+          {' · '}Date cible : <strong className="text-gray-900 dark:text-white">{formatDate(projet.dateCible)}</strong>
         </div>
 
         {/* Toggle mode */}
@@ -315,7 +315,7 @@ function ModaleSimulateur({ projet, onClose }: { projet: Projet; onClose: () => 
   )
 }
 
-// â”€â”€ Modale création projet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Modale création projet ---------
 function ModaleCreerProjet({
   categories,
   comptes,
@@ -420,7 +420,7 @@ function ModaleCreerProjet({
           {/* Suggestion contribution mensuelle */}
           {contribMensuelle > 0 && (
             <div className="p-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-lg text-sm text-emerald-700 dark:text-emerald-400">
-              ðŸ’¡ Contribution mensuelle suggérée : <strong>{formatMontant(contribMensuelle)}</strong>
+              💡 Contribution mensuelle suggérée : <strong>{formatMontant(contribMensuelle)}</strong>
             </div>
           )}
           <div className="grid grid-cols-2 gap-4">
@@ -458,7 +458,7 @@ function ModaleCreerProjet({
   )
 }
 
-// â”€â”€ Carte projet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Carte projet ──────────────────────────────────────────────────────────────
 function CarteProjet({
   projet,
   categories,
@@ -562,7 +562,7 @@ function CarteProjet({
             <button onClick={() => handleStatut('abandonne')}
               className="bg-gray-100 dark:bg-gray-700 hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg px-3 py-1.5 text-xs transition-colors"
               title="Abandonner">
-              âœ•
+              ✕
             </button>
           </div>
         )}
@@ -591,7 +591,7 @@ function CarteProjet({
   )
 }
 
-// â”€â”€ Page principale â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Page principale ───────────────────────────────────────────────────────────
 export default function ProjetsPage() {
   useSession({ required: true })
 
@@ -679,7 +679,7 @@ export default function ProjetsPage() {
           {onglet === 'actifs' && (
             <button onClick={() => setShowCreer(true)}
               className="mt-3 text-sm text-blue-600 dark:text-blue-400 hover:underline font-medium">
-              Créer un projet â†’
+              Créer un projet →
             </button>
           )}
         </div>

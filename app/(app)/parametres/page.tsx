@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Plus, Pencil, Trash2, Check, X, Upload, Save, Link, Link2Off,
@@ -42,7 +42,7 @@ export default function ParametresPage() {
   const [suppResult,       setSuppResult]       = useState<string>('');
   const [activeTab,        setActiveTab]        = useState<'categories'|'comptes'|'banques'|'import'|'donnees'|'alertes'>('categories');
 
-  // â”€â”€ Taux & Revenus â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Taux & Revenus ────────────────────────────────────────────────────────
   const [tauxRef,    setTauxRef]    = useState<Record<GrandeCategorie, number>>({} as Record<GrandeCategorie, number>);
   const [montantRef, setMontantRef] = useState<Record<GrandeCategorie, number>>({} as Record<GrandeCategorie, number>);
   const [revenuRef,  setRevenuRef]  = useState<number>(0);
@@ -50,7 +50,7 @@ export default function ParametresPage() {
   const [savedTaux,  setSavedTaux]  = useState(false);
   const [tauxError,  setTauxError]  = useState<string | null>(null);
 
-  // â”€â”€ Mode saisie (Montant FCFA ou Taux %) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Mode saisie (Montant FCFA ou Taux %) ─────────────────────────────────
   const [inputMode, setInputMode] = useState<'montant' | 'taux'>('montant');
   useEffect(() => {
     const saved = localStorage.getItem(LS_MODE_KEY);
@@ -66,7 +66,7 @@ export default function ParametresPage() {
   const [savingBanqueLien, setSavingBanqueLien] = useState<string|null>(null);
   const [catGroupsOpen,    setCatGroupsOpen]    = useState<Record<string,boolean>>({});
 
-  // â”€â”€ Alertes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Alertes ───────────────────────────────────────────────────────────────
   const [rapportEmailActif, setRapportEmailActif] = useState(true);
   const [rapportEmailJour,  setRapportEmailJour]  = useState(1);
   const [rapportEmailHeure, setRapportEmailHeure] = useState(8);
@@ -80,7 +80,7 @@ export default function ParametresPage() {
   const plierTousCats  = () => setCatGroupsOpen({});
   const isDirty        = useRef(false);
 
-  // â”€â”€ Fonctions de conversion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Fonctions de conversion ───────────────────────────────────────────────
   const tauxToMontant = (taux: number): number =>
     revenuRef > 0 ? Math.round((taux / 100) * revenuRef) : 0;
 
@@ -107,7 +107,7 @@ export default function ParametresPage() {
       ? 'bg-amber-400'
       : 'bg-green-500';
 
-  // â”€â”€ Charger â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Charger ───────────────────────────────────────────────────────────────
   const charger = useCallback(async (force=false) => {
     setLoading(true);
     try {
@@ -163,7 +163,7 @@ export default function ParametresPage() {
     });
   };
 
-  // â”€â”€ Sauvegarder alertes (D1 : + langueVocale) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Sauvegarder alertes (D1 : + langueVocale) ─────────────────────────────
   const sauvegarderAlertes = async () => {
     if (isLocked) { openUnlockModal(); return; }
     setSavingAlertes(true);
@@ -202,7 +202,7 @@ export default function ParametresPage() {
 
   useEffect(() => { chargerOnglet(activeTab); },[activeTab,chargerOnglet]);
 
-  // â”€â”€ Sauvegarder taux â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Sauvegarder taux ──────────────────────────────────────────────────────
   const sauvegarderTaux = async () => {
     if (isLocked) { openUnlockModal(); return; }
     if (totalTaux > 100) {
@@ -230,7 +230,7 @@ export default function ParametresPage() {
     finally{ setSavingTaux(false); }
   };
 
-  // â”€â”€ Handlers categories / comptes / banques â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Handlers categories / comptes / banques ────────────────────────────────
   const sauvegarderBanqueLien = async (catId:string, banqueId:string|null) => {
     if(isLocked)return;
     setSavingBanqueLien(catId);
@@ -327,7 +327,7 @@ export default function ParametresPage() {
         ))}
       </div>
 
-      {/* â”€â”€ CATEGORIES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── CATEGORIES ─────────────────────────────────────────────────────── */}
       {activeTab==='categories'&&(
         <div className="space-y-5">
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
@@ -508,7 +508,7 @@ export default function ParametresPage() {
                 </div>
                 {(tauxRef[type as GrandeCategorie]??0)>0&&(
                   <span className="text-xs font-semibold text-primary">
-                    {(tauxRef[type as GrandeCategorie]).toFixed(2)}% â€” {formatFCFA(tauxToMontant(tauxRef[type as GrandeCategorie]))}
+                    {(tauxRef[type as GrandeCategorie]).toFixed(2)}% -” {formatFCFA(tauxToMontant(tauxRef[type as GrandeCategorie]))}
                   </span>
                 )}
               </div>
@@ -563,7 +563,7 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* â”€â”€ FONDS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── FONDS ────────────────────────────────────────────────────────────── */}
       {activeTab==='comptes'&&(
         <div className="space-y-4">
           <div className="flex justify-between items-center">
@@ -598,7 +598,7 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* â”€â”€ BANQUES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── BANQUES ───────────────────────────────────────────────────────────── */}
       {activeTab==='banques'&&(
         <div className="space-y-4">
           <div className="flex justify-between items-center">
@@ -636,7 +636,7 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* â”€â”€ DONNEES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── DONNEES ───────────────────────────────────────────────────────────── */}
       {activeTab==='donnees'&&(
         <div className="space-y-4">
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
@@ -688,7 +688,7 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* â”€â”€ ALERTES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── ALERTES ──────────────────────────────────────────────────────────── */}
       {activeTab==='alertes'&&(
         <div className="space-y-5">
 
@@ -717,7 +717,7 @@ export default function ParametresPage() {
                       className="w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"/></div>
                 </div>
                 <p className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl px-3 py-2">
-                  Cron quotidien 8h UTC â€” envoi le jour {rapportEmailJour} du mois a chaque utilisateur ayant configure ce jour.
+                  Cron quotidien 8h UTC -” envoi le jour {rapportEmailJour} du mois a chaque utilisateur ayant configure ce jour.
                 </p>
               </div>
             )}
@@ -740,12 +740,12 @@ export default function ParametresPage() {
                   style={{width:`${Math.min(100,(seuilAnomaliesPct/200)*100)}%`}}/>
               </div>
               <p className="text-xs text-[var(--text-muted)]">
-                {seuilAnomaliesPct<=30?'Tres sensible':seuilAnomaliesPct<=60?'Sensibilite standard':'Peu sensible'} â€” alerte si depense {'>'} {seuilAnomaliesPct}% au-dessus de la moyenne
+                {seuilAnomaliesPct<=30?'Tres sensible':seuilAnomaliesPct<=60?'Sensibilite standard':'Peu sensible'} -” alerte si depense {'>'} {seuilAnomaliesPct}% au-dessus de la moyenne
               </p>
             </div>
           </div>
 
-          {/* â”€â”€ D1 â€” Dictee vocale â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── D1 — Dictée vocale ────────────────────────────────────────────────────────────────── */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
             <h3 className="font-semibold text-[var(--text)] mb-1">Dictee vocale</h3>
             <p className="text-xs text-[var(--text-muted)] mb-4">
@@ -765,11 +765,11 @@ export default function ParametresPage() {
                     : 'border-[var(--border)] bg-[var(--card)] text-[var(--text)] focus:border-primary'
                 )}
               >
-                <option value="fr-FR">ðŸ‡«ðŸ‡· FranÃ§ais (France)</option>
-                <option value="fr-BE">ðŸ‡§ðŸ‡ª FranÃ§ais (Belgique)</option>
-                <option value="fr-CA">ðŸ‡¨ðŸ‡¦ FranÃ§ais (Canada)</option>
-                <option value="en-US">ðŸ‡ºðŸ‡¸ English (US)</option>
-                <option value="en-GB">ðŸ‡¬ðŸ‡§ English (UK)</option>
+                <option value="fr-FR">🇫🇷 Français (France)</option>
+                <option value="fr-BE">🇫🇷 Français (Belgique)</option>
+                <option value="fr-CA">🇫🇷 Français (Canada)</option>
+                <option value="en-US">US English (US)</option>
+                <option value="en-GB">US English (UK)</option>
               </select>
               <span className="text-xs text-[var(--text-muted)] italic">
                 Parametre sauvegarde avec les alertes ci-dessous
@@ -802,7 +802,7 @@ export default function ParametresPage() {
         </div>
       )}
 
-      {/* â”€â”€ IMPORT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── IMPORT ────────────────────────────────────────────────────────────── */}
       {activeTab==='import'&&(
         <div className="space-y-4">
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-6 transition-colors">

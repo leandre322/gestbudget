@@ -319,3 +319,14 @@ model AuditLog {
   @@index([createdAt])
   @@map("audit_logs")
 }
+
+model CronLog {
+  id         String   @id @default(cuid())
+  jobName    String
+  status     String
+  startedAt  DateTime @default(now())
+  durationMs Int
+  details    String?
+
+  @@index([jobName, startedAt])
+}
