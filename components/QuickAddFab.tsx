@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, X, Zap } from 'lucide-react';
+import { Plus, X, Zap, Lock } from 'lucide-react';
 import { useToast } from '@/components/Toast';
+import { useLock } from '@/app/(app)/contexts';
 import { formatFCFA } from '@/types';
 
 // ── Quick Add FAB (S6) ────────────────────────────────────────────────────────
@@ -10,16 +11,24 @@ import { formatFCFA } from '@/types';
 // du MOIS RÉEL COURANT (décidé côté serveur — voir /api/quick-add).
 // S'ouvre automatiquement via le shortcut PWA /suivi?quickadd=1.
 // Émet l'événement 'quickadd:done' pour que les pages ouvertes se rechargent.
+//
+// Verrou : respecte le mode lecture seule global (useLock). Quand l'app est
+// verrouillée, l'ajout est bloqué tant que la case "insérer malgré le verrou"
+// n'est pas cochée (garde-fou anti-saisie accidentelle, sans déverrouiller les
+// tableaux du mois affiché).
 
 type Cat = { id: string; nom: string; type: string };
 
 export default function QuickAddFab() {
   const toast = useToast();
+  const { isLocked } = useLock();
+
   const [open,        setOpen]        = useState(false);
   const [flux,        setFlux]        = useState<'decaissement' | 'encaissement'>('decaissement');
   const [montant,     setMontant]     = useState('');
   const [categorieId, setCategorieId] = useState('');
   const [libelle,     setLibelle]     = useState('');
+  const [override,    setOverride]    = useState(false); // S6 : forcer malgré le verrou
   const [cats,        setCats]        = useState<Cat[]>([]);
   const [loadingCats, setLoadingCats] = useState(false);
   const [sending,     setSending]     = useState(false);
@@ -60,10 +69,14 @@ export default function QuickAddFab() {
     setMontant('');
     setLibelle('');
     setCategorieId('');
+    setOverride(false);
   };
+
+  const bloqueParVerrou = isLocked && !override;
 
   const envoyer = async () => {
     const m = parseInt(montant);
+    if (bloqueParVerrou) { toast.error('Mode lecture seule — cochez la case pour insérer'); return; }
     if (!m || m <= 0)   { toast.error('Montant invalide'); return; }
     if (!categorieId)   { toast.error('Choisissez une catégorie'); return; }
     setSending(true);
@@ -90,7 +103,7 @@ export default function QuickAddFab() {
   };
 
   const onEnter = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !sending) envoyer();
+    if (e.key === 'Enter' && !sending && !bloqueParVerrou) envoyer();
   };
 
   return (
@@ -160,7 +173,19 @@ export default function QuickAddFab() {
                 className="w-full border border-[var(--border)] rounded-xl px-3 py-2.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
               />
 
-              <button onClick={envoyer} disabled={sending}
+              {/* ── S6 : garde-fou verrou ── */}
+              {isLocked && (
+                <label className="flex items-start gap-2.5 cursor-pointer rounded-xl border border-amber-300/50 bg-amber-50 dark:bg-amber-900/20 px-3 py-2.5">
+                  <input type="checkbox" checked={override} onChange={e => setOverride(e.target.checked)}
+                    className="mt-0.5 accent-amber-500 w-4 h-4 flex-shrink-0" />
+                  <span className="text-xs text-amber-700 dark:text-amber-300 flex items-start gap-1.5">
+                    <Lock size={12} className="mt-0.5 flex-shrink-0" />
+                    <span><strong>Mode lecture seule actif.</strong> Cochez pour insérer malgré le verrou (le mois affiché reste verrouillé).</span>
+                  </span>
+                </label>
+              )}
+
+              <button onClick={envoyer} disabled={sending || bloqueParVerrou}
                 className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary hover:bg-primary-dark text-white text-sm font-semibold transition-all disabled:opacity-50">
                 <Plus size={15} />{sending ? 'Ajout…' : 'Ajouter'}
               </button>

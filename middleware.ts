@@ -63,6 +63,7 @@ const PROTECTED_PAGES = [
   '/budget', '/decaissements', '/parametres', '/ajout-retrait-fonds',
   '/projets',
   '/analytiques', // ← S5 : était dans PROTECTED_PAGES mais manquait dans le matcher
+  '/recurrentes', // ← S6 : page de gestion des récurrentes
 ];
 
 export async function middleware(req: NextRequest) {
@@ -158,6 +159,7 @@ export const config = {
     '/ajout-retrait-fonds/:path*',
     '/projets/:path*',
     '/analytiques/:path*',
+    '/recurrentes/:path*',       // ← S6 : page de gestion des récurrentes
     '/api/auth/:path*',
     '/api/register',
     '/api/forgot-password',
