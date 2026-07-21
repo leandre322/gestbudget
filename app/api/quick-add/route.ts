@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
 
     await logAudit({
       userId,
-      action: 'quick_add',
+      action: 'update',        // S6 : AuditAction est un union strict — filtrer via entityType='budget_mensuel'
       entityType: 'budget_mensuel',
       entityId: ligne.id,
       entityNom: categorie.nom,
