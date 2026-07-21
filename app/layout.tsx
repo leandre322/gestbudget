@@ -1,13 +1,19 @@
 import type { Metadata, Viewport } from 'next';
+import * as Sentry from '@sentry/nextjs';
 import './globals.css';
 import { ThemeProvider } from '@/lib/theme';
 
-export const metadata: Metadata = {
-  title:       'GestBudget',
-  description: 'Application de gestion de budget mensuel personnel',
-  manifest:    '/manifest.json',
-  appleWebApp: { capable: true, statusBarStyle: 'default', title: 'GestBudget' },
-};
+export function generateMetadata(): Metadata {
+  return {
+    title:       'GestBudget',
+    description: 'Application de gestion de budget mensuel personnel',
+    manifest:    '/manifest.json',
+    appleWebApp: { capable: true, statusBarStyle: 'default', title: 'GestBudget' },
+    other: {
+      ...Sentry.getTraceData(),
+    },
+  };
+}
 
 export const viewport: Viewport = { themeColor: '#3B82F6' };
 
