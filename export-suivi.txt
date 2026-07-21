@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useState, useCallback, useRef, Fragment } from 'react';
 import { Copy, Save, ChevronsDownUp, ChevronsUpDown, Plus, Trash2, Pencil,
@@ -14,7 +14,7 @@ import { formatFCFA, MOIS_LABELS, ORDRE_TYPES, TYPE_LABELS,
 import { clsx } from 'clsx';
 import EnveloppesSection from '@/components/EnveloppesSection';
 
-// ── Bloquer les caractères non numériques ─────────────────────────────────────
+// â”€â”€ Bloquer les caractÃ¨res non numÃ©riques â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const onlyNumbers = (e: React.KeyboardEvent<HTMLInputElement>) => {
   const allowed = ['Backspace','Delete','Tab','Escape','Enter','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'];
   if (allowed.includes(e.key) || e.ctrlKey || e.metaKey) return;
@@ -24,32 +24,32 @@ const onlyNumbers = (e: React.KeyboardEvent<HTMLInputElement>) => {
 type Lignes      = Record<string, { anticipe: string; reel: string }>;
 type LigneBanque = { id: string; banqueId: string; anticipe: number; reel: string };
 
-const TYPES_OUVERTS_PAR_DEFAUT: string[] = []; // Tout plié par défaut
-const MOIS_COURTS  = ['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+const TYPES_OUVERTS_PAR_DEFAUT: string[] = []; // Tout pliÃ© par dÃ©faut
+const MOIS_COURTS  = ['','Jan','FÃ©v','Mar','Avr','Mai','Jun','Jul','AoÃ»','Sep','Oct','Nov','DÃ©c'];
 const DONUT_COLORS = ['#1E40AF','#EF4444','#F59E0B','#10B981','#8B5CF6','#06B6D4','#F97316'];
 
-// ── Normalisation pour matching robuste ──────────────────────────────────────
-// Gère : "Fête / Vacances" = "Fête / Vacances", accents, espaces autour des /
+// â”€â”€ Normalisation pour matching robuste â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// GÃ¨re : "FÃªte / Vacances" = "FÃªte / Vacances", accents, espaces autour des /
 function normaliser(s: string): string {
   return s
     .toLowerCase()
     .trim()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // supprime les accents
     .replace(/\s*\/\s*/g, '/')                         // normalise espaces autour de /
-    .replace(/\s+/g, ' ');                             // espaces multiples → un seul
+    .replace(/\s+/g, ' ');                             // espaces multiples â†’ un seul
 }
 
-// ── Correspondance catégorie → CompteFonds par nom (Option A) ────────────────
+// â”€â”€ Correspondance catÃ©gorie â†’ CompteFonds par nom (Option A) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function trouverCompteParNom(catNom: string, comptes: any[]): any | null {
   if (!catNom || !comptes.length) return null;
   const cat = normaliser(catNom);
-  // 1. Correspondance exacte normalisée
+  // 1. Correspondance exacte normalisÃ©e
   let match = comptes.find(c => normaliser(c.nom) === cat);
   if (match) return match;
-  // 2. Le nom du fond est contenu dans la catégorie
+  // 2. Le nom du fond est contenu dans la catÃ©gorie
   match = comptes.find(c => cat.includes(normaliser(c.nom)));
   if (match) return match;
-  // 3. La catégorie est contenue dans le nom du fond
+  // 3. La catÃ©gorie est contenue dans le nom du fond
   match = comptes.find(c => normaliser(c.nom).includes(cat));
   return match ?? null;
 }
@@ -65,7 +65,6 @@ export default function SuiviPage() {
   const [comptes,      setComptes]      = useState<any[]>([]);
   const [lignesBanque, setLignesBanque] = useState<LigneBanque[]>([]);
   const [hist,         setHist]         = useState<any[]>([]);
-  const [recCatIds,    setRecCatIds]    = useState<Set<string>>(new Set()); // S6 — badge récurrentes
   const [loading,      setLoading]      = useState(true);
   const [saving,       setSaving]       = useState(false);
   const [saved,        setSaved]        = useState(false);
@@ -87,9 +86,9 @@ export default function SuiviPage() {
   const collapseAllGroups = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = false; }); setGroupsOpen(n); };
 
   const timerRef            = useRef<NodeJS.Timeout | null>(null);
-  // ── sauvegarderRef : toujours pointer vers la dernière version de sauvegarder ──
-  // Évite le bug de stale closure : le timer scheduleSave capturerait sinon
-  // l'ancienne version de sauvegarder (avec les anciens lignes) → écrase les nouvelles valeurs
+  // â”€â”€ sauvegarderRef : toujours pointer vers la derniÃ¨re version de sauvegarder â”€â”€
+  // Ã‰vite le bug de stale closure : le timer scheduleSave capturerait sinon
+  // l'ancienne version de sauvegarder (avec les anciens lignes) â†’ Ã©crase les nouvelles valeurs
   const sauvegarderRef = useRef<() => Promise<void>>(async () => {});
   const moisCourantReel     = new Date().getMonth() + 1;
   const anneeCouranteReelle = new Date().getFullYear();
@@ -100,7 +99,7 @@ export default function SuiviPage() {
     try { localStorage.setItem('suivi-show-totals', String(next)); } catch {}
   };
 
-  // ── Chargement ──────────────────────────────────────────────────────────
+  // â”€â”€ Chargement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const charger = useCallback(async () => {
     setLoading(true);
     const [resBudget, resBanques, resComptes] = await Promise.all([
@@ -115,7 +114,7 @@ export default function SuiviPage() {
     const init: Lignes = {};
     for (const cat of d.categories) {
       const b = d.budget.find((b: any) => b.categorieId === cat.id);
-      // Note : on utilise !== undefined/null pour gérer 0 correctement (0 est falsy!)
+      // Note : on utilise !== undefined/null pour gÃ©rer 0 correctement (0 est falsy!)
       init[cat.id] = {
         anticipe: (b?.montantAnticipe != null && b.montantAnticipe !== 0)
           ? String(b.montantAnticipe) : '',
@@ -134,7 +133,7 @@ export default function SuiviPage() {
       const db  = await resBanques.json();
       const bqs = db.banques ?? [];
       setBanques(bqs);
-      // ── Init lignesBanque + lignes[catPrec] depuis DB ───────────────────────
+      // â”€â”€ Init lignesBanque + lignes[catPrec] depuis DB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const catsPrecaution   = d.categories.filter((c: any) => c.type === 'epargne_precaution');
       const totalAnticipe    = catsPrecaution.reduce((s: number, c: any) => {
         const b = d.budget.find((b: any) => b.categorieId === c.id);
@@ -142,7 +141,7 @@ export default function SuiviPage() {
       }, 0);
       const anticipeParLigne = bqs.length > 0 ? Math.round(totalAnticipe / Math.min(2, bqs.length)) : 0;
 
-      // Récupérer les réels DB par catégorie précaution (source de vérité)
+      // RÃ©cupÃ©rer les rÃ©els DB par catÃ©gorie prÃ©caution (source de vÃ©ritÃ©)
       const dbReelByCatId: Record<string, string> = {};
       catsPrecaution.forEach((cat: any) => {
         const bBudget = d.budget.find((b: any) => b.categorieId === cat.id);
@@ -180,7 +179,7 @@ export default function SuiviPage() {
 
         setLignesBanque(finalLignesBanque);
 
-        // ── Sync lignes[catPrec] depuis finalLignesBanque (SÉPARÉ de setLignesBanque) ──
+        // â”€â”€ Sync lignes[catPrec] depuis finalLignesBanque (SÃ‰PARÃ‰ de setLignesBanque) â”€â”€
         setLignes(prev => {
           const synced = { ...prev };
           catsPrecaution.forEach((cat: any, idx: number) => {
@@ -233,23 +232,6 @@ export default function SuiviPage() {
 
   useEffect(() => { charger(); }, [charger]);
 
-  // ── S6 : Quick Add — recharger quand un ajout rapide aboutit ───────────────
-  // Évite qu'un « Sauvegarder » ultérieur (valeurs absolues) écrase l'incrément
-  useEffect(() => {
-    const onQuickAdd = () => { charger(); };
-    window.addEventListener('quickadd:done', onQuickAdd);
-    return () => window.removeEventListener('quickadd:done', onQuickAdd);
-  }, [charger]);
-
-  // ── S6 : Catégories alimentées par une récurrente ce mois (badge 🔄) ───────
-  useEffect(() => {
-    const periode = `${annee}-${String(mois).padStart(2, '0')}`;
-    fetch(`/api/recurrentes?periode=${periode}`)
-      .then(r => (r.ok ? r.json() : null))
-      .then(d => setRecCatIds(new Set<string>(d?.executionsCategorieIds ?? [])))
-      .catch(() => {});
-  }, [mois, annee]);
-
   useEffect(() => {
     if (lignesBanque.length > 0) {
       try { localStorage.setItem(`lignes-banque-${annee}-${mois}`, JSON.stringify(lignesBanque)); } catch {}
@@ -259,7 +241,7 @@ export default function SuiviPage() {
   const scheduleSave = () => {
     if (isLocked) return;
     if (timerRef.current) clearTimeout(timerRef.current);
-    // Utiliser sauvegarderRef.current → toujours la dernière version avec les derniers lignes
+    // Utiliser sauvegarderRef.current â†’ toujours la derniÃ¨re version avec les derniers lignes
     timerRef.current = setTimeout(() => { sauvegarderRef.current(); }, 30_000);
   };
 
@@ -272,18 +254,18 @@ export default function SuiviPage() {
 
   const sauvegarder = async () => {
     if (isLocked) return;
-    // ── Annuler le timer auto-save pour éviter double-save ──────────────────
+    // â”€â”€ Annuler le timer auto-save pour Ã©viter double-save â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
 
     if (!data?.anneeId) {
-      toast.error('Aucune année sélectionnée — rechargez la page');
+      toast.error('Aucune annÃ©e sÃ©lectionnÃ©e â€” rechargez la page');
       return;
     }
     setSaving(true);
     (window as any).__setSaveStatus?.('saving');
 
     // 1. Sauvegarder le budget
-    // S'assurer que TOUTES les catégories actives sont dans lignes
+    // S'assurer que TOUTES les catÃ©gories actives sont dans lignes
     // (y compris epargne_investissement, depense_occasionnelle, etc.)
     const allCats = data?.categories ?? [];
     const lignesComplet = { ...lignes };
@@ -296,7 +278,7 @@ export default function SuiviPage() {
     // Log pour debug (visible dans console navigateur)
     const nonZeroEntries = Object.entries(lignesComplet)
       .filter(([_, v]) => parseInt(v.reel) !== 0 || parseInt(v.anticipe) !== 0);
-    console.log(`💾 Save ${mois}/${data.anneeId}: ${nonZeroEntries.length} lignes non-nulles`);
+    console.log(`ðŸ’¾ Save ${mois}/${data.anneeId}: ${nonZeroEntries.length} lignes non-nulles`);
 
     const res = await fetch('/api/budget', {
       method:  'PUT',
@@ -307,21 +289,21 @@ export default function SuiviPage() {
     const cats           = data?.categories ?? [];
     const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
 
-    // 2. Répercuter banques → catégories epargne_precaution en DB
-    // ── Toujours mettre à jour TOUTES les catsPrecaution (source de vérité DB) ──
+    // 2. RÃ©percuter banques â†’ catÃ©gories epargne_precaution en DB
+    // â”€â”€ Toujours mettre Ã  jour TOUTES les catsPrecaution (source de vÃ©ritÃ© DB) â”€â”€
     if (catsPrecaution.length > 0) {
       const newLignesPrecaution = { ...lignesComplet };
 
-      // Calculer le réel par catégorie precaution depuis lignesBanque
+      // Calculer le rÃ©el par catÃ©gorie precaution depuis lignesBanque
       catsPrecaution.forEach((cat: any, idx: number) => {
-        const lb = lignesBanque[idx]; // undefined si moins de banques que de catégories
+        const lb = lignesBanque[idx]; // undefined si moins de banques que de catÃ©gories
         newLignesPrecaution[cat.id] = {
           anticipe: lignes[cat.id]?.anticipe ?? '0',
-          reel:     lb ? (lb.reel || '0') : '0', // 0 si pas de lignesBanque → efface les valeurs stale
+          reel:     lb ? (lb.reel || '0') : '0', // 0 si pas de lignesBanque â†’ efface les valeurs stale
         };
       });
 
-      // Si plus de lignesBanque que de catégories precaution : sommer le surplus dans la dernière
+      // Si plus de lignesBanque que de catÃ©gories precaution : sommer le surplus dans la derniÃ¨re
       if (lignesBanque.length > catsPrecaution.length && catsPrecaution.length > 0) {
         const lastCat  = catsPrecaution[catsPrecaution.length - 1];
         const surplus  = lignesBanque
@@ -341,14 +323,14 @@ export default function SuiviPage() {
       });
     }
 
-    // 3. ── Incrémenter banques (epargne_precaution) ────────────────────────
-    // Clé stable : banqueId (pas lb.id qui est volatile)
-    // Référence : localStorage avec clé basée sur banqueId
+    // 3. â”€â”€ IncrÃ©menter banques (epargne_precaution) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ClÃ© stable : banqueId (pas lb.id qui est volatile)
+    // RÃ©fÃ©rence : localStorage avec clÃ© basÃ©e sur banqueId
     for (const lb of lignesBanque) {
       const reelVal = parseInt(lb.reel) || 0;
       if (!lb.banqueId) continue;
 
-      // Clé stable basée sur banqueId (non volatile entre rechargements)
+      // ClÃ© stable basÃ©e sur banqueId (non volatile entre rechargements)
       const oldKey = `banque-saved-${annee}-${mois}-${lb.banqueId}`;
       const oldVal = parseInt(localStorage.getItem(oldKey) ?? '0');
       const diff   = reelVal - oldVal;
@@ -363,15 +345,15 @@ export default function SuiviPage() {
       }
     }
 
-    // 4. ── Incrémenter CompteFonds (epargne_autre) — référence DB ──────────
-    // Référence = data.budget (chargé depuis DB au dernier charger())
-    // → pas de localStorage → pas de doublon si rechargement page
+    // 4. â”€â”€ IncrÃ©menter CompteFonds (epargne_autre) â€” rÃ©fÃ©rence DB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // RÃ©fÃ©rence = data.budget (chargÃ© depuis DB au dernier charger())
+    // â†’ pas de localStorage â†’ pas de doublon si rechargement page
     const catsAutre = cats.filter((c: any) => c.type === 'epargne_autre');
     const budgetRef = data?.budget ?? [];
 
     for (const cat of catsAutre) {
       const newVal = parseInt(lignes[cat.id]?.reel) || 0;
-      // Valeur de référence = ce qui était en DB au dernier chargement
+      // Valeur de rÃ©fÃ©rence = ce qui Ã©tait en DB au dernier chargement
       const oldVal = Number(budgetRef.find((b: any) => b.categorieId === cat.id)?.montantReel ?? 0);
       const diff   = newVal - oldVal;
 
@@ -390,13 +372,13 @@ export default function SuiviPage() {
     setSaving(false);
     if (res.ok) {
       setSaved(true);
-      toast.success('Suivi mensuel sauvegardé ✓');
+      toast.success('Suivi mensuel sauvegardÃ© âœ“');
       (window as any).__setSaveStatus?.('saved');
 
-      // ── Épargne Investissement → banque liée (delta) ───────────────────────────────
-      // Si une catégorie epargne_investissement a une banqueId liée,
-      // on met à jour le solde de la banque du delta (newReel - oldReel)
-      // Direction : épargne sauvée → banque += delta (l'épargne alimente la banque)
+      // â”€â”€ Ã‰pargne Investissement â†’ banque liÃ©e (delta) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // Si une catÃ©gorie epargne_investissement a une banqueId liÃ©e,
+      // on met Ã  jour le solde de la banque du delta (newReel - oldReel)
+      // Direction : Ã©pargne sauvÃ©e â†’ banque += delta (l'Ã©pargne alimente la banque)
       const catsInvest = (data?.categories ?? [])
         .filter((c: any) => c.type === 'epargne_investissement' && c.banqueId);
 
@@ -418,33 +400,33 @@ export default function SuiviPage() {
             }),
           });
           console.log(
-            `💰 ${cat.nom} : delta ${delta > 0 ? '+' : ''}${delta} → banque ${cat.banqueId}`
+            `ðŸ’° ${cat.nom} : delta ${delta > 0 ? '+' : ''}${delta} â†’ banque ${cat.banqueId}`
           );
         }
       }
 
-      // ── Recharger depuis DB pour garantir la cohérence (y compris les 0) ────────────
-      // Ne pas se fier au state local — la DB est la source de vérité
+      // â”€â”€ Recharger depuis DB pour garantir la cohÃ©rence (y compris les 0) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // Ne pas se fier au state local â€” la DB est la source de vÃ©ritÃ©
       await charger();
 
-      // ── Mettre à jour data.budget pour TOUTES les catégories (y compris nouvelles) ──
-      // Important : les catégories jamais sauvegardées ne sont pas dans prev.budget
-      // → on les ajoute pour que charger() ne les écrase pas lors d'un rechargement
+      // â”€â”€ Mettre Ã  jour data.budget pour TOUTES les catÃ©gories (y compris nouvelles) â”€â”€
+      // Important : les catÃ©gories jamais sauvegardÃ©es ne sont pas dans prev.budget
+      // â†’ on les ajoute pour que charger() ne les Ã©crase pas lors d'un rechargement
       setData((prev: any) => {
         if (!prev?.budget) return prev;
         const existingIds = new Set(prev.budget.map((b: any) => b.categorieId));
-        // Mettre à jour les entrées existantes
+        // Mettre Ã  jour les entrÃ©es existantes
         const updatedBudget = prev.budget.map((b: any) => {
           const newAnt  = lignes[b.categorieId]?.anticipe;
           const newReel = lignes[b.categorieId]?.reel;
           return {
             ...b,
-            // Utiliser la nouvelle valeur MÊME si elle est 0 (parseInt('0') = 0, valide!)
+            // Utiliser la nouvelle valeur MÃŠME si elle est 0 (parseInt('0') = 0, valide!)
             montantAnticipe: newAnt  !== undefined ? (parseInt(newAnt)  || 0) : b.montantAnticipe,
             montantReel:     newReel !== undefined ? (parseInt(newReel) || 0) : b.montantReel,
           };
         });
-        // Ajouter les nouvelles catégories qui n'avaient pas d'entrée DB
+        // Ajouter les nouvelles catÃ©gories qui n'avaient pas d'entrÃ©e DB
         const cats = prev.categories ?? [];
         for (const [catId, vals] of Object.entries(lignes as Record<string, { anticipe: string; reel: string }>)) {
           if (!existingIds.has(catId)) {
@@ -468,7 +450,7 @@ export default function SuiviPage() {
     } else {
       try {
         const errBody = await res.clone().json();
-        console.error('❌ PUT /api/budget error:', errBody);
+        console.error('âŒ PUT /api/budget error:', errBody);
         toast.error(`Erreur sauvegarde : ${errBody.error ?? res.status}`);
       } catch {
         toast.error(`Erreur sauvegarde HTTP ${res.status}`);
@@ -477,9 +459,9 @@ export default function SuiviPage() {
     }
   };
 
-  // ── Sync sauvegarderRef → toujours pointer vers la version courante ──────
-  // Sans ça, le timer scheduleSave garde une référence stale (anciens lignes)
-  // et peut écraser une valeur sauvegardée manuellement (ex: 18000 écrase 0)
+  // â”€â”€ Sync sauvegarderRef â†’ toujours pointer vers la version courante â”€â”€â”€â”€â”€â”€
+  // Sans Ã§a, le timer scheduleSave garde une rÃ©fÃ©rence stale (anciens lignes)
+  // et peut Ã©craser une valeur sauvegardÃ©e manuellement (ex: 18000 Ã©crase 0)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { sauvegarderRef.current = sauvegarder; });
 
@@ -488,7 +470,7 @@ export default function SuiviPage() {
     if (isLocked) return;
     const pm = mois === 1 ? 12 : mois - 1;
     const pa = mois === 1 ? annee - 1 : annee;
-    if (!window.confirm(`Copier les prévisions de ${MOIS_LABELS[pm]} ${pa} vers ce mois ?\nCela remplacera les prévisions actuelles.`)) return;
+    if (!window.confirm(`Copier les prÃ©visions de ${MOIS_LABELS[pm]} ${pa} vers ce mois ?\nCela remplacera les prÃ©visions actuelles.`)) return;
     setCopying(true);
     const res = await fetch(`/api/budget?annee=${pa}&mois=${pm}`);
     if (res.ok) {
@@ -501,7 +483,7 @@ export default function SuiviPage() {
       }
       setLignes(newL);
       scheduleSave();
-      toast.info(`Prévisions de ${MOIS_LABELS[pm]} ${pa} copiées`);
+      toast.info(`PrÃ©visions de ${MOIS_LABELS[pm]} ${pa} copiÃ©es`);
     } else {
       toast.error('Erreur lors de la copie');
     }
@@ -520,32 +502,32 @@ export default function SuiviPage() {
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes: newLignes }),
     });
-    toast.success('Données mises à jour ✓');
+    toast.success('DonnÃ©es mises Ã  jour âœ“');
     charger();
   };
 
   const ajouterLigneBanque   = () => setLignesBanque(prev => [...prev, { id: `lb-${Date.now()}`, banqueId: banques[0]?.id ?? '', anticipe: 0, reel: '' }]);
   const supprimerLigneBanque = (id: string) => setLignesBanque(prev => prev.filter(l => l.id !== id));
 
-  // updateLigneBanque — version PROPRE sans anti-pattern React
+  // updateLigneBanque â€” version PROPRE sans anti-pattern React
   // Appelle setLignes et setLignesBanque en top-level, jamais l'un dans l'autre
   const updateLigneBanque = (id: string, field: keyof LigneBanque, val: any) => {
     if (isLocked) return;
-    // 1. Mettre à jour lignesBanque
+    // 1. Mettre Ã  jour lignesBanque
     setLignesBanque(prev => prev.map(l => l.id === id ? { ...l, [field]: val } : l));
 
-    // 2. Si champ 'reel' modifié → sync lignes[catPrec] en top-level
+    // 2. Si champ 'reel' modifiÃ© â†’ sync lignes[catPrec] en top-level
     if (field === 'reel') {
       const cats = data?.categories ?? [];
       const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
       if (catsPrecaution.length === 0) return;
 
-      // Calculer la liste banque mise à jour (appliquer le changement explicitement)
+      // Calculer la liste banque mise Ã  jour (appliquer le changement explicitement)
       const updatedBanque = lignesBanque.map(l => l.id === id ? { ...l, reel: String(val) } : l);
 
-      // Mettre à jour lignes[catPrec] en top-level (pas dans un autre callback)
+      // Mettre Ã  jour lignes[catPrec] en top-level (pas dans un autre callback)
       setLignes(prev => {
-        const synced = { ...prev }; // Inclut TOUTES les catégories (epargne_investissement etc.)
+        const synced = { ...prev }; // Inclut TOUTES les catÃ©gories (epargne_investissement etc.)
         catsPrecaution.forEach((cat: any, idx: number) => {
           const lb = updatedBanque[idx];
           synced[cat.id] = {
@@ -553,7 +535,7 @@ export default function SuiviPage() {
             reel:     lb ? (String(lb.reel) || '0') : '0',
           };
         });
-        // Surplus : sommer dans la dernière catégorie precaution
+        // Surplus : sommer dans la derniÃ¨re catÃ©gorie precaution
         if (updatedBanque.length > catsPrecaution.length && catsPrecaution.length > 0) {
           const lastCat = catsPrecaution[catsPrecaution.length - 1];
           const surplus = updatedBanque.slice(catsPrecaution.length)
@@ -561,7 +543,7 @@ export default function SuiviPage() {
           const current = parseInt(synced[lastCat.id]?.reel || '0');
           synced[lastCat.id] = { ...synced[lastCat.id], reel: String(current + surplus) };
         }
-        return synced; // Toutes les autres catégories (epargne_investissement...) sont préservées
+        return synced; // Toutes les autres catÃ©gories (epargne_investissement...) sont prÃ©servÃ©es
       });
     }
   };
@@ -572,7 +554,7 @@ export default function SuiviPage() {
 
   const cats = data?.categories ?? [];
 
-  // ── Totaux ──────────────────────────────────────────────────────────────
+  // â”€â”€ Totaux â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const catsPrecaution          = cats.filter((c: any) => c.type === 'epargne_precaution');
   const totalAnticipePrecaution = catsPrecaution.reduce((s: number, c: any) => {
     const b = data?.budget?.find((b: any) => b.categorieId === c.id);
@@ -583,8 +565,8 @@ export default function SuiviPage() {
   const revAnt  = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
   const revReel = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
 
-  // Épargne = toute l'épargne depuis lignes (source unique, miroir DB)
-  // lignes[catPrec] est initialisé depuis DB dans charger()
+  // Ã‰pargne = toute l'Ã©pargne depuis lignes (source unique, miroir DB)
+  // lignes[catPrec] est initialisÃ© depuis DB dans charger()
   const epAnt  = cats.filter((c: any) => c.type?.startsWith('epargne')).reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
   const epReel = cats.filter((c: any) => c.type?.startsWith('epargne')).reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
 
@@ -618,7 +600,7 @@ export default function SuiviPage() {
         titre={TYPE_LABELS[modalType as keyof typeof TYPE_LABELS] ?? ''}
         categories={modalCats} lignes={lignes} mode="both" />
 
-      {/* ── En-tête ── */}
+      {/* â”€â”€ En-tÃªte â”€â”€ */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-[var(--text)]">Suivi mensuel</h1>
@@ -631,29 +613,29 @@ export default function SuiviPage() {
           </button>
           <button onClick={expandAllGroups}
             className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--surface)] hover:bg-slate-50 dark:hover:bg-dark-card text-[var(--text-muted)] rounded-xl px-3 py-2 text-xs font-medium transition-all">
-            <ChevronsDownUp size={13} />Tout déplier
+            <ChevronsDownUp size={13} />Tout dÃ©plier
           </button>
           <button onClick={toggleTotals}
             className="flex items-center gap-1.5 border border-[var(--border)] bg-[var(--surface)] hover:bg-slate-50 dark:hover:bg-dark-card text-[var(--text-muted)] rounded-xl px-3 py-2 text-xs font-medium transition-all">
-            {showTotals ? '🙈 Masquer totaux' : '👁️ Afficher totaux'}
+            {showTotals ? 'ðŸ™ˆ Masquer totaux' : 'ðŸ‘ï¸ Afficher totaux'}
           </button>
           <button onClick={copierMoisPrecedent} disabled={copying || isLocked}
             className="flex items-center gap-2 border border-[var(--border)] bg-[var(--surface)] hover:bg-slate-50 dark:hover:bg-dark-card text-[var(--text-muted)] rounded-xl px-3.5 py-2 text-sm font-medium transition-all disabled:opacity-60">
-            <Copy size={14} />{copying ? 'Copie...' : 'Mois précédent'}
+            <Copy size={14} />{copying ? 'Copie...' : 'Mois prÃ©cÃ©dent'}
           </button>
           <button onClick={sauvegarder} disabled={saving || isLocked}
             className="flex items-center gap-2 bg-primary hover:bg-primary-dark text-white rounded-xl px-3.5 py-2 text-sm font-medium transition-all disabled:opacity-60">
-            <Save size={14} />{saving ? 'Sauvegarde...' : saved ? 'Sauvegardé ✓' : 'Sauvegarder'}
+            <Save size={14} />{saving ? 'Sauvegarde...' : saved ? 'SauvegardÃ© âœ“' : 'Sauvegarder'}
           </button>
         </div>
       </div>
 
-      {/* ── KPIs ── */}
+      {/* â”€â”€ KPIs â”€â”€ */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: 'Revenus',  val: revReel,   ant: revAnt,   type: 'revenu',       cls: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' },
-          { label: 'Épargne',  val: epReel,    ant: epAnt,    type: 'epargne_precaution', cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
-          { label: 'Dépenses', val: depReel,   ant: depAnt,   type: 'depense_fixe', cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
+          { label: 'Ã‰pargne',  val: epReel,    ant: epAnt,    type: 'epargne_precaution', cls: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' },
+          { label: 'DÃ©penses', val: depReel,   ant: depAnt,   type: 'depense_fixe', cls: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' },
           { label: 'Solde',    val: soldeReel, ant: soldeAnt, type: '',
             cls: soldeReel >= 0 ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400' },
         ].map(k => (
@@ -668,28 +650,28 @@ export default function SuiviPage() {
               )}
             </div>
             <p className="text-lg font-bold">{formatFCFA(k.val)}</p>
-            <p className="text-xs opacity-55">Prévision : {formatFCFA(k.ant)}</p>
+            <p className="text-xs opacity-55">PrÃ©vision : {formatFCFA(k.ant)}</p>
           </div>
         ))}
       </div>
 
-      {/* ── KPIs analytiques ── */}
+      {/* â”€â”€ KPIs analytiques â”€â”€ */}
       <div className="grid sm:grid-cols-2 gap-3">
         <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4 flex items-center gap-3 transition-colors">
           <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center">
-            <span className="text-primary text-lg">📊</span>
+            <span className="text-primary text-lg">ðŸ“Š</span>
           </div>
           <div>
-            <p className="text-xs text-[var(--text-muted)]">Taux d'exécution</p>
+            <p className="text-xs text-[var(--text-muted)]">Taux d'exÃ©cution</p>
             <p className="text-xl font-bold text-primary">{tauxExec.toFixed(1)} %</p>
           </div>
         </div>
         <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4 flex items-center gap-3 transition-colors">
           <div className="w-10 h-10 rounded-xl bg-green-50 dark:bg-green-900/30 flex items-center justify-center">
-            <span className="text-lg">🐷</span>
+            <span className="text-lg">ðŸ·</span>
           </div>
           <div>
-            <p className="text-xs text-[var(--text-muted)]">Taux d'épargne</p>
+            <p className="text-xs text-[var(--text-muted)]">Taux d'Ã©pargne</p>
             <p className={clsx('text-xl font-bold', tauxEp >= 30 ? 'text-green-600' : tauxEp >= 15 ? 'text-amber-500' : 'text-red-500')}>
               {tauxEp.toFixed(1)} %
             </p>
@@ -698,7 +680,7 @@ export default function SuiviPage() {
         </div>
       </div>
 
-      {/* ── Tableau ── */}
+      {/* â”€â”€ Tableau â”€â”€ */}
       <div className="max-w-5xl mx-auto w-full">
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] overflow-hidden transition-colors">
           <div className="overflow-x-auto">
@@ -712,7 +694,7 @@ export default function SuiviPage() {
               </colgroup>
               <thead>
                 <tr className="bg-slate-50 dark:bg-dark-card border-b border-[var(--border)]">
-                  <th className="text-left px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase tracking-wide">Catégorie</th>
+                  <th className="text-left px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase tracking-wide">CatÃ©gorie</th>
                   <th className="text-right px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">{LABEL_PREVISION}</th>
                   <th className="text-right px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">{LABEL_REEL}</th>
                   <th className="text-right px-4 py-3 font-semibold text-[var(--text-muted)] text-xs uppercase">{LABEL_ECART}</th>
@@ -753,13 +735,13 @@ export default function SuiviPage() {
                             {TYPE_LABELS[type as keyof typeof TYPE_LABELS]}
                           </div>
                         </td>
-                        <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{gAnt > 0 ? formatFCFA(gAnt) : '—'}</td>
-                        <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{gReel > 0 ? formatFCFA(gReel) : '—'}</td>
+                        <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{gAnt > 0 ? formatFCFA(gAnt) : 'â€”'}</td>
+                        <td className="px-4 py-2.5 text-right text-xs font-bold text-[var(--text)]">{gReel > 0 ? formatFCFA(gReel) : 'â€”'}</td>
                         <td className={clsx('px-4 py-2.5 text-right text-xs font-bold', gEcarColor)}>
-                          {gEcar !== 0 ? (gEcar > 0 ? '+' : '') + formatFCFA(gEcar) : '—'}
+                          {gEcar !== 0 ? (gEcar > 0 ? '+' : '') + formatFCFA(gEcar) : 'â€”'}
                         </td>
                         <td className="px-4 py-2.5 text-right">
-                          {gAnt > 0 ? <span className={clsx('text-xs font-bold', gTauxColor)}>{gPct.toFixed(0)}%</span> : <span className="text-xs text-[var(--text-muted)]">—</span>}
+                          {gAnt > 0 ? <span className={clsx('text-xs font-bold', gTauxColor)}>{gPct.toFixed(0)}%</span> : <span className="text-xs text-[var(--text-muted)]">â€”</span>}
                         </td>
                       </tr>
 
@@ -772,12 +754,12 @@ export default function SuiviPage() {
                                   <td className="px-4 py-2.5 pl-10">
                                     <select value={lb.banqueId} onChange={e => updateLigneBanque(lb.id, 'banqueId', e.target.value)}
                                       className="border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none w-full max-w-[180px]">
-                                      <option value="">— Choisir banque —</option>
+                                      <option value="">â€” Choisir banque â€”</option>
                                       {banques.map((b: any) => <option key={b.id} value={b.id}>{b.nomBanque}</option>)}
                                     </select>
                                   </td>
                                   <td className="px-4 py-2.5 text-right text-sm text-[var(--text-muted)]">
-                                    {lb.anticipe > 0 ? formatFCFA(lb.anticipe) : '—'}
+                                    {lb.anticipe > 0 ? formatFCFA(lb.anticipe) : 'â€”'}
                                   </td>
                                   <td className="px-3 py-2">
                                     <input type="number" value={lb.reel} onChange={e => updateLigneBanque(lb.id, 'reel', e.target.value)}
@@ -785,7 +767,7 @@ export default function SuiviPage() {
                                       placeholder="0"
                                       className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" />
                                   </td>
-                                  <td className="px-4 py-2.5 text-right text-sm text-[var(--text-muted)]">—</td>
+                                  <td className="px-4 py-2.5 text-right text-sm text-[var(--text-muted)]">â€”</td>
                                   <td className="px-4 py-2.5 text-right">
                                     <button onClick={() => supprimerLigneBanque(lb.id)} className="text-slate-300 hover:text-red-500 transition-colors">
                                       <Trash2 size={13} />
@@ -809,10 +791,10 @@ export default function SuiviPage() {
                                   <td className="px-4 py-2 text-right text-xs font-bold text-green-500">
                                     {(totalReelBanques - totalAnticipePrecaution) !== 0
                                       ? ((totalReelBanques - totalAnticipePrecaution) > 0 ? '+' : '') + formatFCFA(totalReelBanques - totalAnticipePrecaution)
-                                      : '—'}
+                                      : 'â€”'}
                                   </td>
                                   <td className="px-4 py-2 text-right text-xs text-[var(--text-muted)]">
-                                    {totalAnticipePrecaution > 0 ? ((totalReelBanques / totalAnticipePrecaution) * 100).toFixed(0) + '%' : '—'}
+                                    {totalAnticipePrecaution > 0 ? ((totalReelBanques / totalAnticipePrecaution) * 100).toFixed(0) + '%' : 'â€”'}
                                   </td>
                                 </tr>
                               )}
@@ -837,30 +819,24 @@ export default function SuiviPage() {
                                       <div className="flex items-center gap-2 flex-wrap">
                                         {over && <span className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0" />}
                                         <span className="truncate">{cat.nom}</span>
-                                        {recCatIds.has(cat.id) && (
-                                          <span title="Alimentée par une récurrente ce mois"
-                                            className="text-xs px-1.5 py-0.5 rounded-md bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-300 font-medium flex-shrink-0">
-                                            🔄 auto
-                                          </span>
-                                        )}
                                         {fondLie && (
                                           <span className="text-xs px-1.5 py-0.5 rounded-md bg-primary/10 text-primary font-medium flex-shrink-0">
-                                            → {fondLie.nom}
+                                            â†’ {fondLie.nom}
                                           </span>
                                         )}
                                         {isEpAutre && !fondLie && (
                                           <span className="text-xs px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-dark-card text-[var(--text-muted)] flex-shrink-0">
-                                            non lié
+                                            non liÃ©
                                           </span>
                                         )}
                                       </div>
                                     </td>
                                     <td className="px-3 py-2">
-                                      {/* Prévision = lecture seule — modifiable dans Paramètres > Budget de référence */}
+                                      {/* PrÃ©vision = lecture seule â€” modifiable dans ParamÃ¨tres > Budget de rÃ©fÃ©rence */}
                                       <div className="w-full text-right px-2 py-1.5 text-sm text-[var(--text-muted)] select-none">
                                         {parseInt(lignes[cat.id]?.anticipe || '0') > 0
                                           ? formatFCFA(parseInt(lignes[cat.id]?.anticipe))
-                                          : <span className="opacity-30">—</span>}
+                                          : <span className="opacity-30">â€”</span>}
                                       </div>
                                     </td>
                                     <td className="px-3 py-2">
@@ -869,7 +845,7 @@ export default function SuiviPage() {
                                         className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" />
                                     </td>
                                     <td className={clsx('px-4 py-2.5 text-right text-sm font-medium', ecarColor)}>
-                                      {ecar !== 0 ? (ecar > 0 ? '+' : '') + formatFCFA(ecar) : '—'}
+                                      {ecar !== 0 ? (ecar > 0 ? '+' : '') + formatFCFA(ecar) : 'â€”'}
                                     </td>
                                     <td className="px-4 py-2.5 text-right text-sm">
                                       {ant > 0 ? (
@@ -877,7 +853,7 @@ export default function SuiviPage() {
                                           pct > 110 ? 'text-red-500' : pct > 100 ? 'text-orange-500' : pct >= 80 ? 'text-amber-500' : 'text-green-500')}>
                                           {pct.toFixed(0)}%
                                         </span>
-                                      ) : '—'}
+                                      ) : 'â€”'}
                                     </td>
                                   </tr>
                                 );
@@ -888,10 +864,10 @@ export default function SuiviPage() {
                                   <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(gAnt)}</td>
                                   <td className="px-4 py-2 text-right text-xs font-bold text-[var(--text)]">{formatFCFA(gReel)}</td>
                                   <td className={clsx('px-4 py-2 text-right text-xs font-bold', gEcarColor)}>
-                                    {gEcar !== 0 ? (gEcar > 0 ? '+' : '') + formatFCFA(gEcar) : '—'}
+                                    {gEcar !== 0 ? (gEcar > 0 ? '+' : '') + formatFCFA(gEcar) : 'â€”'}
                                   </td>
                                   <td className="px-4 py-2 text-right text-xs">
-                                    {gAnt > 0 ? <span className={clsx('font-bold', gTauxColor)}>{gPct.toFixed(0)}%</span> : '—'}
+                                    {gAnt > 0 ? <span className={clsx('font-bold', gTauxColor)}>{gPct.toFixed(0)}%</span> : 'â€”'}
                                   </td>
                                 </tr>
                               )}
@@ -909,7 +885,7 @@ export default function SuiviPage() {
           {/* Totaux globaux */}
           <div className="border-t-2 border-primary/30 bg-primary/5 dark:bg-primary/10">
             <div className="px-4 py-2.5 flex items-center justify-between border-b border-primary/10">
-              <span className="font-semibold text-[var(--text)] text-sm">Total sorties (épargne + dépenses)</span>
+              <span className="font-semibold text-[var(--text)] text-sm">Total sorties (Ã©pargne + dÃ©penses)</span>
               <div className="flex gap-8">
                 <span className="font-semibold text-[var(--text)] text-sm">{formatFCFA(epAnt + depAnt)}</span>
                 <span className="font-semibold text-[var(--text)] text-sm">{formatFCFA(epReel + depReel)}</span>
@@ -926,10 +902,10 @@ export default function SuiviPage() {
         </div>
       </div>
 
-      {/* ── Graphiques ── */}
+      {/* â”€â”€ Graphiques â”€â”€ */}
       <div className="grid lg:grid-cols-2 gap-5">
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-          <h3 className="font-semibold text-[var(--text)] mb-3 text-sm">📊 Dépenses — 6 derniers mois</h3>
+          <h3 className="font-semibold text-[var(--text)] mb-3 text-sm">ðŸ“Š DÃ©penses â€” 6 derniers mois</h3>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={hist} barGap={3}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -937,13 +913,13 @@ export default function SuiviPage() {
               <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} tickFormatter={v => (v/1000).toFixed(0)+'k'} />
               <Tooltip formatter={(v: number) => formatFCFA(v)} />
               <Legend />
-              <Bar dataKey="prev" name="Prévision" fill="#DBEAFE" radius={[3,3,0,0]} />
-              <Bar dataKey="reel" name="Réel"      fill="#1E40AF" radius={[3,3,0,0]} />
+              <Bar dataKey="prev" name="PrÃ©vision" fill="#DBEAFE" radius={[3,3,0,0]} />
+              <Bar dataKey="reel" name="RÃ©el"      fill="#1E40AF" radius={[3,3,0,0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
         <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-          <h3 className="font-semibold text-[var(--text)] mb-3 text-sm">🥧 Répartition dépenses ce mois</h3>
+          <h3 className="font-semibold text-[var(--text)] mb-3 text-sm">ðŸ¥§ RÃ©partition dÃ©penses ce mois</h3>
           {donutData.length > 0 ? (
             <>
               <ResponsiveContainer width="100%" height={150}>
@@ -954,7 +930,7 @@ export default function SuiviPage() {
                   <Tooltip formatter={(v: number) => formatFCFA(v)} />
                 </PieChart>
               </ResponsiveContainer>
-              {/* Légende triée par montant décroissant */}
+              {/* LÃ©gende triÃ©e par montant dÃ©croissant */}
               <div className="mt-2 space-y-1 max-h-32 overflow-y-auto pr-1">
                 {donutData
                   .map((item: any, origIdx: number) => ({ ...item, origIdx }))
@@ -981,7 +957,7 @@ export default function SuiviPage() {
               </div>
             </>
           ) : (
-            <div className="h-40 flex items-center justify-center text-[var(--text-muted)] text-sm">Aucune dépense ce mois</div>
+            <div className="h-40 flex items-center justify-center text-[var(--text-muted)] text-sm">Aucune dÃ©pense ce mois</div>
           )}
         </div>
       </div>

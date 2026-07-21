@@ -55,6 +55,7 @@ const RATE_RULES = [
 const AUTH_RATE_RULES = [
   { path: '/api/analytiques', limit: 60, window: 60_000 }, // 60 req/min par userId
   { path: '/api/export/pdf',  limit: 10, window: 60_000 }, // 10 exports/min par userId
+  { path: '/api/quick-add',   limit: 30, window: 60_000 }, // S6 : anti-rafale Quick Add
 ];
 
 const PROTECTED_PAGES = [
@@ -92,7 +93,6 @@ export async function middleware(req: NextRequest) {
     if (appUrl) {
       const allowed = new URL(appUrl).origin;
       // FIX S5 : /api/cron/* ajouté — Vercel cron n'envoie pas l'origin de l'app
-      // Avant : seul /api/push/cron était exempté → /api/cron/bilan-hebdo bloqué en 403
       const isCron = pathname.startsWith('/api/cron') || pathname.startsWith('/api/push/cron');
       if (!isCron && !origin.startsWith(allowed) && !referer.startsWith(allowed)) {
         return new NextResponse(
@@ -104,7 +104,6 @@ export async function middleware(req: NextRequest) {
   }
 
   // 3. Auth (pages protégées) + rate limiting userId (routes lourdes)
-  //    getToken mutualisé : un seul appel JWT pour les deux vérifications
   const isProtected = PROTECTED_PAGES.some(p => pathname.startsWith(p));
   const isAuthRL    = AUTH_RATE_RULES.some(r => pathname.startsWith(r.path));
 
@@ -120,7 +119,6 @@ export async function middleware(req: NextRequest) {
     }
 
     // 3b. Rate limiting userId sur routes lourdes authentifiées
-    //     Clé : uid:{userId}:{path} — séparé des clés IP pour ne pas mélanger
     if (isAuthRL && token?.sub) {
       for (const rule of AUTH_RATE_RULES) {
         if (pathname.startsWith(rule.path)) {
@@ -139,7 +137,6 @@ export async function middleware(req: NextRequest) {
 
   // 4. Headers sécurité
   // NOTE : microphone PAS restreint — requis pour Web Speech API (D1 vocal)
-  // HSTS déplacé ici depuis next.config.js (centralisation des headers en un seul endroit)
   const res = NextResponse.next();
   res.headers.set('X-Frame-Options',           'SAMEORIGIN');
   res.headers.set('X-Content-Type-Options',    'nosniff');
@@ -160,13 +157,19 @@ export const config = {
     '/parametres/:path*',
     '/ajout-retrait-fonds/:path*',
     '/projets/:path*',
-    '/analytiques/:path*',       // ← FIX S5 : manquait → /analytiques non protégée sans ça
+    '/analytiques/:path*',
     '/api/auth/:path*',
     '/api/register',
     '/api/forgot-password',
     '/api/reset-password',
     '/api/push/:path*',
-    '/api/analytiques/:path*',   // ← NOUVEAU S5 : rate limiting userId + CSRF
-    '/api/export/:path*',        // ← NOUVEAU S5 : rate limiting userId
+    '/api/analytiques/:path*',
+    '/api/export/:path*',
+    '/api/projets/:path*',       // ← S6 : CSRF désormais actif sur routes métier
+    '/api/budget/:path*',        // ← S6
+    '/api/recurrentes/:path*',   // ← S6
+    '/api/quick-add/:path*',     // ← S6 : CSRF + rate limit userId
+    '/api/banques/:path*',       // ← S6
+    '/api/comptes/:path*',       // ← S6
   ],
 };

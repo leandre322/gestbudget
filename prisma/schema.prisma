@@ -13,7 +13,7 @@ datasource db {
   directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
-// ─── ENUM ────────────────────────────────────
+// ─── ENUM ──────────────────────────────────────
 
 enum TypeCategorie {
   revenu
@@ -26,7 +26,7 @@ enum TypeCategorie {
   remboursement_dette
 }
 
-// ─── AUTHENTIFICATION ────────────────────────
+// ─── AUTHENTIFICATION ──────────────────────────
 
 model User {
   id            String    @id @default(cuid())
@@ -46,6 +46,8 @@ model User {
   pushSubscriptions  PushSubscription[]
   auditLogs          AuditLog[]
   projets            Projet[]
+  recurrentes        Recurrente[]
+  budgetAlertes      BudgetAlerte[]
 
   @@map("users")
 }
@@ -63,7 +65,7 @@ model PasswordResetToken {
   @@map("password_reset_tokens")
 }
 
-// ─── BUDGET ──────────────────────────────────
+// ─── BUDGET ────────────────────────────────────
 
 model Annee {
   id                   String   @id @default(cuid())
@@ -95,7 +97,7 @@ model Categorie {
 
   tauxReference    Float   @default(0)
   montantReference BigInt  @default(0)
-  enveloppeActive  Boolean @default(false) // D2 — enveloppes budgetaires
+  enveloppeActive  Boolean @default(false) // D2 — enveloppes budgétaires
 
   // ── Liaison vers CompteFonds (epargne_autre uniquement) ──
   compteFondsId String?       @map("compte_fonds_id")
@@ -108,6 +110,7 @@ model Categorie {
   user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   budgetMensuel BudgetMensuel[]
   projets       Projet[]
+  recurrentes   Recurrente[]
 
   @@map("categories")
 }
@@ -166,7 +169,7 @@ model Decaissement {
   soldeApresFond   BigInt?
   soldeAvantBanque BigInt?
   soldeApresBanque BigInt?
-  sourceVocale     Boolean  @default(false) // D1 — dictee vocale
+  sourceVocale     Boolean  @default(false) // D1 — dictée vocale
   banque           Banque?  @relation("DecaissementBanque", fields: [banqueId], references: [id])
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -256,7 +259,7 @@ model Parametres {
   rapportEmailJour             Int     @default(1)
   rapportEmailHeure            Int     @default(8)
   seuilAnomaliesPct            Int     @default(50)
-  langueVocale                 String  @default("fr-FR") // D1 — dictee vocale
+  langueVocale                 String  @default("fr-FR") // D1 — dictée vocale
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -329,4 +332,55 @@ model CronLog {
   details    String?
 
   @@index([jobName, startedAt])
+}
+
+// ─── AUTOMATISATION (Session 6) ────────────────
+
+model Recurrente {
+  id          String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  userId      String
+  categorieId String
+  libelle     String
+  montant     BigInt   @default(0)
+  typeFlux    String   @default("decaissement")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categorie  Categorie   @relation(fields: [categorieId], references: [id], onDelete: Cascade)
+  executions RecurrenteExecution[]
+
+  @@index([userId])
+  @@map("recurrentes")
+}
+
+model RecurrenteExecution {
+  id           String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  recurrenteId String
+  userId       String
+  periode      String
+  montant      BigInt   @default(0)
+  createdAt    DateTime @default(now())
+
+  recurrente Recurrente @relation(fields: [recurrenteId], references: [id], onDelete: Cascade)
+
+  @@unique([recurrenteId, periode], map: "recurrentes_executions_unique")
+  @@index([userId, periode], map: "recurrentes_executions_user_periode_idx")
+  @@map("recurrentes_executions")
+}
+
+model BudgetAlerte {
+  id          String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  userId      String
+  categorieId String
+  anneeId     String
+  mois        Int
+  seuil       Int
+  sentAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, categorieId, anneeId, mois, seuil], map: "budget_alertes_unique")
+  @@map("budget_alertes")
 }

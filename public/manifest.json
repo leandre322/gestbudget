@@ -23,6 +23,13 @@
   ],
   "shortcuts": [
     {
+      "name": "Ajout rapide",
+      "short_name": "Ajout",
+      "url": "/suivi?quickadd=1",
+      "icons": [{ "src": "/icons/icon-96.png", "sizes": "96x96" }],
+      "description": "Saisir une depense en 3 secondes"
+    },
+    {
       "name": "Suivi mensuel",
       "short_name": "Suivi",
       "url": "/suivi",
