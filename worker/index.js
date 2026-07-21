@@ -8,7 +8,7 @@
  * Nouveaux (P4)      : message (reception activite), fetch (gardien de session)
  */
 
-// ─── P4 — Etat session ────────────────────────────────────────────────────────
+// ─── P4 — Etat session ───────────────────────────────────────────────────────
 
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // Doit correspondre a lib/inactivity.tsx
 
@@ -21,7 +21,9 @@ let lastActivityTs = null;
 const PUBLIC_API_ROUTES = [
   '/api/auth',
   '/api/register',
-  '/api/push/cron', // Cron Vercel (appele par serveur, pas par utilisateur)
+  '/api/push/cron',      // Cron Vercel (appele par serveur, pas par utilisateur)
+  '/api/push/subscribe', // FIX : abonnement push ne doit jamais etre bloque par le gardien
+  '/api/push/test',      // FIX : test push ne doit jamais etre bloque par le gardien
 ];
 
 // ─── P4 — Reception des mises a jour d'activite du thread principal ───────────
@@ -36,7 +38,7 @@ self.addEventListener('message', function (event) {
   }
 });
 
-// ─── P4 — Gardien de session sur les appels API ───────────────────────────────
+// ─── P4 — Gardien de session sur les appels API ──────────────────────────────
 //
 // Intercepte les requetes vers /api/ et retourne 401 si la session est expiree.
 // Si lastActivityTs est null (SW vient de demarrer), laisse passer la requete.
@@ -88,7 +90,7 @@ self.addEventListener('fetch', function (event) {
   // -> next-pwa gere normalement (reseau + cache selon runtimeCaching)
 });
 
-// ─── Push notifications ───────────────────────────────────────────────────────
+// ─── Push notifications ──────────────────────────────────────────────────────
 
 self.addEventListener('push', function (event) {
   if (!event.data) return;
@@ -116,7 +118,7 @@ self.addEventListener('push', function (event) {
   );
 });
 
-// ─── Notification click ───────────────────────────────────────────────────────
+// ─── Notification click ──────────────────────────────────────────────────────
 
 self.addEventListener('notificationclick', function (event) {
   event.notification.close();
