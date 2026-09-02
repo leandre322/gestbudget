@@ -41,8 +41,8 @@ interface HistItem {
 }
 
 const BADGE: Record<Source, { label:string; emoji:string; bg:string; text:string }> = {
-  fond:      { label:'Fond',      emoji:'📂', bg:'bg-blue-100 dark:bg-blue-900/30',   text:'text-blue-700 dark:text-blue-400'     },
-  transfert: { label:'Transfert', emoji:'🔄', bg:'bg-purple-100 dark:bg-purple-900/30', text:'text-purple-700 dark:text-purple-400' },
+  fond:      { label:'Fond',      emoji:'📂', bg:'bg-blue-100 dark:bg-blue-900/30',    text:'text-blue-700 dark:text-blue-400'    },
+  transfert: { label:'Transfert', emoji:'🔄', bg:'bg-purple-100 dark:bg-purple-900/30',text:'text-purple-700 dark:text-purple-400' },
   banque:    { label:'Banque',    emoji:'🏦', bg:'bg-green-100 dark:bg-green-900/30',  text:'text-green-700 dark:text-green-400'   },
 };
 
@@ -73,15 +73,11 @@ export default function AjoutRetraitFondsPage() {
   const [deleteTarget, setDeleteTarget] = useState<{id:string;desc:string;source:Source}|null>(null);
   const [activeTab,    setActiveTab]    = useState<'form'|'historique'>('form');
 
-  // S7 FIX : en quittant le mode « Banque seule », le type 'set' (Correction)
-  // restait actif alors que le bouton disparaissait de l'ecran — on postait
-  // alors typeMouvement:'set' vers /api/decaissements, que l'enum refuse.
   const changeMode = (m: Mode) => {
     setMode(m);
     setMontantFond(''); setMontantBanque(''); setNote('');
     if (m === 'banque') { setCompteId(''); setType('ajout'); }
     if (m === 'fond')   { setBanqueId(''); }
-    if (m !== 'banque') { setType(t => (t === 'set' ? 'ajout' : t)); }
   };
 
   const charger = useCallback(async () => {
@@ -154,14 +150,9 @@ export default function AjoutRetraitFondsPage() {
     if (!compteId)   { toast.error('Sélectionnez un fond'); return; }
     if (!montantFond || parseInt(montantFond)<=0) { toast.error('Montant fond obligatoire'); return; }
     if (mode==='transfert' && !banqueId) { toast.error('Sélectionnez une banque'); return; }
-    // S7 : en mode transfert le montant banque devient obligatoire (sinon
-    // utiliser « Fond seul »). Aligne le front sur le superRefine serveur.
-    if (mode==='transfert' && (!montantBanque || parseInt(montantBanque)<=0)) {
-      toast.error('Montant banque obligatoire pour un transfert'); return;
-    }
 
     const mtF = parseInt(montantFond)||0;
-    const mtB = mode==='transfert' ? (parseInt(montantBanque)||0) : 0;
+    const mtB = parseInt(montantBanque)||0;
     const fondNom = comptes.find(c=>c.id===compteId)?.nom??'';
     const desc    = note || `${type==='ajout'?'Ajout':'Retrait'} — ${fondNom}`;
 
@@ -169,19 +160,10 @@ export default function AjoutRetraitFondsPage() {
     try {
       const res = await fetch('/api/decaissements', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        // S7 : `mode` explicite — le serveur ne deduit plus l'intention
-        body:JSON.stringify({
-          mode,
-          description:    desc,
-          dateOperation:  dateOp,
-          notes:          note || null,
-          typeMouvement:  type,
-          compteId,
-          banqueId:       mode==='transfert' ? banqueId : null,
-          montantFond:    mtF,
-          montantBanque:  mtB,
-          impacterBanque: mode==='transfert',
-        }),
+        body:JSON.stringify({ description:desc, dateOperation:dateOp, notes:note||null,
+          typeMouvement:type, compteId, banqueId:mode==='transfert'&&mtB>0?banqueId:null,
+          montantFond:mtF, montantBanque:mode==='transfert'?mtB:0,
+          impacterBanque:mode==='transfert'&&!!banqueId&&mtB>0 }),
       });
       if (res.ok) {
         toast.success(type==='ajout'?'Ajout enregistré ✓':'Retrait enregistré ✓');
@@ -228,11 +210,7 @@ export default function AjoutRetraitFondsPage() {
         toast.success('Mouvement supprimé — soldes restaurés ✓');
         setDeleteTarget(null);
         await charger(); chargerHistorique();
-      } else {
-        // S7 : afficher la raison du refus (rollback impossible, etc.)
-        const err = await res.json().catch(()=>({}));
-        toast.error(err.error ?? 'Erreur lors de la suppression');
-      }
+      } else toast.error('Erreur lors de la suppression');
     } catch { toast.error('Erreur réseau'); }
   };
 
@@ -250,15 +228,7 @@ export default function AjoutRetraitFondsPage() {
     if (mode==='transfert' && fondSel && mtF>0) {
       const fondApres   = type==='ajout' ? fondSel.soldeActuel+mtF : fondSel.soldeActuel-mtF;
       const banqueApres = banqueSel&&mtB>0 ? (type==='ajout'?banqueSel.solde-mtB:banqueSel.solde+mtB) : undefined;
-      // S7 : le solde bancaire negatif est desormais refuse cote serveur —
-      // l'apercu doit le signaler AVANT la soumission.
-      return {
-        fondAvant:  fondSel.soldeActuel,
-        fondApres,
-        banqueAvant: banqueSel?.solde,
-        banqueApres,
-        ok: fondApres>=0 && (banqueApres===undefined || banqueApres>=0),
-      };
+      return { fondAvant:fondSel.soldeActuel, fondApres, banqueAvant:banqueSel?.solde, banqueApres, ok:fondApres>=0 };
     }
     if (mode==='banque' && banqueSel) {
       if (type==='set'&&mtB>=0) return { banqueAvant:banqueSel.solde, banqueApres:mtB, diff:mtB-banqueSel.solde, ok:true, isSet:true };
@@ -290,7 +260,7 @@ export default function AjoutRetraitFondsPage() {
 
       {/* En-tête */}
       <div>
-        <h1 className="text-2xl font-bold text-[var(--text)]">Ajout / Retrait — Fonds &amp; Banques</h1>
+        <h1 className="text-2xl font-bold text-[var(--text)]">Ajout / Retrait — Fonds & Banques</h1>
         <p className="text-[var(--text-muted)] text-sm">Gérez les mouvements sur vos fonds et comptes bancaires</p>
       </div>
 
@@ -335,7 +305,7 @@ export default function AjoutRetraitFondsPage() {
           {isLocked && (
             <div className="flex items-center gap-2 bg-slate-50 dark:bg-dark-card border border-[var(--border)] rounded-xl px-4 py-3">
               <Lock size={14} className="text-slate-400 flex-shrink-0"/>
-              <p className="text-sm text-[var(--text-muted)]">Page verrouillée — cliquez &quot;Modifier&quot; dans la bannière pour enregistrer des mouvements.</p>
+              <p className="text-sm text-[var(--text-muted)]">Page verrouillée — cliquez "Modifier" dans la bannière pour enregistrer des mouvements.</p>
             </div>
           )}
 
@@ -357,7 +327,7 @@ export default function AjoutRetraitFondsPage() {
 
           {/* 2. Type d'opération */}
           <div>
-            <label className="text-xs font-semibold text-[var(--text-muted)] mb-2 block uppercase tracking-wider">Type d&apos;opération</label>
+            <label className="text-xs font-semibold text-[var(--text-muted)] mb-2 block uppercase tracking-wider">Type d'opération</label>
             <div className="flex gap-2">
               <button onClick={()=>!isLocked&&setType('ajout')} disabled={isLocked}
                 className={clsx('flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 font-semibold text-sm transition-all disabled:opacity-50',
@@ -401,7 +371,7 @@ export default function AjoutRetraitFondsPage() {
 
           {mode==='transfert'&&(
             <div className="bg-slate-50 dark:bg-dark-card rounded-xl p-4 space-y-3 border border-[var(--border)]">
-              <div className="flex items-center gap-2"><Building2 size={14} className="text-primary"/><span className="text-xs font-semibold text-[var(--text)]">Banque associée *</span></div>
+              <div className="flex items-center gap-2"><Building2 size={14} className="text-primary"/><span className="text-xs font-semibold text-[var(--text)]">Banque associée</span></div>
               <div className="grid grid-cols-2 gap-3">
                 <select value={banqueId} onChange={e=>setBanqueId(e.target.value)} disabled={isLocked}
                   className="w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none disabled:opacity-50">
@@ -454,7 +424,7 @@ export default function AjoutRetraitFondsPage() {
               !preview.ok?'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800':'bg-slate-50 dark:bg-dark-card border-[var(--border)]')}>
               <div className="flex items-center gap-2">
                 {preview.ok?<CheckCircle2 size={14} className="text-green-600"/>:<AlertCircle size={14} className="text-red-500"/>}
-                <span className="text-xs font-semibold text-[var(--text)]">Aperçu de l&apos;opération</span>
+                <span className="text-xs font-semibold text-[var(--text)]">Aperçu de l'opération</span>
                 <span className="text-[10px] text-green-600 dark:text-green-400 ml-auto font-medium">📅 Suivi mensuel non affecté ✅</span>
               </div>
               {preview.fondAvant!==undefined&&(
@@ -473,7 +443,7 @@ export default function AjoutRetraitFondsPage() {
                   <span className={clsx('font-bold',(preview.banqueApres??0)>=0?'text-blue-600':'text-red-500')}>{formatFCFA(preview.banqueApres??0)}</span>
                 </div>
               )}
-              {!preview.ok&&<p className="text-xs text-red-600 font-semibold">⚠️ Solde insuffisant — un solde ne peut pas être négatif</p>}
+              {!preview.ok&&<p className="text-xs text-red-600 font-semibold">⚠️ Solde insuffisant — opération bloquée</p>}
             </div>
           )}
 
@@ -481,9 +451,7 @@ export default function AjoutRetraitFondsPage() {
           <button onClick={mode==='banque'?enregistrerBanque:enregistrerFond}
             disabled={saving||isLocked||!dateOp
               ||(mode!=='banque'&&(!compteId||!montantFond))
-              ||(mode==='transfert'&&(!banqueId||!montantBanque))
-              ||(mode==='banque'&&(!banqueId||(type!=='set'&&!montantBanque)))
-              ||(!!preview&&!preview.ok)}
+              ||(mode==='banque'&&(!banqueId||(type!=='set'&&!montantBanque)))}
             className={clsx('w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm transition-all disabled:opacity-60',
               type==='ajout'?'bg-green-600 hover:bg-green-700 text-white':
               type==='set'  ?'bg-amber-500 hover:bg-amber-600 text-white':
@@ -536,10 +504,10 @@ export default function AjoutRetraitFondsPage() {
                             {item.banqueNom&&<span>🏦 {item.banqueNom}</span>}
                             <span>{formatDate(item.dateOperation)}</span>
                           </div>
-                          {item.soldeAvantFond!==undefined&&item.soldeAvantFond!==null&&item.soldeApresFond!==undefined&&item.soldeApresFond!==null&&(
+                          {item.soldeAvantFond!==undefined&&item.soldeApresFond!==undefined&&(
                             <p className="text-[10px] text-[var(--text-muted)] mt-0.5">Fond : {formatFCFA(item.soldeAvantFond)} → <strong>{formatFCFA(item.soldeApresFond)}</strong></p>
                           )}
-                          {item.source==='banque'&&item.soldeAvantBanque!==undefined&&item.soldeAvantBanque!==null&&item.soldeApresBanque!==undefined&&item.soldeApresBanque!==null&&(
+                          {item.source==='banque'&&item.soldeAvantBanque!==undefined&&item.soldeApresBanque!==undefined&&(
                             <p className="text-[10px] text-[var(--text-muted)] mt-0.5">Banque : {formatFCFA(item.soldeAvantBanque)} → <strong>{formatFCFA(item.soldeApresBanque)}</strong></p>
                           )}
                         </div>

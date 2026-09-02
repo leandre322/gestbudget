@@ -8,7 +8,7 @@ import { logAudit } from '@/lib/audit';
 import { csrfCheck, validateBody } from '@/lib/api-helpers';
 import { DecaissementSchema } from '@/lib/validators';
 
-// ── Trouver ou creer l'enregistrement Annee ──────────────────────────────────
+// ── Trouver ou créer l'enregistrement Annee ───────────────────────────────────
 async function getOrCreateAnnee(tx: any, userId: string, annee: number) {
   let rec = await tx.annee.findUnique({
     where: { userId_annee: { userId, annee } },
@@ -17,8 +17,6 @@ async function getOrCreateAnnee(tx: any, userId: string, annee: number) {
   return rec;
 }
 
-const fmt = (v: bigint) => Number(v).toLocaleString('fr-FR');
-
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/decaissements?annee=2026&limit=100&offset=0
 // ─────────────────────────────────────────────────────────────────────────────
@@ -26,11 +24,11 @@ export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id)
-      return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
+      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const { searchParams } = new URL(req.url);
     const anneeParam = searchParams.get('annee');
-    const limit  = Math.min(parseInt(searchParams.get('limit') ?? '100'), 200);
+    const limit  = Math.min(parseInt(searchParams.get('limit')  ?? '100'), 200);
     const offset = parseInt(searchParams.get('offset') ?? '0');
 
     const anneeRec = anneeParam
@@ -57,40 +55,27 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(serial({ decaissements, total, anneeId: anneeRec?.id ?? null }));
   } catch (e: any) {
-    // S7 : on logue le detail cote serveur, on ne le renvoie PAS au client
-    console.error('GET /api/decaissements:', e?.message, e?.stack);
-    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
+    console.error('GET /api/decaissements:', e?.message);
+    return NextResponse.json({ error: e?.message ?? 'Erreur interne' }, { status: 500 });
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/decaissements
-// Regle absolue : ne JAMAIS ecrire dans budget_mensuel depuis cette route
+// Règle absolue : ne JAMAIS écrire dans budget_mensuel depuis cette route
 // Impact exclusif : comptes_fonds.soldeActuel et/ou banques.solde
 // ─────────────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    // S7 : CSRF en defense en profondeur (le middleware couvre deja /api/*)
-    const csrfErr = csrfCheck(req);
-    if (csrfErr) return csrfErr;
-
     const session = await getServerSession(authOptions);
     if (!session?.user?.id)
-      return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
+      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
-    let rawBody: unknown;
-    try {
-      rawBody = await req.json();
-    } catch {
-      return NextResponse.json({ error: 'Body JSON invalide' }, { status: 400 });
-    }
-
-    const parsed = validateBody(DecaissementSchema, rawBody);
-    if (parsed.error) return parsed.error;
-    const body = parsed.data;
+    const rawBody = await req.json();
+    const { data: validBody, error: zodErr } = validateBody(DecaissementSchema, rawBody);
+    if (zodErr) return zodErr;
 
     const {
-      mode,
       description,
       dateOperation,
       notes,
@@ -99,8 +84,12 @@ export async function POST(req: NextRequest) {
       banqueId,
       montantFond,
       montantBanque,
+      impacterBanque,
       sourceVocale,   // D1 — dictee vocale
-    } = body;
+    } = validBody ?? rawBody;
+
+    if (!description || !dateOperation)
+      return NextResponse.json({ error: 'Description et date obligatoires' }, { status: 400 });
 
     const mouvType = typeMouvement ?? 'retrait';
     const isAjout  = mouvType === 'ajout';
@@ -114,23 +103,19 @@ export async function POST(req: NextRequest) {
     const opDate  = new Date(dateOperation);
     const opAnnee = opDate.getFullYear();
 
-    // S7 : l'intention vient du `mode` explicite, plus d'une deduction implicite
-    const doFond   = !!compteId && mtFond   > BigInt(0);
-    const doBanque = mode === 'transfert' && !!banqueId && mtBanque > BigInt(0);
-
     let result: any;
 
     try {
       result = await prisma.$transaction(async (tx) => {
-        let soldeAvantFond:   bigint = BigInt(0);
-        let soldeApresFond:   bigint = BigInt(0);
-        let soldeAvantBanque: bigint = BigInt(0);
-        let soldeApresBanque: bigint = BigInt(0);
+        let soldeAvantFond:    bigint = BigInt(0);
+        let soldeApresFond:    bigint = BigInt(0);
+        let soldeAvantBanque:  bigint = BigInt(0);
+        let soldeApresBanque:  bigint = BigInt(0);
 
         // ── 1. Impact sur le fond ───────────────────────────────────────
-        if (doFond) {
+        if (compteId && mtFond > BigInt(0)) {
           const compte = await tx.compteFonds.findFirst({
-            where:  { id: compteId!, userId: session.user.id },
+            where:  { id: compteId, userId: session.user.id },
             select: { soldeActuel: true, nom: true },
           });
           if (!compte)
@@ -141,7 +126,7 @@ export async function POST(req: NextRequest) {
           if (!isAjout && soldeAvantFond < mtFond) {
             throw Object.assign(new Error('SOLDE_INSUFFISANT'), {
               code: 422,
-              details: `${compte.nom} : disponible ${fmt(soldeAvantFond)} FCFA, demande ${fmt(mtFond)} FCFA`,
+              details: `${compte.nom} : disponible ${Number(soldeAvantFond).toLocaleString('fr-FR')} FCFA, demandé ${Number(mtFond).toLocaleString('fr-FR')} FCFA`,
             });
           }
 
@@ -150,80 +135,69 @@ export async function POST(req: NextRequest) {
             : soldeAvantFond - mtFond;
 
           await tx.compteFonds.update({
-            where: { id: compteId! },
+            where: { id: compteId },
             data:  { soldeActuel: soldeApresFond, updatedAt: new Date() },
           });
         }
 
         // ── 2. Impact sur la banque (mode transfert uniquement) ─────────
+        const doBanque = impacterBanque && banqueId && mtBanque > BigInt(0);
         if (doBanque) {
           const banque = await tx.banque.findFirst({
-            where:  { id: banqueId!, userId: session.user.id },
-            select: { solde: true, nomBanque: true },
+            where:  { id: banqueId, userId: session.user.id },
+            select: { solde: true },
           });
           if (!banque)
             throw Object.assign(new Error('BANQUE_INTROUVABLE'), { code: 404 });
 
           soldeAvantBanque = BigInt(Number(banque.solde ?? 0));
 
-          // « ajout au fond » => l'argent SORT de la banque
           const rawApres = isAjout
             ? soldeAvantBanque - mtBanque
             : soldeAvantBanque + mtBanque;
-
-          // S7 : plus de clamp silencieux a 0 — on bloque et on informe
-          if (rawApres < BigInt(0)) {
-            throw Object.assign(new Error('SOLDE_BANQUE_INSUFFISANT'), {
-              code: 422,
-              details: `${banque.nomBanque} : disponible ${fmt(soldeAvantBanque)} FCFA, demande ${fmt(mtBanque)} FCFA. Le solde d'un compte bancaire ne peut pas etre negatif.`,
-            });
-          }
-          soldeApresBanque = rawApres;
+          soldeApresBanque = rawApres < BigInt(0) ? BigInt(0) : rawApres;
 
           await tx.banque.update({
-            where: { id: banqueId! },
+            where: { id: banqueId },
             data:  { solde: soldeApresBanque, updatedAt: new Date() },
           });
         }
 
-        // ── 3. Creer le decaissement ────────────────────────────────────
+        // ── 3. Créer le décaissement ────────────────────────────────────
         const anneeRec = await getOrCreateAnnee(tx, session.user.id, opAnnee);
 
         const dec = await tx.decaissement.create({
           data: {
-            userId:           session.user.id,
-            anneeId:          anneeRec.id,
+            userId:          session.user.id,
+            anneeId:         anneeRec.id,
             description,
-            dateOperation:    opDate,
-            montantTotal:     mtFond > BigInt(0) ? mtFond : mtBanque,
-            montantFond:      mtFond,          // S7 FIX : valeur normalisee, plus la brute
-            montantBanque:    doBanque ? mtBanque : BigInt(0),
-            banqueId:         doBanque ? banqueId : null,
-            notes:            notes ?? null,
-            typeMouvement:    mouvType,
-            sourceVocale:     sourceVocale ?? false, // D1
-            // S7 FIX : un solde a 0 est une valeur legitime, pas un "absent"
-            soldeAvantFond:   doFond   ? soldeAvantFond   : null,
-            soldeApresFond:   doFond   ? soldeApresFond   : null,
-            soldeAvantBanque: doBanque ? soldeAvantBanque : null,
-            soldeApresBanque: doBanque ? soldeApresBanque : null,
+            dateOperation:   opDate,
+            montantTotal:    mtFond > BigInt(0) ? mtFond : mtBanque,
+            montantFond,
+            montantBanque:   doBanque ? mtBanque : BigInt(0),
+            banqueId:        doBanque ? banqueId : null,
+            notes:           notes ?? null,
+            typeMouvement:   mouvType,
+            sourceVocale:    sourceVocale ?? false, // D1
+            soldeAvantFond:  soldeAvantFond  > BigInt(0) ? soldeAvantFond  : null,
+            soldeApresFond:  soldeApresFond  > BigInt(0) ? soldeApresFond  : null,
+            soldeAvantBanque: doBanque && soldeAvantBanque >= BigInt(0) ? soldeAvantBanque : null,
+            soldeApresBanque: doBanque                                   ? soldeApresBanque : null,
           },
         });
 
-        // ── 4. Repartition fond ────────────────────────────────────────
-        if (doFond) {
+        // ── 4. Répartition fond ────────────────────────────────────────
+        if (compteId && mtFond > BigInt(0)) {
           await tx.decaissementCompte.create({
-            data: { decaissementId: dec.id, compteId: compteId!, montant: mtFond },
+            data: { decaissementId: dec.id, compteId, montant: mtFond },
           });
         }
 
-        // ══ AUCUNE ECRITURE DANS budget_mensuel ══
+        // ══ AUCUNE ÉCRITURE DANS budget_mensuel ══
         return dec;
       });
     } catch (txErr: any) {
       if (txErr.message === 'SOLDE_INSUFFISANT')
-        return NextResponse.json({ error: txErr.details }, { status: 422 });
-      if (txErr.message === 'SOLDE_BANQUE_INSUFFISANT')
         return NextResponse.json({ error: txErr.details }, { status: 422 });
       if (txErr.message === 'COMPTE_INTROUVABLE')
         return NextResponse.json({ error: 'Compte introuvable' }, { status: 404 });
@@ -244,35 +218,30 @@ export async function POST(req: NextRequest) {
     } catch {}
 
     await logAudit({
-      userId:     session.user.id,
-      action:     'create',
+      userId: session.user.id,
+      action: 'create',
       entityType: 'decaissement',
-      entityId:   result.id,
-      entityNom:  description,
+      entityId: result.id,
+      entityNom: description,
       req,
     });
 
     return NextResponse.json(serial({ success: true, id: result.id }), { status: 201 });
   } catch (e: any) {
-    console.error('POST /api/decaissements:', e?.message, e?.stack);
-    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
+    console.error('POST /api/decaissements:', e?.message);
+    return NextResponse.json({ error: e?.message ?? 'Erreur interne' }, { status: 500 });
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DELETE /api/decaissements?id=xxx
-// Rollback complet : fond + banque restaures via transaction atomique
-// S7 : plus de clamp a 0 — si le rollback rendrait un solde negatif, on refuse
-//      explicitement plutot que de corrompre silencieusement les soldes.
+// Rollback complet : fond + banque restaurés via transaction atomique
 // ─────────────────────────────────────────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
   try {
-    const csrfErr = csrfCheck(req);
-    if (csrfErr) return csrfErr;
-
     const session = await getServerSession(authOptions);
     if (!session?.user?.id)
-      return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
+      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const id = new URL(req.url).searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
@@ -293,48 +262,32 @@ export async function DELETE(req: NextRequest) {
 
         const compte = await tx.compteFonds.findFirst({
           where:  { id: rep.compteId, userId: session.user.id },
-          select: { soldeActuel: true, nom: true },
+          select: { soldeActuel: true },
         });
         if (!compte) continue;
 
-        const solde    = BigInt(Number(compte.soldeActuel ?? 0));
+        const solde = BigInt(Number(compte.soldeActuel ?? 0));
         const rawApres = isAjout ? solde - repMt : solde + repMt;
-
-        if (rawApres < BigInt(0)) {
-          throw Object.assign(new Error('ROLLBACK_NEGATIF'), {
-            code: 422,
-            details: `Annulation impossible : le fond ${compte.nom} tomberait a ${fmt(rawApres)} FCFA. Des operations posterieures ont deja consomme ce montant.`,
-          });
-        }
-
         await tx.compteFonds.update({
           where: { id: rep.compteId },
-          data:  { soldeActuel: rawApres, updatedAt: new Date() },
+          data:  { soldeActuel: rawApres < BigInt(0) ? BigInt(0) : rawApres, updatedAt: new Date() },
         });
       }
 
       // ── Reverser l'impact sur la banque ──────────────────────────────
-      const decAny   = dec as any;
-      const mtBanque = BigInt(Number(decAny.montantBanque ?? 0));
+      const decAny    = dec as any;
+      const mtBanque  = BigInt(Number(decAny.montantBanque ?? 0));
       if (decAny.banqueId && mtBanque > BigInt(0)) {
         const banque = await tx.banque.findFirst({
           where:  { id: decAny.banqueId, userId: session.user.id },
-          select: { solde: true, nomBanque: true },
+          select: { solde: true },
         });
         if (banque) {
-          const solde    = BigInt(Number(banque.solde ?? 0));
+          const solde = BigInt(Number(banque.solde ?? 0));
           const rawApres = isAjout ? solde + mtBanque : solde - mtBanque;
-
-          if (rawApres < BigInt(0)) {
-            throw Object.assign(new Error('ROLLBACK_NEGATIF'), {
-              code: 422,
-              details: `Annulation impossible : le compte ${banque.nomBanque} tomberait a ${fmt(rawApres)} FCFA. Le solde d'un compte bancaire ne peut pas etre negatif.`,
-            });
-          }
-
           await tx.banque.update({
             where: { id: decAny.banqueId },
-            data:  { solde: rawApres, updatedAt: new Date() },
+            data:  { solde: rawApres < BigInt(0) ? BigInt(0) : rawApres, updatedAt: new Date() },
           });
         }
       }
@@ -342,21 +295,11 @@ export async function DELETE(req: NextRequest) {
       await tx.decaissement.delete({ where: { id } });
     });
 
-    await logAudit({
-      userId:     session.user.id,
-      action:     'delete',
-      entityType: 'decaissement',
-      entityId:   id,
-      req,
-    });
-
     return NextResponse.json({ success: true });
   } catch (e: any) {
     if (e.message === 'NOT_FOUND')
-      return NextResponse.json({ error: 'Decaissement introuvable' }, { status: 404 });
-    if (e.message === 'ROLLBACK_NEGATIF')
-      return NextResponse.json({ error: e.details }, { status: 422 });
-    console.error('DELETE /api/decaissements:', e?.message, e?.stack);
-    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
+      return NextResponse.json({ error: 'Décaissement introuvable' }, { status: 404 });
+    console.error('DELETE /api/decaissements:', e?.message);
+    return NextResponse.json({ error: e?.message ?? 'Erreur interne' }, { status: 500 });
   }
 }

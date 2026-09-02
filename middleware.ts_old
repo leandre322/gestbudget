@@ -42,7 +42,7 @@ async function checkRL(key: string, limit: number, windowMs: number): Promise<bo
   }
 }
 
-// ── Regles IP-based (routes publiques sensibles) ─────────────────────────────
+// ── Règles IP-based (routes publiques sensibles) ─────────────────────────────
 const RATE_RULES = [
   { path: '/api/auth',            limit: 10, window:  60_000 },
   { path: '/api/register',        limit:  3, window: 300_000 },
@@ -51,28 +51,19 @@ const RATE_RULES = [
   { path: '/api/push/subscribe',  limit: 20, window:  60_000 },
 ];
 
-// ── Regles userId-based (routes lourdes authentifiees) ───────────────────────
+// ── Règles userId-based (routes lourdes authentifiées) — S5 NOUVEAU ──────────
 const AUTH_RATE_RULES = [
-  { path: '/api/analytiques',  limit: 60, window: 60_000 }, // 60 req/min par userId
-  { path: '/api/export/pdf',   limit: 10, window: 60_000 }, // 10 exports/min par userId
-  { path: '/api/export/excel', limit: 10, window: 60_000 }, // S7 : meme traitement
-  { path: '/api/quick-add',    limit: 30, window: 60_000 }, // S6 : anti-rafale QuickAdd
+  { path: '/api/analytiques', limit: 60, window: 60_000 }, // 60 req/min par userId
+  { path: '/api/export/pdf',  limit: 10, window: 60_000 }, // 10 exports/min par userId
+  { path: '/api/quick-add',   limit: 30, window: 60_000 }, // S6 : anti-rafale Quick Add
 ];
 
 const PROTECTED_PAGES = [
   '/dashboard', '/suivi', '/recapitulatif',
   '/budget', '/decaissements', '/parametres', '/ajout-retrait-fonds',
   '/projets',
-  '/analytiques',
-  '/recurrentes',
-];
-
-// ── S7 : routes API exemptees de CSRF (appelants externes sans `origin`) ─────
-// Vercel Cron et NextAuth n'envoient pas l'origin de l'application.
-const CSRF_EXEMPT_PREFIXES = [
-  '/api/auth',
-  '/api/cron',
-  '/api/push/cron',
+  '/analytiques', // ← S5 : était dans PROTECTED_PAGES mais manquait dans le matcher
+  '/recurrentes', // ← S6 : page de gestion des récurrentes
 ];
 
 export async function middleware(req: NextRequest) {
@@ -93,20 +84,18 @@ export async function middleware(req: NextRequest) {
     }
   }
 
-  // 2. CSRF sur TOUTES les mutations API
-  // S7 : le matcher est desormais catch-all (/api/:path*). Plus besoin d'ajouter
-  //      chaque nouvelle route a la main — c'est l'exemption qui est explicite.
+  // 2. CSRF mutations API
   const isMutation = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method.toUpperCase());
-  const isApiRoute = pathname.startsWith('/api/');
-  const isExempt   = CSRF_EXEMPT_PREFIXES.some(p => pathname.startsWith(p));
-
-  if (isMutation && isApiRoute && !isExempt) {
+  const isApiRoute = pathname.startsWith('/api/') && !pathname.startsWith('/api/auth');
+  if (isMutation && isApiRoute) {
     const origin  = req.headers.get('origin')  ?? '';
     const referer = req.headers.get('referer') ?? '';
     const appUrl  = process.env.NEXT_PUBLIC_APP_URL ?? '';
     if (appUrl) {
       const allowed = new URL(appUrl).origin;
-      if (!origin.startsWith(allowed) && !referer.startsWith(allowed)) {
+      // FIX S5 : /api/cron/* ajouté — Vercel cron n'envoie pas l'origin de l'app
+      const isCron = pathname.startsWith('/api/cron') || pathname.startsWith('/api/push/cron');
+      if (!isCron && !origin.startsWith(allowed) && !referer.startsWith(allowed)) {
         return new NextResponse(
           JSON.stringify({ error: 'Requete non autorisee (CSRF)' }),
           { status: 403, headers: { 'Content-Type': 'application/json' } }
@@ -115,14 +104,14 @@ export async function middleware(req: NextRequest) {
     }
   }
 
-  // 3. Auth (pages protegees) + rate limiting userId (routes lourdes)
+  // 3. Auth (pages protégées) + rate limiting userId (routes lourdes)
   const isProtected = PROTECTED_PAGES.some(p => pathname.startsWith(p));
   const isAuthRL    = AUTH_RATE_RULES.some(r => pathname.startsWith(r.path));
 
   if (isProtected || isAuthRL) {
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
 
-    // 3a. Redirect login si page protegee sans session
+    // 3a. Redirect login si page protégée sans session
     if (isProtected && !token) {
       const url = req.nextUrl.clone();
       url.pathname = '/login';
@@ -130,7 +119,7 @@ export async function middleware(req: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    // 3b. Rate limiting userId sur routes lourdes authentifiees
+    // 3b. Rate limiting userId sur routes lourdes authentifiées
     if (isAuthRL && token?.sub) {
       for (const rule of AUTH_RATE_RULES) {
         if (pathname.startsWith(rule.path)) {
@@ -147,7 +136,7 @@ export async function middleware(req: NextRequest) {
     }
   }
 
-  // 4. Headers securite
+  // 4. Headers sécurité
   // NOTE : microphone PAS restreint — requis pour Web Speech API (D1 vocal)
   const res = NextResponse.next();
   res.headers.set('X-Frame-Options',           'SAMEORIGIN');
@@ -170,10 +159,19 @@ export const config = {
     '/ajout-retrait-fonds/:path*',
     '/projets/:path*',
     '/analytiques/:path*',
-    '/recurrentes/:path*',
-    // S7 : catch-all API — couvre decaissements, parametres, categories,
-    // enveloppes, import, month-lock, correctifs-kpi, donnees, fonds, global,
-    // annees, anomalies, audit, dashboard/* ... et toute route future.
-    '/api/:path*',
+    '/recurrentes/:path*',       // ← S6 : page de gestion des récurrentes
+    '/api/auth/:path*',
+    '/api/register',
+    '/api/forgot-password',
+    '/api/reset-password',
+    '/api/push/:path*',
+    '/api/analytiques/:path*',
+    '/api/export/:path*',
+    '/api/projets/:path*',       // ← S6 : CSRF désormais actif sur routes métier
+    '/api/budget/:path*',        // ← S6
+    '/api/recurrentes/:path*',   // ← S6
+    '/api/quick-add/:path*',     // ← S6 : CSRF + rate limit userId
+    '/api/banques/:path*',       // ← S6
+    '/api/comptes/:path*',       // ← S6
   ],
 };
