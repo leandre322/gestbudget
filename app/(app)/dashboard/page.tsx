@@ -14,6 +14,7 @@ import { usePushNotifications } from '@/lib/hooks/usePushNotifications';
 import { useDashboardGlobal, useBanques, useComptes, useCategories, useDashboardCumul, useRecapAnnuel, useAnomalies } from '@/lib/hooks/useDashboard';
 import useSWR from 'swr';
 import { clsx } from 'clsx';
+import PilotageCards from '@/components/PilotageCards';
 
 const COLORS = ['#1E40AF','#10B981','#F59E0B','#EF4444','#8B5CF6','#06B6D4','#F97316','#84CC16'];
 const MOIS_NOMS_FR: Record<number,string> = {
@@ -539,6 +540,18 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       )}
 
       <Separateur emoji="💰" label="Epargnes & Fonds"/>
+
+      <PilotageCards
+        revenusReel={revenus.reel}
+        depensesReel={depenses.reel}
+        epargneReel={epargne.reel}
+        solde={solde}
+        epargnePrecaution={totalPrecaution}
+        totalFonds={Number(totalFonds ?? 0)}
+        depensesHistorique={sparklines.depenses}
+        moisCourant={moisCourant}
+        anneeCourante={anneeCourante}
+      />
 
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
         <div className="flex items-center justify-between mb-4">
