@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { Plus, X, Pencil, Trash2, Repeat, Info, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { Plus, X, Pencil, Trash2, Repeat, Info, ArrowDownCircle, ArrowUpCircle, Wallet } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { formatFCFA } from '@/types';
 
@@ -9,12 +9,29 @@ import { formatFCFA } from '@/types';
 // CRUD complet sur /api/recurrentes. Les récurrentes actives sont générées
 // automatiquement le 1er de chaque mois dans le suivi (badge 🔄), et peuvent
 // aussi être importées manuellement dans le budget prévisionnel.
+//
+// ── S7 / F10 : coût annualisé ────────────────────────────────────────────────
+// Toutes les récurrentes sont mensuelles (générées le 1er de chaque mois) :
+// la projection annuelle est donc montant × 12.
+//
+// Choix d'implémentation : calcul 100 % côté client à partir de `recs`, déjà
+// entièrement chargé. Aucun appel réseau supplémentaire, aucune nouvelle route
+// (donc aucune surface Zod/CSRF ajoutée), aucune migration.
+//
+// `totalMensuel` renvoyé par l'API n'est volontairement plus utilisé : sa règle
+// d'agrégation (net ou décaissements seuls) n'est pas garantie côté front.
+// Tout est recalculé localement, ce qui supprime l'ambiguïté.
+
+const MOIS_PAR_AN = 12;
 
 const onlyNumbers = (e: React.KeyboardEvent<HTMLInputElement>) => {
   const allowed = ['Backspace','Delete','Tab','Escape','Enter','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'];
   if (allowed.includes(e.key) || e.ctrlKey || e.metaKey) return;
   if (!/^\d$/.test(e.key)) e.preventDefault();
 };
+
+// Part relative : 1 décimale sous 10 %, entier au-delà (lisibilité).
+const formatPct = (p: number) => (p < 10 ? p.toFixed(1) : Math.round(p).toString());
 
 type Cat = { id: string; nom: string; type: string };
 type Rec = {
@@ -32,7 +49,6 @@ export default function RecurrentesPage() {
 
   const [recs,      setRecs]      = useState<Rec[]>([]);
   const [cats,      setCats]      = useState<Cat[]>([]);
-  const [total,     setTotal]     = useState(0);
   const [loading,   setLoading]   = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing,   setEditing]   = useState<Rec | null>(null);
@@ -56,7 +72,6 @@ export default function RecurrentesPage() {
       if (rRec.ok) {
         const d = await rRec.json();
         setRecs(d.recurrentes ?? []);
-        setTotal(d.totalMensuel ?? 0);
       }
       if (rCats.ok) {
         const d = await rCats.json();
@@ -69,6 +84,41 @@ export default function RecurrentesPage() {
   }, [toast]);
 
   useEffect(() => { charger(); }, [charger]);
+
+  // ── S7 / F10 : agrégats mensuels et annualisés ──────────────────────────
+  // Seules les récurrentes ACTIVES entrent dans la projection : une récurrente
+  // désactivée n'est pas générée par le cron, elle ne coûte rien.
+  const stats = useMemo(() => {
+    const actives = recs.filter(r => r.isActive);
+
+    const decMois = actives
+      .filter(r => r.typeFlux === 'decaissement')
+      .reduce((s, r) => s + r.montant, 0);
+
+    const encMois = actives
+      .filter(r => r.typeFlux === 'encaissement')
+      .reduce((s, r) => s + r.montant, 0);
+
+    return {
+      nbActives: actives.length,
+      decMois,
+      encMois,
+      netMois: encMois - decMois,
+      decAn:   decMois * MOIS_PAR_AN,
+      encAn:   encMois * MOIS_PAR_AN,
+      netAn:   (encMois - decMois) * MOIS_PAR_AN,
+    };
+  }, [recs]);
+
+  // Part d'une récurrente dans le total annuel de SON flux.
+  // Comparer un loyer au total « décaissements + encaissements » n'aurait
+  // aucun sens dès qu'un salaire figure dans la liste.
+  const partDuFlux = useCallback((r: Rec): number | null => {
+    if (!r.isActive) return null;                        // n'entre pas dans la projection
+    const base = r.typeFlux === 'decaissement' ? stats.decMois : stats.encMois;
+    if (base <= 0) return null;
+    return (r.montant / base) * 100;
+  }, [stats.decMois, stats.encMois]);
 
   // Décaissement → catégories hors revenu ; Encaissement → revenu uniquement
   const catsFiltrees = cats.filter(c =>
@@ -96,7 +146,7 @@ export default function RecurrentesPage() {
 
   // ── Enregistrer (création ou modification) ──────────────────────────────
   const enregistrer = async () => {
-    const m = parseInt(montant);
+    const m = parseInt(montant, 10);                     // S7 : radix explicite
     if (!libelle.trim()) { toast.error('Libellé requis'); return; }
     if (!m || m <= 0)    { toast.error('Montant invalide'); return; }
     if (!categorieId)    { toast.error('Choisissez une catégorie'); return; }
@@ -159,7 +209,7 @@ export default function RecurrentesPage() {
     <div className="flex items-center justify-center h-64"><div className="spinner scale-150" /></div>
   );
 
-  const actives = recs.filter(r => r.isActive);
+  const netPositif = stats.netAn >= 0;
 
   return (
     <div className="space-y-5 animate-fadeIn">
@@ -186,21 +236,64 @@ export default function RecurrentesPage() {
         <span>
           Les récurrentes <strong>actives</strong> incrémentent le réel du suivi mensuel le 1er du mois (marquées <span className="text-violet-600 dark:text-violet-300 font-medium">🔄 auto</span>).
           Tu peux aussi les pré-remplir dans le budget prévisionnel via <strong>Importer récurrentes</strong>.
+          Les montants annuels sont une projection sur 12 mois des seules récurrentes actives.
         </span>
       </div>
 
-      {/* ── Total mensuel ── */}
-      <div className="grid grid-cols-2 gap-3 max-w-md">
+      {/* ── S7 / F10 : synthèse annualisée ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+
+        {/* Décaissements / an */}
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
-          <p className="text-xs text-[var(--text-muted)] uppercase tracking-wide">Total mensuel actif</p>
-          <p className="text-xl font-bold text-primary mt-1">{formatFCFA(total)}</p>
+          <div className="flex items-center gap-1.5">
+            <ArrowDownCircle size={13} className="text-red-500 flex-shrink-0" />
+            <p className="text-[11px] text-[var(--text-muted)] uppercase tracking-wide truncate">Décaissements / an</p>
+          </div>
+          <p className="text-xl font-bold text-red-500 mt-1.5">{formatFCFA(stats.decAn)}</p>
+          <p className="text-xs text-[var(--text-muted)] mt-0.5">{formatFCFA(stats.decMois)} / mois</p>
         </div>
+
+        {/* Encaissements / an */}
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
-          <p className="text-xs text-[var(--text-muted)] uppercase tracking-wide">Récurrentes</p>
-          <p className="text-xl font-bold text-[var(--text)] mt-1">
-            {actives.length}<span className="text-sm text-[var(--text-muted)] font-normal"> active(s) / {recs.length}</span>
+          <div className="flex items-center gap-1.5">
+            <ArrowUpCircle size={13} className="text-green-500 flex-shrink-0" />
+            <p className="text-[11px] text-[var(--text-muted)] uppercase tracking-wide truncate">Encaissements / an</p>
+          </div>
+          <p className="text-xl font-bold text-green-500 mt-1.5">{formatFCFA(stats.encAn)}</p>
+          <p className="text-xs text-[var(--text-muted)] mt-0.5">{formatFCFA(stats.encMois)} / mois</p>
+        </div>
+
+        {/* Net / an */}
+        <div className={`rounded-2xl border p-4 ${
+          netPositif
+            ? 'border-green-200 dark:border-green-900/40 bg-green-50/50 dark:bg-green-900/10'
+            : 'border-red-200 dark:border-red-900/40 bg-red-50/50 dark:bg-red-900/10'
+        }`}>
+          <div className="flex items-center gap-1.5">
+            <Wallet size={13} className={`flex-shrink-0 ${netPositif ? 'text-green-600' : 'text-red-500'}`} />
+            <p className="text-[11px] text-[var(--text-muted)] uppercase tracking-wide truncate">Net récurrent / an</p>
+          </div>
+          <p className={`text-xl font-bold mt-1.5 ${netPositif ? 'text-green-600' : 'text-red-500'}`}>
+            {netPositif ? '+' : '−'}{formatFCFA(Math.abs(stats.netAn))}
+          </p>
+          <p className="text-xs text-[var(--text-muted)] mt-0.5">
+            {netPositif ? '+' : '−'}{formatFCFA(Math.abs(stats.netMois))} / mois
           </p>
         </div>
+
+        {/* Compteur */}
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="flex items-center gap-1.5">
+            <Repeat size={13} className="text-primary flex-shrink-0" />
+            <p className="text-[11px] text-[var(--text-muted)] uppercase tracking-wide truncate">Récurrentes</p>
+          </div>
+          <p className="text-xl font-bold text-[var(--text)] mt-1.5">
+            {stats.nbActives}
+            <span className="text-sm text-[var(--text-muted)] font-normal"> / {recs.length}</span>
+          </p>
+          <p className="text-xs text-[var(--text-muted)] mt-0.5">active(s)</p>
+        </div>
+
       </div>
 
       {/* ── Liste ── */}
@@ -220,6 +313,8 @@ export default function RecurrentesPage() {
         <div className="space-y-2">
           {recs.map(r => {
             const estDecaiss = r.typeFlux === 'decaissement';
+            const annuel     = r.montant * MOIS_PAR_AN;
+            const part       = partDuFlux(r);
             return (
               <div key={r.id}
                 className={`flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 transition-all ${r.isActive ? '' : 'opacity-55'}`}>
@@ -247,17 +342,27 @@ export default function RecurrentesPage() {
                   </p>
                 </div>
 
-                {/* Montant */}
-                <span className={`font-bold text-sm flex-shrink-0 ${estDecaiss ? 'text-red-500' : 'text-green-500'}`}>
-                  {estDecaiss ? '−' : '+'}{formatFCFA(r.montant)}
-                </span>
+                {/* Montant mensuel + projection annuelle (S7 / F10) */}
+                <div className="text-right flex-shrink-0">
+                  <p className={`font-bold text-sm leading-tight ${estDecaiss ? 'text-red-500' : 'text-green-500'}`}>
+                    {estDecaiss ? '−' : '+'}{formatFCFA(r.montant)}
+                  </p>
+                  <p className="text-[11px] text-[var(--text-muted)] leading-tight mt-0.5 whitespace-nowrap">
+                    {formatFCFA(annuel)} / an
+                    {part !== null && (
+                      <span className={`ml-1.5 font-medium ${estDecaiss ? 'text-red-400' : 'text-green-400'}`}>
+                        · {formatPct(part)} %
+                      </span>
+                    )}
+                  </p>
+                </div>
 
-                {/* Toggle actif */}
+                {/* Toggle actif — S7 FIX : h-5.5 n'existe pas dans l'échelle Tailwind */}
                 <button onClick={() => basculer(r)} title={r.isActive ? 'Désactiver' : 'Activer'}
-                  className={`relative w-10 h-5.5 rounded-full transition-colors flex-shrink-0 ${
+                  className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
                     r.isActive ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-600'
                   }`}>
-                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${
+                  <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-all ${
                     r.isActive ? 'left-[22px]' : 'left-0.5'
                   }`} />
                 </button>
@@ -321,12 +426,24 @@ export default function RecurrentesPage() {
               />
 
               {/* Montant */}
-              <input
-                type="number" inputMode="numeric"
-                value={montant} onChange={e => setMontant(e.target.value)} onKeyDown={e => { onlyNumbers(e); onEnter(e); }}
-                placeholder="Montant (FCFA)"
-                className="w-full text-right text-lg font-semibold border border-[var(--border)] rounded-xl px-3 py-2.5 bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
-              />
+              <div>
+                <input
+                  type="number" inputMode="numeric"
+                  value={montant} onChange={e => setMontant(e.target.value)} onKeyDown={e => { onlyNumbers(e); onEnter(e); }}
+                  placeholder="Montant (FCFA)"
+                  className="w-full text-right text-lg font-semibold border border-[var(--border)] rounded-xl px-3 py-2.5 bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"
+                />
+                {/* S7 / F10 : projection annuelle en temps réel dans le formulaire */}
+                {(() => {
+                  const m = parseInt(montant, 10);
+                  if (!m || m <= 0) return null;
+                  return (
+                    <p className="text-xs text-[var(--text-muted)] text-right mt-1.5">
+                      soit <span className="font-semibold text-[var(--text)]">{formatFCFA(m * MOIS_PAR_AN)}</span> / an
+                    </p>
+                  );
+                })()}
+              </div>
 
               {/* Catégorie */}
               <select value={categorieId} onChange={e => setCategorieId(e.target.value)}

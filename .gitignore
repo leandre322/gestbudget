@@ -24,3 +24,9 @@ _utf8-backup-*
 # Sentry Config File
 .env.sentry-build-plugin
 export-*.txt
+
+smoke-csrf-v2.ps1
+smoke-csrf-resultats.csv
+
+smoke-csrf-v2.ps1
+smoke-csrf-resultats.csv
