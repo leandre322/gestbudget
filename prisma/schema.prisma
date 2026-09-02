@@ -79,7 +79,7 @@ model Annee {
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   budgetMensuel BudgetMensuel[]
   decaissements Decaissement[]
-  banques       Banque[]
+  // banques       Banque[]
 
   @@unique([userId, annee])
   @@map("annees")
@@ -196,8 +196,8 @@ model DecaissementCompte {
 model Banque {
   id         String   @id @default(cuid())
   userId     String
-  anneeId    String?
-  mois       Int?
+  // anneeId    String?
+  // mois       Int?
   nomBanque  String
   typeCompte String?
   solde      BigInt   @default(0)
@@ -207,12 +207,12 @@ model Banque {
   seuilAlerte BigInt  @default(0)
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  annee Annee? @relation(fields: [anneeId], references: [id], onDelete: SetNull)
+ // annee Annee? @relation(fields: [anneeId], references: [id], onDelete: SetNull)
   categories Categorie[] @relation("CategorieBanque")
 
-  @@map("banques")
   decaissements Decaissement[]  @relation("DecaissementBanque")
   mouvements    MouvementBanque[]
+  @@map("banques")
 }
 
 model MouvementBanque {
