@@ -332,6 +332,7 @@ model CronLog {
   details    String?
 
   @@index([jobName, startedAt])
+  @@map("cron_logs")
 }
 
 // ─── AUTOMATISATION (Session 6) ────────────────
