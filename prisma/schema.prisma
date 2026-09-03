@@ -48,6 +48,7 @@ model User {
   projets            Projet[]
   recurrentes        Recurrente[]
   budgetAlertes      BudgetAlerte[]
+  patrimoineSnapshots PatrimoineSnapshot[]
 
   @@map("users")
 }
@@ -196,8 +197,6 @@ model DecaissementCompte {
 model Banque {
   id         String   @id @default(cuid())
   userId     String
-  // anneeId    String?
-  // mois       Int?
   nomBanque  String
   typeCompte String?
   solde      BigInt   @default(0)
@@ -207,11 +206,11 @@ model Banque {
   seuilAlerte BigInt  @default(0)
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
- // annee Annee? @relation(fields: [anneeId], references: [id], onDelete: SetNull)
   categories Categorie[] @relation("CategorieBanque")
 
   decaissements Decaissement[]  @relation("DecaissementBanque")
   mouvements    MouvementBanque[]
+
   @@map("banques")
 }
 
@@ -227,6 +226,7 @@ model MouvementBanque {
   dateOperation  DateTime @db.Date
   createdAt      DateTime @default(now())
   banque         Banque   @relation(fields: [banqueId], references: [id], onDelete: Cascade)
+
   @@map("mouvements_banque")
 }
 
@@ -237,6 +237,7 @@ model CorrectifKpi {
   montant   BigInt
   motif     String
   createdAt DateTime @default(now())
+
   @@map("correctifs_kpi")
 }
 
@@ -348,6 +349,16 @@ model Recurrente {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  // ── S7 / F5 — Calendrier d'échéances ──────────────────────────────────
+  // jourEcheance ne pilote PAS la génération : le cron mensuel continue de
+  // s'exécuter le 1er (idempotence (recurrenteId, periode) préservée).
+  // Ces champs alimentent le calendrier et les rappels uniquement.
+  // Contrainte CHECK en base : jourEcheance IS NULL OR BETWEEN 1 AND 31.
+  // Toute évolution de ces bornes exige une migration Neon dans la même session.
+  jourEcheance     Int?
+  rappelActif      Boolean @default(false)
+  rappelJoursAvant Int     @default(3)
+
   user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   categorie  Categorie   @relation(fields: [categorieId], references: [id], onDelete: Cascade)
   executions RecurrenteExecution[]
@@ -384,4 +395,31 @@ model BudgetAlerte {
 
   @@unique([userId, categorieId, anneeId, mois, seuil], map: "budget_alertes_unique")
   @@map("budget_alertes")
+}
+
+// ─── PATRIMOINE (Session 7 / F8) ───────────────
+
+// Une ligne par compte et par date, jamais un agrégat pré-calculé :
+// les totaux se somment à la lecture, et on conserve la capacité de savoir
+// QUEL compte a bougé — ce qui est tout l'intérêt d'un historique.
+//
+// typeSource : 'banque' | 'fonds' (contrainte CHECK en base)
+// sourceId   : pas de clé étrangère volontairement — un compte supprimé ne doit
+//              pas effacer son historique de patrimoine. sourceNom conserve le
+//              libellé au moment de la capture.
+model PatrimoineSnapshot {
+  id           String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  userId       String
+  dateSnapshot DateTime @db.Date
+  typeSource   String
+  sourceId     String
+  sourceNom    String
+  solde        BigInt   @default(0)
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dateSnapshot, typeSource, sourceId], map: "patrimoine_snapshots_unique")
+  @@index([userId, dateSnapshot(sort: Desc)],            map: "patrimoine_snapshots_user_date_idx")
+  @@map("patrimoine_snapshots")
 }
