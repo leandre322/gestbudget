@@ -165,4 +165,7 @@ export async function GET(req: NextRequest) {
       console.error('[cron/patrimoine] CronLog:', e);
     }
   }
+  // P3 : purge des compteurs expires. La table n'etait jamais nettoyee :
+  // une ligne par couple IP:route et uid:route, a vie.
+    await prisma.$executeRawUnsafe(`DELETE FROM rate_limits WHERE reset_at < NOW() - INTERVAL '1 hour'`);
 }

@@ -1,23 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 import { neon } from '@neondatabase/serverless';
+import {
+  matchPath,
+  matchAnyPath,
+  verifyCsrf,
+  verifyCronSecret,
+  withSecurityHeaders,
+  secureJson,
+  getClientIp,
+  CRON_PREFIXES,
+  CSRF_EXEMPT_PREFIXES,
+} from '@/lib/csrf';
 
-// ── Rate limiter persistant Neon + fallback in-memory ────────────────────────
+// ── P1 : client Neon hoiste au niveau module ─────────────────────────────────
+// Avant : neon(...) etait instancie A CHAQUE appel de checkRL.
+// Un client par isolate, reutilise sur toute sa duree de vie.
+const sqlClient = process.env.DATABASE_URL_UNPOOLED
+  ? neon(process.env.DATABASE_URL_UNPOOLED)
+  : null;
+
 const rlFallback = new Map<string, { count: number; resetAt: number }>();
 
-async function checkRL(key: string, limit: number, windowMs: number): Promise<boolean> {
-  if (!process.env.DATABASE_URL_UNPOOLED) {
-    const now = Date.now();
-    const e = rlFallback.get(key);
-    if (!e || now > e.resetAt) { rlFallback.set(key, { count: 1, resetAt: now + windowMs }); return true; }
-    if (e.count >= limit) return false;
-    e.count++;
+function checkRLMemory(key: string, limit: number, windowMs: number): boolean {
+  const now = Date.now();
+  const e = rlFallback.get(key);
+  if (!e || now > e.resetAt) {
+    rlFallback.set(key, { count: 1, resetAt: now + windowMs });
     return true;
   }
+  if (e.count >= limit) return false;
+  e.count++;
+  return true;
+}
+
+async function checkRL(key: string, limit: number, windowMs: number): Promise<boolean> {
+  if (!sqlClient) return checkRLMemory(key, limit, windowMs);
   try {
-    const sql = neon(process.env.DATABASE_URL_UNPOOLED);
     const resetAt = new Date(Date.now() + windowMs).toISOString();
-    const rows = await sql`
+    const rows = await sqlClient`
       INSERT INTO rate_limits (key, count, reset_at)
       VALUES (${key}, 1, ${resetAt}::timestamptz)
       ON CONFLICT (key) DO UPDATE SET
@@ -33,12 +54,7 @@ async function checkRL(key: string, limit: number, windowMs: number): Promise<bo
     `;
     return (rows[0]?.count ?? 1) <= limit;
   } catch {
-    const now = Date.now();
-    const e = rlFallback.get(key);
-    if (!e || now > e.resetAt) { rlFallback.set(key, { count: 1, resetAt: now + windowMs }); return true; }
-    if (e.count >= limit) return false;
-    e.count++;
-    return true;
+    return checkRLMemory(key, limit, windowMs);
   }
 }
 
@@ -53,10 +69,10 @@ const RATE_RULES = [
 
 // ── Regles userId-based (routes lourdes authentifiees) ───────────────────────
 const AUTH_RATE_RULES = [
-  { path: '/api/analytiques',  limit: 60, window: 60_000 }, // 60 req/min par userId
-  { path: '/api/export/pdf',   limit: 10, window: 60_000 }, // 10 exports/min par userId
-  { path: '/api/export/excel', limit: 10, window: 60_000 }, // S7 : meme traitement
-  { path: '/api/quick-add',    limit: 30, window: 60_000 }, // S6 : anti-rafale QuickAdd
+  { path: '/api/analytiques',  limit: 60, window: 60_000 },
+  { path: '/api/export/pdf',   limit: 10, window: 60_000 },
+  { path: '/api/export/excel', limit: 10, window: 60_000 },
+  { path: '/api/quick-add',    limit: 30, window: 60_000 },
 ];
 
 const PROTECTED_PAGES = [
@@ -67,79 +83,72 @@ const PROTECTED_PAGES = [
   '/recurrentes',
 ];
 
-// ── S7 : routes API exemptees de CSRF (appelants externes sans `origin`) ─────
-// Vercel Cron et NextAuth n'envoient pas l'origin de l'application.
-const CSRF_EXEMPT_PREFIXES = [
-  '/api/auth',
-  '/api/cron',
-  '/api/push/cron',
-];
-
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
-  const ip = (req.headers.get('x-forwarded-for') ?? '127.0.0.1').split(',')[0].trim();
+  const ip = getClientIp(req); // N2
 
-  // 1. Rate limiting IP (routes publiques sensibles)
+  // ── 1. N5 : routes cron authentifiees par CRON_SECRET ──────────────────────
+  // Ces routes restent exemptees de CSRF (aucun Origin depuis Vercel Cron),
+  // mais l'exemption devient un ECHANGE : pas d'Origin, mais un secret valide.
+  // Fail-closed : secret absent en production => 401.
+  if (matchAnyPath(pathname, CRON_PREFIXES)) {
+    if (!verifyCronSecret(req)) {
+      return secureJson({ error: 'Non autorise' }, 401);
+    }
+    return withSecurityHeaders(NextResponse.next());
+  }
+
+  // ── 2. Rate limiting IP (routes publiques sensibles) ───────────────────────
   for (const rule of RATE_RULES) {
-    if (pathname.startsWith(rule.path)) {
+    if (matchPath(pathname, rule.path)) { // N1
       const allowed = await checkRL(`${ip}:${rule.path}`, rule.limit, rule.window);
       if (!allowed) {
         const retryAfter = Math.ceil(rule.window / 1000);
-        return new NextResponse(
-          JSON.stringify({ error: `Trop de requetes. Reessayez dans ${retryAfter} secondes.` }),
-          { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': String(retryAfter) } }
+        return secureJson(
+          { error: `Trop de requetes. Reessayez dans ${retryAfter} secondes.` },
+          429,
+          { 'Retry-After': String(retryAfter) }
         );
       }
     }
   }
 
-  // 2. CSRF sur TOUTES les mutations API
-  // S7 : le matcher est desormais catch-all (/api/:path*). Plus besoin d'ajouter
-  //      chaque nouvelle route a la main — c'est l'exemption qui est explicite.
+  // ── 3. CSRF sur toutes les mutations API (S1 + S2) ─────────────────────────
   const isMutation = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method.toUpperCase());
-  const isApiRoute = pathname.startsWith('/api/');
-  const isExempt   = CSRF_EXEMPT_PREFIXES.some(p => pathname.startsWith(p));
+  const isApiRoute = matchPath(pathname, '/api');
+  const isExempt   = matchAnyPath(pathname, CSRF_EXEMPT_PREFIXES); // NextAuth uniquement
 
   if (isMutation && isApiRoute && !isExempt) {
-    const origin  = req.headers.get('origin')  ?? '';
-    const referer = req.headers.get('referer') ?? '';
-    const appUrl  = process.env.NEXT_PUBLIC_APP_URL ?? '';
-    if (appUrl) {
-      const allowed = new URL(appUrl).origin;
-      if (!origin.startsWith(allowed) && !referer.startsWith(allowed)) {
-        return new NextResponse(
-          JSON.stringify({ error: 'Requete non autorisee (CSRF)' }),
-          { status: 403, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
+    const verdict = verifyCsrf(req);
+    if (!verdict.ok) {
+      return secureJson({ error: 'Requete non autorisee (CSRF)' }, 403);
     }
   }
 
-  // 3. Auth (pages protegees) + rate limiting userId (routes lourdes)
-  const isProtected = PROTECTED_PAGES.some(p => pathname.startsWith(p));
-  const isAuthRL    = AUTH_RATE_RULES.some(r => pathname.startsWith(r.path));
+  // ── 4. Auth (pages protegees) + rate limiting userId ───────────────────────
+  const isProtected = matchAnyPath(pathname, PROTECTED_PAGES);
+  const isAuthRL    = AUTH_RATE_RULES.some(r => matchPath(pathname, r.path));
 
   if (isProtected || isAuthRL) {
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
 
-    // 3a. Redirect login si page protegee sans session
     if (isProtected && !token) {
       const url = req.nextUrl.clone();
       url.pathname = '/login';
       url.searchParams.set('callbackUrl', pathname);
-      return NextResponse.redirect(url);
+      return withSecurityHeaders(NextResponse.redirect(url)); // N3
     }
 
-    // 3b. Rate limiting userId sur routes lourdes authentifiees
     if (isAuthRL && token?.sub) {
       for (const rule of AUTH_RATE_RULES) {
-        if (pathname.startsWith(rule.path)) {
+        if (matchPath(pathname, rule.path)) {
           const allowed = await checkRL(`uid:${token.sub}:${rule.path}`, rule.limit, rule.window);
           if (!allowed) {
             const retryAfter = Math.ceil(rule.window / 1000);
-            return new NextResponse(
-              JSON.stringify({ error: `Trop de requetes. Reessayez dans ${retryAfter} secondes.` }),
-              { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': String(retryAfter) } }
+            return secureJson(
+              { error: `Trop de requetes. Reessayez dans ${retryAfter} secondes.` },
+              429,
+              { 'Retry-After': String(retryAfter) }
             );
           }
         }
@@ -147,16 +156,8 @@ export async function middleware(req: NextRequest) {
     }
   }
 
-  // 4. Headers securite
-  // NOTE : microphone PAS restreint — requis pour Web Speech API (D1 vocal)
-  const res = NextResponse.next();
-  res.headers.set('X-Frame-Options',           'SAMEORIGIN');
-  res.headers.set('X-Content-Type-Options',    'nosniff');
-  res.headers.set('X-XSS-Protection',          '1; mode=block');
-  res.headers.set('Referrer-Policy',           'strict-origin-when-cross-origin');
-  res.headers.set('Permissions-Policy',        'camera=(), geolocation=()');
-  res.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
-  return res;
+  // ── 5. Headers securite (N3 + N4) ──────────────────────────────────────────
+  return withSecurityHeaders(NextResponse.next());
 }
 
 export const config = {
@@ -171,9 +172,6 @@ export const config = {
     '/projets/:path*',
     '/analytiques/:path*',
     '/recurrentes/:path*',
-    // S7 : catch-all API — couvre decaissements, parametres, categories,
-    // enveloppes, import, month-lock, correctifs-kpi, donnees, fonds, global,
-    // annees, anomalies, audit, dashboard/* ... et toute route future.
     '/api/:path*',
   ],
 };

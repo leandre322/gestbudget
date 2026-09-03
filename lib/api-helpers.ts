@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { ZodSchema, ZodError } from 'zod';
 import { logAudit, AuditAction } from '@/lib/audit';
+import { verifyCsrf } from '@/lib/csrf';
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 export async function requireAuth(req: NextRequest) {
@@ -26,24 +27,15 @@ export function validateBody<T>(schema: ZodSchema<T>, data: unknown):
   return { data: result.data, error: null };
 }
 
-// ── CSRF check ───────────────────────────────────────────────────────────────
+// ── CSRF check (S1b) ─────────────────────────────────────────────────────────
+// Conserve en defense en profondeur, mais delegue integralement a lib/csrf.ts.
+// L'implementation locale dupliquait la faille startsWith + le fail-open :
+// corriger le middleware seul aurait laisse une version vulnerable en circulation,
+// prete a etre reutilisee dans une future route.
 export function csrfCheck(req: NextRequest): NextResponse | null {
-  const method = req.method.toUpperCase();
-  if (!['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) return null;
-
-  const origin   = req.headers.get('origin')  ?? '';
-  const referer  = req.headers.get('referer') ?? '';
-  const appUrl   = process.env.NEXT_PUBLIC_APP_URL ?? '';
-
-  if (!appUrl) return null;
-
-  const allowed = new URL(appUrl).origin;
-  const ok = origin.startsWith(allowed) || referer.startsWith(allowed);
-
-  if (!ok) {
-    return NextResponse.json({ error: 'Requete non autorisee (CSRF)' }, { status: 403 });
-  }
-  return null;
+  const verdict = verifyCsrf(req);
+  if (verdict.ok) return null;
+  return NextResponse.json({ error: 'Requete non autorisee (CSRF)' }, { status: 403 });
 }
 
 // ── Audit helper ─────────────────────────────────────────────────────────────
