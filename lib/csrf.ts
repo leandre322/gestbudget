@@ -127,7 +127,7 @@ export function verifyCronSecret(req: NextRequest): boolean {
   return safeEqual(header, 'Bearer ' + secret);
 }
 
-export const CRON_PREFIXES = ['/api/cron', '/api/push/cron'];
+export const CRON_PREFIXES = ['/api/cron'];
 
 // NextAuth v4 possede son PROPRE jeton CSRF (double-submit cookie) sur ses
 // endpoints. On conserve donc l'exemption : la doubler casserait les callbacks.

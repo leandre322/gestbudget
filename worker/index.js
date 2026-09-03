@@ -21,7 +21,6 @@ let lastActivityTs = null;
 const PUBLIC_API_ROUTES = [
   '/api/auth',
   '/api/register',
-  '/api/push/cron',      // Cron Vercel (appele par serveur, pas par utilisateur)
   '/api/push/subscribe', // FIX : abonnement push ne doit jamais etre bloque par le gardien
   '/api/push/test',      // FIX : test push ne doit jamais etre bloque par le gardien
 ];
