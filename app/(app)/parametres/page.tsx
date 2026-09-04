@@ -67,6 +67,12 @@ export default function ParametresPage() {
   const [catGroupsOpen,    setCatGroupsOpen]    = useState<Record<string,boolean>>({});
 
   // ── Alertes ───────────────────────────────────────────────────────────────
+  // S10 : rapportEmailJour et rapportEmailHeure restent charges et renvoyes tels
+  // quels a l'API, mais ne sont PLUS editables. Depuis S8/Q5, le rapport mensuel
+  // part du cron du 1er (/api/cron/recurrentes-mensuelles) pour tous les
+  // utilisateurs ayant rapportEmailActif = true : le filtre par jour a ete
+  // abandonne. Laisser ces deux champs modifiables faisait croire a un reglage
+  // qui n'avait plus aucun effet.
   const [rapportEmailActif, setRapportEmailActif] = useState(true);
   const [rapportEmailJour,  setRapportEmailJour]  = useState(1);
   const [rapportEmailHeure, setRapportEmailHeure] = useState(8);
@@ -164,6 +170,8 @@ export default function ParametresPage() {
   };
 
   // ── Sauvegarder alertes (D1 : + langueVocale) ─────────────────────────────
+  // rapportEmailJour / rapportEmailHeure sont renvoyes inchanges : le but est de
+  // ne PAS ecraser les valeurs en base, pas de les piloter depuis cet ecran.
   const sauvegarderAlertes = async () => {
     if (isLocked) { openUnlockModal(); return; }
     setSavingAlertes(true);
@@ -291,13 +299,28 @@ export default function ParametresPage() {
     await fetch(`/api/comptes?id=${id}`,{method:'DELETE'});chargerOnglet('comptes');
   };
 
+  // ── S10 / S3 : .xlsx uniquement ───────────────────────────────────────────
+  // Le serveur refuse desormais le .xls (parseur CFB retire de la surface
+  // d'attaque). On filtre aussi cote client pour eviter un upload inutile.
   const importerExcel = async (e:React.ChangeEvent<HTMLInputElement>) => {
     if(isLocked){openUnlockModal();return;}
     const file=e.target.files?.[0];if(!file)return;
+
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      setImportResult({ error: 'Format non supporte. Enregistrez le classeur au format .xlsx.' });
+      e.target.value='';
+      return;
+    }
+
     setImporting(true);setImportResult(null);
     const fd=new FormData();fd.append('file',file);
-    const res=await fetch('/api/import',{method:'POST',body:fd});
-    setImportResult(await res.json());setImporting(false);e.target.value='';
+    try {
+      const res=await fetch('/api/import',{method:'POST',body:fd});
+      setImportResult(await res.json());
+    } catch {
+      setImportResult({ error: 'Erreur reseau pendant l\u2019import' });
+    }
+    setImporting(false);e.target.value='';
   };
 
   if(loading)return<div className="flex items-center justify-center h-64"><div className="spinner scale-150"/></div>;
@@ -508,7 +531,7 @@ export default function ParametresPage() {
                 </div>
                 {(tauxRef[type as GrandeCategorie]??0)>0&&(
                   <span className="text-xs font-semibold text-primary">
-                    {(tauxRef[type as GrandeCategorie]).toFixed(2)}% -” {formatFCFA(tauxToMontant(tauxRef[type as GrandeCategorie]))}
+                    {(tauxRef[type as GrandeCategorie]).toFixed(2)}% → {formatFCFA(tauxToMontant(tauxRef[type as GrandeCategorie]))}
                   </span>
                 )}
               </div>
@@ -546,7 +569,7 @@ export default function ParametresPage() {
                                   <option value="">-- Non liee --</option>
                                   {banques.map((b:any)=><option key={b.id} value={b.id}>{b.nomBanque}</option>)}
                                 </select>
-                                {cat.banqueId?<span className="text-blue-500 text-xs">*B*</span>:<span className="opacity-30 text-xs">B</span>}</>
+                                {cat.banqueId?<Link size={12} className="text-blue-500 flex-shrink-0"/>:<Link2Off size={12} className="text-slate-300 flex-shrink-0"/>}</>
                               )}
                             </div>
                           )}
@@ -619,12 +642,12 @@ export default function ParametresPage() {
             {banques.length===0?<div className="px-4 py-8 text-center text-[var(--text-muted)] text-sm">Aucune banque.</div>:banques.map((b:any)=>(
               <div key={b.id} className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50/50 dark:hover:bg-dark-card/50 transition-colors">
                 {editBanque?.id===b.id?(
-                  <><div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm flex-shrink-0">B</div>
+                  <><div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm flex-shrink-0">{(editBanque.nomBanque||'B').charAt(0)}</div>
                   <input type="text" value={editBanque.nomBanque} onChange={e=>setEditBanque((p:any)=>({...p,nomBanque:e.target.value}))} className="flex-1 border border-primary rounded-lg px-2 py-1 text-sm bg-[var(--card)] text-[var(--text)] outline-none"/>
                   <button onClick={async()=>{if(isLocked)return;await fetch(`/api/banques?id=${editBanque.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({nomBanque:editBanque.nomBanque})});setEditBanque(null);chargerOnglet('banques');}} className="text-green-500 hover:text-green-600"><Check size={15}/></button>
                   <button onClick={()=>setEditBanque(null)} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={15}/></button></>
                 ):(
-                  <><div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm">B</div>
+                  <><div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 font-bold text-sm">{(b.nomBanque||'B').charAt(0)}</div>
                   <span className="flex-1 text-sm text-[var(--text)] font-medium">{b.nomBanque}</span>
                   <span className="text-sm font-bold text-primary">{formatFCFA(b.solde)}</span>
                   <button onClick={()=>{if(isLocked){openUnlockModal();return;}setEditBanque(b);}} disabled={isLocked} title={isLocked?'Verrouillez pour modifier':undefined} className={iconBtn(isLocked)}><Pencil size={13}/></button>
@@ -657,8 +680,9 @@ export default function ParametresPage() {
                 <div className="flex flex-wrap gap-2">
                   {a.moisAvecDonnees.map((m:number)=>(
                     <button key={m} onClick={()=>{if(isLocked){openUnlockModal();return;}setSuppAnnee(a.annee);setSuppMois(m);setConfirmText('');setSuppResult('');}} disabled={isLocked}
-                      className={clsx('px-2.5 py-1 border rounded-lg text-xs transition-all',isLocked?'border-[var(--border)] text-[var(--text-muted)] opacity-40 cursor-not-allowed':'border-[var(--border)] text-[var(--text-muted)] hover:border-red-400 hover:text-red-500')}>
-                      {['','Jan','Fev','Mar','Avr','Mai','Jun','Jul','Aou','Sep','Oct','Nov','Dec'][m]} x
+                      className={clsx('inline-flex items-center gap-1 px-2.5 py-1 border rounded-lg text-xs transition-all',isLocked?'border-[var(--border)] text-[var(--text-muted)] opacity-40 cursor-not-allowed':'border-[var(--border)] text-[var(--text-muted)] hover:border-red-400 hover:text-red-500')}>
+                      {['','Jan','Fev','Mar','Avr','Mai','Jun','Jul','Aou','Sep','Oct','Nov','Dec'][m]}
+                      <X size={11}/>
                     </button>
                   ))}
                 </div>
@@ -705,27 +729,16 @@ export default function ParametresPage() {
               </button>
             </div>
             {rapportEmailActif&&(
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-4">
-                  <div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Jour du mois (1-28)</label>
-                    <input type="number" min="1" max="28" value={rapportEmailJour} disabled={isLocked}
-                      onChange={e=>{if(isLocked)return;setRapportEmailJour(Math.min(28,Math.max(1,parseInt(e.target.value)||1)));}}
-                      className="w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"/></div>
-                  <div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Heure UTC (0-23)</label>
-                    <input type="number" min="0" max="23" value={rapportEmailHeure} disabled={isLocked}
-                      onChange={e=>{if(isLocked)return;setRapportEmailHeure(Math.min(23,Math.max(0,parseInt(e.target.value)||0)));}}
-                      className="w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none"/></div>
-                </div>
-                <p className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl px-3 py-2">
-                  Cron quotidien 8h UTC -” envoi le jour {rapportEmailJour} du mois a chaque utilisateur ayant configure ce jour.
-                </p>
-              </div>
+              <p className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl px-3 py-2">
+                Envoi automatique le <strong>1er de chaque mois a 06h00 UTC</strong>, avec le bilan du mois ecoule.
+                Le jour et l&apos;heure ne sont plus reglables : le rapport est declenche par le cron mensuel unique.
+              </p>
             )}
           </div>
 
           {/* Detection anomalies */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-            <h3 className="font-semibold text-[var(--text)] mb-1">Detection d'anomalies</h3>
+            <h3 className="font-semibold text-[var(--text)] mb-1">Detection d&apos;anomalies</h3>
             <p className="text-xs text-[var(--text-muted)] mb-4">Alerte Dashboard et email si une depense depasse la moyenne des 3 mois precedents</p>
             <div className="space-y-3">
               <div className="flex items-center gap-3 flex-wrap">
@@ -740,12 +753,12 @@ export default function ParametresPage() {
                   style={{width:`${Math.min(100,(seuilAnomaliesPct/200)*100)}%`}}/>
               </div>
               <p className="text-xs text-[var(--text-muted)]">
-                {seuilAnomaliesPct<=30?'Tres sensible':seuilAnomaliesPct<=60?'Sensibilite standard':'Peu sensible'} -” alerte si depense {'>'} {seuilAnomaliesPct}% au-dessus de la moyenne
+                {seuilAnomaliesPct<=30?'Tres sensible':seuilAnomaliesPct<=60?'Sensibilite standard':'Peu sensible'} → alerte si depense {'>'} {seuilAnomaliesPct}% au-dessus de la moyenne
               </p>
             </div>
           </div>
 
-          {/* ── D1 — Dictée vocale ────────────────────────────────────────────────────────────────── */}
+          {/* ── D1 — Dictée vocale ────────────────────────────────────────────── */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
             <h3 className="font-semibold text-[var(--text)] mb-1">Dictee vocale</h3>
             <p className="text-xs text-[var(--text-muted)] mb-4">
@@ -765,26 +778,26 @@ export default function ParametresPage() {
                     : 'border-[var(--border)] bg-[var(--card)] text-[var(--text)] focus:border-primary'
                 )}
               >
-                <option value="fr-FR">🇫🇷 Français (France)</option>
-                <option value="fr-BE">🇫🇷 Français (Belgique)</option>
-                <option value="fr-CA">🇫🇷 Français (Canada)</option>
-                <option value="en-US">US English (US)</option>
-                <option value="en-GB">US English (UK)</option>
+                <option value="fr-FR">Francais (France)</option>
+                <option value="fr-BE">Francais (Belgique)</option>
+                <option value="fr-CA">Francais (Canada)</option>
+                <option value="en-US">English (US)</option>
+                <option value="en-GB">English (UK)</option>
               </select>
               <span className="text-xs text-[var(--text-muted)] italic">
                 Parametre sauvegarde avec les alertes ci-dessous
               </span>
             </div>
           </div>
-          
-           {/* ── Notifications push ───────────────────────────────────────── */}
+
+          {/* ── Notifications push ───────────────────────────────────────── */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
             <h3 className="font-semibold text-[var(--text)] mb-1">Notifications push</h3>
             <p className="text-xs text-[var(--text-muted)] mb-4">
               Recevez le bilan hebdomadaire chaque lundi à 8h directement sur
               cet appareil, sans application.{' '}
               <span className="text-amber-500 dark:text-amber-400">
-                Safari iOS : l'app doit être ajoutée à l'écran d'accueil.
+                Safari iOS : l&apos;app doit être ajoutée à l&apos;écran d&apos;accueil.
               </span>
             </p>
             <PushSubscribeButton />
@@ -815,13 +828,30 @@ export default function ParametresPage() {
               'border-[var(--border)] bg-slate-50 dark:bg-dark-card hover:border-primary hover:bg-primary/5 cursor-pointer')}>
               <Upload size={24} className={clsx('mb-2',importing?'text-primary animate-bounce':'text-[var(--text-muted)]')}/>
               <span className="text-sm font-medium text-[var(--text)]">{importing?'Import en cours...':isLocked?'Verrouille':'Cliquer pour selectionner'}</span>
-              <span className="text-xs text-[var(--text-muted)] mt-1">.xlsx uniquement</span>
-              <input type="file" accept=".xlsx,.xls" className="hidden" onChange={importerExcel} disabled={importing||isLocked}/>
+              <span className="text-xs text-[var(--text-muted)] mt-1">.xlsx uniquement — 8 Mo maximum</span>
+              <input type="file" accept=".xlsx" className="hidden" onChange={importerExcel} disabled={importing||isLocked}/>
             </label>
+            <p className="text-xs text-[var(--text-muted)] mt-3">
+              Le format <strong>.xls</strong> n&apos;est plus accepte. Ouvrez le classeur dans Excel puis
+              « Enregistrer sous » au format <strong>.xlsx</strong>.
+            </p>
             {importResult&&(
               <div className={clsx('mt-4 p-4 rounded-xl text-sm',importResult.success?'bg-green-50 dark:bg-green-900/20 border border-green-200':'bg-red-50 dark:bg-red-900/20 border border-red-200')}>
                 {importResult.success?(
-                  <><p className="font-semibold text-green-700 dark:text-green-400 mb-2">Import termine</p>{Object.entries(importResult.results??{}).map(([yr,res]:any)=>(<div key={yr} className="text-green-600 dark:text-green-400"><span className="font-medium">{yr}</span> : <span>{res.imported} ligne(s)</span>{res.skipped>0&&<span className="ml-1">, {res.skipped} ignoree(s)</span>}</div>))}</>
+                  <>
+                    <p className="font-semibold text-green-700 dark:text-green-400 mb-2">Import termine</p>
+                    {Object.entries(importResult.results??{}).map(([yr,res]:any)=>(
+                      <div key={yr} className="text-green-600 dark:text-green-400">
+                        <span className="font-medium">{yr}</span> : <span>{res.imported} ligne(s)</span>
+                        {res.skipped>0&&<span className="ml-1">, {res.skipped} ignoree(s)</span>}
+                        {res.unmatched?.length>0&&(
+                          <div className="text-xs text-amber-600 dark:text-amber-400 mt-1 ml-2">
+                            Non reconnues : {res.unmatched.join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </>
                 ):<p className="text-red-600 dark:text-red-400">{importResult.error}</p>}
               </div>
             )}
