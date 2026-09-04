@@ -2,7 +2,40 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
+import { logAudit } from '@/lib/audit';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S10 / S3 — Import Excel, migre de xlsx@0.18.5 vers exceljs.
+//
+// Motif : xlsx@0.18.5 porte une vulnerabilite qui affecte la LECTURE de fichier.
+// L'import est la seule surface ou un fichier non maitrise est parse, c'est donc
+// la seule qui doit changer de parseur. L'export (/api/export/excel) continue
+// d'utiliser xlsx : il n'ecrit que des donnees deja en base, aucun fichier
+// externe n'y entre.
+//
+// Le format .xls (BIFF/CFB) est ABANDONNE. Ce n'est pas une regression subie
+// mais l'objectif : supprimer un parseur binaire entier de la surface d'attaque.
+// exceljs ne lit que .xlsx (ZIP + XML). Un .xls est refuse en amont, sur son
+// extension ET sur ses octets d'en-tete, avant toute tentative de parsing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+// Un classeur de 4 annees x 89 categories represente plusieurs milliers
+// d'upserts : le defaut de 10 s ne suffit pas.
+export const maxDuration = 60;
+
+// Garde-fous d'entree. Un classeur de budget personnel depasse rarement 2 Mo.
+const TAILLE_MAX_OCTETS = 8 * 1024 * 1024;
+const NB_COLONNES = 26;         // Col B (nom) + 12 mois x 2 colonnes
+const PREMIERE_LIGNE_DONNEES = 5; // 1-indexe cote exceljs (etait rowIdx 4 en 0-indexe)
+const TAILLE_LOT = 25;          // upserts par transaction
+
+// Signature OLE2 / CFB : un .xls renomme en .xlsx commence par ces octets.
+const SIGNATURE_CFB = [0xd0, 0xcf, 0x11, 0xe0];
+// Signature ZIP : tout .xlsx valide commence par PK..
+const SIGNATURE_ZIP = [0x50, 0x4b];
 
 // Normalise une chaîne : minuscules, sans accents, sans parenthèses
 function normalize(s: string): string {
@@ -110,19 +143,103 @@ function toNum(v: any): number {
   return isNaN(n) ? 0 : Math.round(n);
 }
 
+// ── Extraction d'une valeur de cellule exceljs ───────────────────────────────
+// Difference majeure avec sheet_to_json : exceljs ne renvoie pas des scalaires
+// mais des objets typés pour les formules, le texte riche et les hyperliens.
+// Une cellule de total calculee ({ formula, result }) serait devenue NaN puis 0
+// sans cette normalisation — donc un import silencieusement vide.
+function valeurCellule(v: any): any {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return v;
+  if (typeof v !== 'object') return v;
+
+  if ('result' in v) return valeurCellule((v as any).result); // formule
+  if ('richText' in v) {
+    return ((v as any).richText ?? []).map((t: any) => t.text ?? '').join('');
+  }
+  if ('text' in v) return (v as any).text;      // hyperlien
+  if ('error' in v) return null;                // #REF!, #DIV/0!…
+  return null;
+}
+
+// Construit une ligne DENSE de NB_COLONNES valeurs, index 0 = colonne A.
+// exceljs renvoie des tableaux creux (1-indexes, avec des trous) sur lesquels
+// .some() saute les cases vides : la detection de ligne de section serait
+// faussee sans densification explicite.
+function ligneDense(ws: ExcelJS.Worksheet, numLigne: number): any[] {
+  const row = ws.getRow(numLigne);
+  const out: any[] = [];
+  for (let c = 1; c <= NB_COLONNES; c++) {
+    out.push(valeurCellule(row.getCell(c).value));
+  }
+  return out;
+}
+
+function commencePar(octets: Uint8Array, signature: number[]): boolean {
+  if (octets.length < signature.length) return false;
+  for (let i = 0; i < signature.length; i++) {
+    if (octets[i] !== signature[i]) return false;
+  }
+  return true;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
     const formData = await req.formData();
-    const file = formData.get('file') as File;
+    const file = formData.get('file') as File | null;
     if (!file) return NextResponse.json({ error: 'Fichier manquant' }, { status: 400 });
 
-    const buffer = await file.arrayBuffer();
-    const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
+    // ── Garde 1 : taille ────────────────────────────────────────────────────
+    if (file.size > TAILLE_MAX_OCTETS) {
+      return NextResponse.json(
+        { error: `Fichier trop volumineux (max ${Math.round(TAILLE_MAX_OCTETS / 1024 / 1024)} Mo)` },
+        { status: 413 }
+      );
+    }
+    if (file.size === 0) {
+      return NextResponse.json({ error: 'Fichier vide' }, { status: 400 });
+    }
 
-    console.log('Onglets trouvés:', wb.SheetNames);
+    // ── Garde 2 : extension ─────────────────────────────────────────────────
+    const nomFichier = typeof file.name === 'string' ? file.name : '';
+    const nomBas = nomFichier.toLowerCase();
+    if (nomBas.endsWith('.xls')) {
+      return NextResponse.json(
+        { error: 'Le format .xls n\u2019est plus accepté. Enregistrez le classeur au format .xlsx puis réessayez.' },
+        { status: 415 }
+      );
+    }
+    if (!nomBas.endsWith('.xlsx')) {
+      return NextResponse.json({ error: 'Format non supporté. Utilisez un fichier .xlsx' }, { status: 415 });
+    }
+
+    const buffer = await file.arrayBuffer();
+    const octets = new Uint8Array(buffer);
+
+    // ── Garde 3 : octets d'en-tete ──────────────────────────────────────────
+    // L'extension est declarative, les octets ne le sont pas. Un .xls renomme
+    // en .xlsx est refuse ici, avant que le moindre parseur ne le touche.
+    if (commencePar(octets, SIGNATURE_CFB)) {
+      return NextResponse.json(
+        { error: 'Ce fichier est un .xls renommé. Enregistrez-le réellement au format .xlsx.' },
+        { status: 415 }
+      );
+    }
+    if (!commencePar(octets, SIGNATURE_ZIP)) {
+      return NextResponse.json({ error: 'Fichier .xlsx invalide ou corrompu' }, { status: 400 });
+    }
+
+    // ── Lecture ─────────────────────────────────────────────────────────────
+    const wb = new ExcelJS.Workbook();
+    try {
+      await wb.xlsx.load(buffer);
+    } catch (e) {
+      console.error('[POST /api/import] lecture classeur', e);
+      return NextResponse.json({ error: 'Fichier .xlsx illisible' }, { status: 400 });
+    }
 
     const categories = await prisma.categorie.findMany({
       where: { userId: session.user.id },
@@ -133,21 +250,13 @@ export async function POST(req: NextRequest) {
 
     for (const annee of anneesAChercher) {
       // Chercher l'onglet par nom exact ou partiel
-      const sheetName = wb.SheetNames.find(s => {
-        const sn = s.toLowerCase().replace(/\s/g, '');
+      const ws = wb.worksheets.find((w) => {
+        const sn = (w.name ?? '').toLowerCase().replace(/\s/g, '');
         return sn === `suivi-${annee}` || sn === `suivi${annee}` || sn === String(annee);
       });
 
-      if (!sheetName) continue;
-
-      console.log(`Traitement onglet: ${sheetName} pour année ${annee}`);
-
-      const ws = wb.Sheets[sheetName];
-      // Lire comme tableau 2D avec header:1
-      const rows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: null });
-
-      console.log(`Nombre de lignes: ${rows.length}`);
-      if (rows.length < 5) continue;
+      if (!ws) continue;
+      if (ws.rowCount < PREMIERE_LIGNE_DONNEES) continue;
 
       // Récupérer ou créer l'année en DB
       let anneeRec = await prisma.annee.findUnique({
@@ -165,27 +274,33 @@ export async function POST(req: NextRequest) {
 
       // Structure : Col B (index 1) = nom catégorie
       // Col C (index 2) = Jan Ant, Col D (index 3) = Jan Réel
-      // Col E (index 4) = Fév Ant, Col F (index 5) = Fév Réel
       // ...etc (2 colonnes par mois)
-      // Les données commencent à la ligne 5 (index 4)
+      // Les données commencent à la ligne 5.
+      //
+      // Les upserts sont accumules puis executes par lots dans une transaction :
+      // l'ancienne version faisait un aller-retour Neon par cellule non nulle,
+      // soit jusqu'a 12 x 89 x 4 requetes sequentielles.
+      let lot: any[] = [];
+      const viderLot = async () => {
+        if (!lot.length) return;
+        await prisma.$transaction(lot);
+        lot = [];
+      };
 
-      for (let rowIdx = 4; rowIdx < rows.length; rowIdx++) {
-        const row = rows[rowIdx];
-        if (!row || row.length < 3) continue;
+      for (let numLigne = PREMIERE_LIGNE_DONNEES; numLigne <= ws.rowCount; numLigne++) {
+        const row = ligneDense(ws, numLigne);
 
         const nomExcel = String(row[1] ?? '').trim();
         if (!nomExcel || nomExcel.length < 2) continue;
 
         // Ignorer les lignes de section (en-têtes sans données numériques)
-        const hasNumericData = row.slice(2, 26).some(v => v !== null && v !== '' && !isNaN(Number(v)));
-        if (!hasNumericData) {
-          console.log(`  Ligne ignorée (pas de données): "${nomExcel}"`);
-          continue;
-        }
+        const hasNumericData = row.slice(2, NB_COLONNES).some(
+          (v) => v !== null && v !== '' && v !== undefined && !isNaN(Number(v))
+        );
+        if (!hasNumericData) continue;
 
         const cat = trouverCategorie(nomExcel, categories);
         if (!cat) {
-          console.log(`  Non trouvé: "${nomExcel}" (norm: "${normalize(nomExcel)}")`);
           if (!unmatched.includes(nomExcel)) unmatched.push(nomExcel);
           skipped++;
           continue;
@@ -202,37 +317,59 @@ export async function POST(req: NextRequest) {
 
           if (ant === 0 && reel === 0) continue;
 
-          await prisma.budgetMensuel.upsert({
-            where: {
-              userId_anneeId_categorieId_mois: {
-                userId: session.user.id,
-                anneeId: anneeRec!.id,
-                categorieId: cat.id,
-                mois,
+          lot.push(
+            prisma.budgetMensuel.upsert({
+              where: {
+                userId_anneeId_categorieId_mois: {
+                  userId: session.user.id,
+                  anneeId: anneeRec!.id,
+                  categorieId: cat.id,
+                  mois,
+                },
               },
-            },
-            update:  { montantAnticipe: BigInt(ant), montantReel: BigInt(reel) },
-            create:  {
-              userId:          session.user.id,
-              anneeId:         anneeRec!.id,
-              categorieId:     cat.id,
-              mois,
-              montantAnticipe: BigInt(ant),
-              montantReel:     BigInt(reel),
-            },
-          });
+              update:  { montantAnticipe: BigInt(ant), montantReel: BigInt(reel) },
+              create:  {
+                userId:          session.user.id,
+                anneeId:         anneeRec!.id,
+                categorieId:     cat.id,
+                mois,
+                montantAnticipe: BigInt(ant),
+                montantReel:     BigInt(reel),
+              },
+            })
+          );
           imported++;
+
+          if (lot.length >= TAILLE_LOT) await viderLot();
         }
       }
 
+      await viderLot();
+
       results[annee] = { imported, skipped, matched, unmatched };
-      console.log(`Année ${annee}: ${imported} importés, ${skipped} ignorés`);
     }
+
+    // Trace : un import ecrase des montants budgetaires sans confirmation ligne
+    // a ligne. Sans entree d'audit, une reecriture massive est indetectable.
+    await logAudit({
+      userId:     session.user.id,
+      action:     'import',
+      entityType: 'budget',
+      entityNom:  nomFichier.slice(0, 100),
+      details:    {
+        annees: Object.keys(results).map(Number),
+        importes: Object.values(results).reduce((s, r) => s + r.imported, 0),
+        ignores:  Object.values(results).reduce((s, r) => s + r.skipped, 0),
+      },
+      req,
+    });
 
     return NextResponse.json({ success: true, results });
 
   } catch (e: any) {
-    console.error('Import Excel:', e?.message, e?.stack);
-    return NextResponse.json({ error: e?.message ?? 'Erreur import' }, { status: 500 });
+    // Le message d'erreur reste cote serveur : e.message peut exposer un chemin,
+    // une requete SQL ou une structure interne.
+    console.error('[POST /api/import]', e?.message, e?.stack);
+    return NextResponse.json({ error: 'Erreur lors de l\u2019import' }, { status: 500 });
   }
 }

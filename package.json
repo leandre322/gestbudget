@@ -21,6 +21,7 @@
     "bcryptjs": "2.4.3",
     "clsx": "2.1.1",
     "date-fns": "^3.6.0",
+    "exceljs": "^4.4.0",
     "jspdf": "2.5.1",
     "jspdf-autotable": "3.8.2",
     "lucide-react": "0.383.0",
