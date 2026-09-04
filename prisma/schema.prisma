@@ -49,6 +49,7 @@ model User {
   recurrentes        Recurrente[]
   budgetAlertes      BudgetAlerte[]
   patrimoineSnapshots PatrimoineSnapshot[]
+  recurrentesPaiements RecurrentePaiement[]
 
   @@map("users")
 }
@@ -354,6 +355,7 @@ model Recurrente {
   // s'exécuter le 1er (idempotence (recurrenteId, periode) préservée).
   // Ces champs alimentent le calendrier et les rappels uniquement.
   // Contrainte CHECK en base : jourEcheance IS NULL OR BETWEEN 1 AND 31.
+  // Contrainte CHECK en base (S10) : rappelJoursAvant BETWEEN 0 AND 15.
   // Toute évolution de ces bornes exige une migration Neon dans la même session.
   jourEcheance     Int?
   rappelActif      Boolean @default(false)
@@ -362,6 +364,7 @@ model Recurrente {
   user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   categorie  Categorie   @relation(fields: [categorieId], references: [id], onDelete: Cascade)
   executions RecurrenteExecution[]
+  paiements  RecurrentePaiement[]
 
   @@index([userId])
   @@map("recurrentes")
@@ -380,6 +383,37 @@ model RecurrenteExecution {
   @@unique([recurrenteId, periode], map: "recurrentes_executions_unique")
   @@index([userId, periode], map: "recurrentes_executions_user_periode_idx")
   @@map("recurrentes_executions")
+}
+
+// ─── POINTAGE DES PAIEMENTS (Session 9 / F5b) ──
+//
+// Table DELIBEREMENT decouplee de RecurrenteExecution. Cette derniere est la
+// garde d'idempotence du cron mensuel : y ecrire depuis l'UI supprimerait
+// silencieusement les generations futures (P2002 interprete comme "deja fait").
+// Le pointage utilisateur vit donc dans sa propre table, sans aucun effet sur
+// le budget ni sur le cron.
+//
+// Depointer un paiement = DELETE de la ligne (decision S10). L'historique est
+// conserve cote AuditLog, pas ici : la table reste un etat, pas un journal.
+//
+// Contrairement a RecurrenteExecution, la relation vers User est declaree :
+// la cle etrangere "recurrentes_paiements_userId_fkey" existe deja en base,
+// la declarer ne coute rien et retablit l'integrite referentielle cote Prisma
+// (corrige la moitie de S9-F).
+model RecurrentePaiement {
+  id           String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  recurrenteId String
+  userId       String
+  periode      String
+  payeAt       DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  recurrente Recurrente @relation(fields: [recurrenteId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([recurrenteId, periode], map: "recurrentes_paiements_unique")
+  @@index([userId, periode], map: "recurrentes_paiements_user_periode_idx")
+  @@map("recurrentes_paiements")
 }
 
 model BudgetAlerte {
