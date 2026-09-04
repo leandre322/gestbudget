@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, Fragment } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
          CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import { TrendingUp, TrendingDown, PiggyBank, Wallet, AlertTriangle,
@@ -16,20 +16,16 @@ import useSWR from 'swr';
 import { clsx } from 'clsx';
 import PilotageCards from '@/components/PilotageCards';
 
+// S10 : la fonction serial() qui vivait ici n'etait appelee nulle part — les
+// montants arrivent deja serialises par les routes API (lib/serial.ts).
+// Supprimee : une seconde implementation de la serialisation BigInt en dormance
+// dans un composant client est une invitation a la divergence.
+
 const COLORS = ['#1E40AF','#10B981','#F59E0B','#EF4444','#8B5CF6','#06B6D4','#F97316','#84CC16'];
 const MOIS_NOMS_FR: Record<number,string> = {
   1:'Janvier',2:'Février',3:'Mars',4:'Avril',5:'Mai',6:'Juin',
   7:'Juillet',8:'Août',9:'Septembre',10:'Octobre',11:'Novembre',12:'Décembre',
 };
-
-function serial(obj: any): any {
-  if (obj===null||obj===undefined)return obj;
-  if(typeof obj==='bigint')return Number(obj);
-  if(obj instanceof Date)return obj.toISOString();
-  if(Array.isArray(obj))return obj.map(serial);
-  if(typeof obj==='object'){const r:any={};for(const k of Object.keys(obj))r[k]=serial(obj[k]);return r;}
-  return obj;
-}
 
 function JaugeCirculaire({ score, max=20 }: { score:number; max?:number }) {
   const [animated, setAnimated] = useState(0);
@@ -104,6 +100,15 @@ function EvoBadge({label,hausse,valStr}:{label:string;hausse:boolean;valStr:stri
   return(<span className={clsx('inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full',hausse?'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400':'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400')}>{hausse?'↑':'↓'} {label} {valStr}</span>);
 }
 
+// S10 — Bouton de reglage de seuil, factorise.
+// Il existait en deux copies (fonds et banques) dont l'une avait perdu ses
+// icones au profit des lettres "W" et "S" lors d'un deploiement PowerShell.
+function IconeSeuil({ alerte, defini, size=11 }: { alerte:boolean; defini:boolean; size?:number }) {
+  if (alerte)  return <AlertTriangle size={size}/>;
+  if (defini)  return <Shield size={size}/>;
+  return <Plus size={size}/>;
+}
+
 // ── Onglet Global ─────────────────────────────────────────────────────────────
 function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCourant:number;anneeCourante:number;budgetMois:any[];loadingMois:boolean}) {
   const toast = useToast();
@@ -161,6 +166,9 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const [banqueAjouts,  setBanqueAjouts]  = useState(0);
   const [banqueRetraits,setBanqueRetraits]= useState(0);
 
+  // S10 — memoire anti-spam de la notification de seuil (voir useEffect plus bas)
+  const alerteSeuilRef = useRef<string>('');
+
   // ── SUJET 3 : type etendu a 'solde' ──────────────────────────────────────
   const [showCorrectif,   setShowCorrectif]   = useState(false);
   const [correctifKpi,    setCorrectifKpi]    = useState<'revenus'|'depenses'|'epargne'|'solde'>('revenus');
@@ -181,21 +189,34 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     } catch {}
   }, []);
 
+  // ── S10 : sparklines en parallele ────────────────────────────────────────
+  // Avant : 6 fetch SEQUENTIELS (await dans une boucle for), soit 6 fois la
+  // latence Neon avant le premier pixel. Les 6 mois sont independants, donc
+  // Promise.all. L'ordre chronologique est preserve par l'ordre du tableau.
   const chargerSparklines = useCallback(async () => {
-    const result = {revenus:[] as number[],depenses:[] as number[],epargne:[] as number[],solde:[] as number[]};
+    const cibles: {m:number;a:number}[] = [];
     for (let i=5;i>=0;i--) {
       let m=moisCourant-i, a=anneeCourante;
       if(m<=0){m+=12;a--;}
+      cibles.push({m,a});
+    }
+
+    const reponses = await Promise.all(cibles.map(async ({m,a}) => {
       try {
         const res = await fetch(`/api/budget?annee=${a}&mois=${m}`);
-        if (res.ok) {
-          const d=await res.json(), b=d.budget??[];
-          const rev=b.filter((x:any)=>x.categorie?.type==='revenu').reduce((s:number,x:any)=>s+x.montantReel,0);
-          const dep=b.filter((x:any)=>x.categorie?.type?.startsWith('depense')||x.categorie?.type==='remboursement_dette').reduce((s:number,x:any)=>s+x.montantReel,0);
-          const ep=b.filter((x:any)=>x.categorie?.type?.startsWith('epargne')).reduce((s:number,x:any)=>s+x.montantReel,0);
-          result.revenus.push(rev);result.depenses.push(dep);result.epargne.push(ep);result.solde.push(rev-dep-ep);
-        } else { result.revenus.push(0);result.depenses.push(0);result.epargne.push(0);result.solde.push(0); }
-      } catch { result.revenus.push(0);result.depenses.push(0);result.epargne.push(0);result.solde.push(0); }
+        if (!res.ok) return null;
+        return await res.json();
+      } catch { return null; }
+    }));
+
+    const result = {revenus:[] as number[],depenses:[] as number[],epargne:[] as number[],solde:[] as number[]};
+    for (const d of reponses) {
+      if (!d) { result.revenus.push(0);result.depenses.push(0);result.epargne.push(0);result.solde.push(0); continue; }
+      const b = d.budget ?? [];
+      const rev=b.filter((x:any)=>x.categorie?.type==='revenu').reduce((s:number,x:any)=>s+x.montantReel,0);
+      const dep=b.filter((x:any)=>x.categorie?.type?.startsWith('depense')||x.categorie?.type==='remboursement_dette').reduce((s:number,x:any)=>s+x.montantReel,0);
+      const ep=b.filter((x:any)=>x.categorie?.type?.startsWith('epargne')).reduce((s:number,x:any)=>s+x.montantReel,0);
+      result.revenus.push(rev);result.depenses.push(dep);result.epargne.push(ep);result.solde.push(rev-dep-ep);
     }
     setSparklines(result);
   }, [moisCourant, anneeCourante]);
@@ -283,6 +304,13 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
 
   useEffect(() => { chargerSparklines(); chargerBanqueKPIs(); }, [chargerSparklines, chargerBanqueKPIs]);
 
+  // ── S10 : notification de seuil dedoublonnee ─────────────────────────────
+  // Avant : une push partait a CHAQUE chargement du dashboard des qu'un seuil
+  // etait franchi. Le `tag` ne dedoublonne que l'affichage cote navigateur,
+  // pas l'envoi — donc autant d'appels a /api/push/send que de rafraichissements
+  // (et autant d'invocations Vercel sur le quota Hobby).
+  // Desormais : au plus un envoi par jour et par ensemble de comptes en alerte.
+  // La cle contient la date, donc une alerte toujours active reprevient demain.
   useEffect(() => {
     if (!data || pushStatus !== 'granted') return;
     const alertesFonds = (data.fondsRoulement ?? []).filter((f:any) => {
@@ -294,28 +322,48 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       return seuil > 0 && Number(b.solde ?? 0) < seuil;
     });
     const total = alertesFonds.length + alertesBanques.length;
-    if (total > 0) {
-      fetch('/api/push/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: total + ' alerte(s) seuil actives',
-          body: alertesFonds.map((f:any) => f.nom).concat(alertesBanques.map((b:any) => b.nomBanque)).join(', '),
-          url: '/dashboard',
-          tag: 'alerte-seuil-chargement',
-        }),
-      }).catch(() => {});
+    if (total === 0) return;
+
+    const signature = alertesFonds.map((f:any) => f.id)
+      .concat(alertesBanques.map((b:any) => b.id))
+      .sort()
+      .join('|');
+    const cle = `gb_alerte_seuil_${new Date().toISOString().slice(0,10)}_${signature}`;
+
+    if (alerteSeuilRef.current === cle) return;
+    alerteSeuilRef.current = cle;
+
+    try {
+      if (sessionStorage.getItem(cle)) return;
+      sessionStorage.setItem(cle, '1');
+    } catch {
+      // sessionStorage indisponible (mode prive strict) : on retombe sur la
+      // garde par ref, qui couvre au moins la duree de vie de la page.
     }
+
+    fetch('/api/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: total + ' alerte(s) seuil actives',
+        body: alertesFonds.map((f:any) => f.nom).concat(alertesBanques.map((b:any) => b.nomBanque)).join(', '),
+        url: '/dashboard',
+        tag: 'alerte-seuil-chargement',
+      }),
+    }).catch(() => {});
   }, [data, banques, pushStatus]);
+
   useEffect(() => { if(data?.fondsRoulement?.length>0)chargerEvolutionFonds(data.fondsRoulement); }, [data?.fondsRoulement?.length, chargerEvolutionFonds]);
   useEffect(() => { if(banques.length>0)chargerEvolutionBanques(banques); }, [banques, chargerEvolutionBanques]);
 
+  // S10 : les trois etats rendaient le mot "Bell" en texte brut au lieu de
+  // l'icone lucide — l'import etait pourtant present et inutilise.
   const renderPushButton = () => {
     if (pushStatus === 'unsupported') return null;
     if (pushStatus === 'granted') return (
       <button onClick={pushTest}
         className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-green-500/10 text-green-500 hover:bg-green-500/20 transition-colors">
-        <span>Bell</span> Notifs ON
+        <Bell size={12}/> Notifs ON
       </button>
     );
     if (pushStatus === 'denied') return (
@@ -324,7 +372,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     return (
       <button onClick={pushSubscribe}
         className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors">
-        <span>Bell</span> Activer notifs
+        <Bell size={12}/> Activer notifs
       </button>
     );
   };
@@ -506,6 +554,8 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       <BannièreFinDeMois moisCourant={moisCourant} anneeCourante={anneeCourante}/>
       {(anomaliesData?.anomalies?.length ?? 0) > 0 && (<div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl px-4 py-3 flex items-start gap-2.5"><AlertTriangle size={16} className="text-orange-500 flex-shrink-0 mt-0.5"/><div><p className="text-sm font-semibold text-orange-800 dark:text-orange-300">{anomaliesData.anomalies.length} anomalie(s) ce mois vs moyenne 3 mois</p><div className="flex flex-wrap gap-1.5 mt-1">{anomaliesData.anomalies.map((a:any,i:number)=>(<span key={i} className="text-xs bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 px-2 py-0.5 rounded-full">{a.categorie} +{a.ecartPct}%</span>))}</div></div></div>)}
 
+      <div className="flex items-center justify-end">{renderPushButton()}</div>
+
       <Separateur emoji="📅" label={`${MOIS_NOMS_FR[moisCourant]} ${anneeCourante} — Mois courant`}/>
       {!loadingMois && revenus.reel > 0 && (
         <BannièreContextuelle revenus={revenus.reel} depenses={depenses.reel} epargne={epargne.reel} solde={solde} score={score} anneeCourante={anneeCourante} moisCourant={moisCourant}/>
@@ -601,9 +651,10 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
                   )}
                   {!isEditing && !isEditingSeuil && (
                     <button onClick={() => { if(isLocked){openUnlockModal();return;} setEditingFondSeuilId(f.id); setEditingFondSeuilVal(String(seuilFond||"")); }}
+                      title={isAlerteFond ? "Sous le seuil" : seuilFond > 0 ? "Modifier le seuil" : "Definir un seuil"}
                       className={clsx("absolute top-2 right-10 p-1.5 rounded-lg transition-all",
                         isAlerteFond ? "text-red-500 opacity-100" : seuilFond > 0 ? "text-amber-500 opacity-70 hover:opacity-100" : "opacity-0 group-hover:opacity-50 text-slate-400 hover:text-amber-500")}>
-                      {isAlerteFond ? <AlertTriangle size={11}/> : <span className="text-xs">{seuilFond > 0 ? "S" : "+"}</span>}
+                      <IconeSeuil alerte={isAlerteFond} defini={seuilFond > 0}/>
                     </button>
                   )}
                   {!isEditing&&<button onClick={()=>startEditFond(f)} disabled={isLocked} className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 bg-[var(--border)] hover:bg-primary/10 text-[var(--text-muted)] hover:text-primary transition-all"><Pencil size={11}/></button>}
@@ -651,8 +702,9 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
                 <div className="flex items-center justify-between mb-1">
                   <p className="text-xs text-[var(--text-muted)] font-medium truncate">{b.nomBanque}</p>
                   <button onClick={() => { if(isLocked){openUnlockModal();return;} setEditingSeuilId(b.id); setEditingSeuilVal(String(seuil||"")); }}
-                    className={clsx("text-xs transition-all flex-shrink-0", isAlerte ? "text-red-500" : seuil > 0 ? "text-amber-500 opacity-70 hover:opacity-100" : "opacity-0 group-hover:opacity-50 text-slate-400 hover:text-amber-500")}>
-                    {isAlerte ? "W" : seuil > 0 ? "S" : "+"}
+                    title={isAlerte ? "Sous le seuil" : seuil > 0 ? "Modifier le seuil" : "Definir un seuil"}
+                    className={clsx("transition-all flex-shrink-0", isAlerte ? "text-red-500" : seuil > 0 ? "text-amber-500 opacity-70 hover:opacity-100" : "opacity-0 group-hover:opacity-50 text-slate-400 hover:text-amber-500")}>
+                    <IconeSeuil alerte={isAlerte} defini={seuil > 0} size={12}/>
                   </button>
                 </div>
                 <p className={clsx("text-base font-bold", isAlerte ? "text-red-500" : textCls)}>{formatFCFA(b.solde??0)}</p>
