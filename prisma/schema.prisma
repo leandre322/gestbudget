@@ -1,5 +1,5 @@
 // =============================================
-// GestBudget — Prisma Schema
+// GestBudget - Prisma Schema
 // Base : Neon PostgreSQL (gestbudget)
 // =============================================
 
@@ -13,7 +13,7 @@ datasource db {
   directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
-// ─── ENUM ──────────────────────────────────────
+// --- ENUM -------------------------------------
 
 enum TypeCategorie {
   revenu
@@ -26,7 +26,7 @@ enum TypeCategorie {
   remboursement_dette
 }
 
-// ─── AUTHENTIFICATION ──────────────────────────
+// --- AUTHENTIFICATION -------------------------
 
 model User {
   id            String    @id @default(cuid())
@@ -50,6 +50,7 @@ model User {
   budgetAlertes      BudgetAlerte[]
   patrimoineSnapshots PatrimoineSnapshot[]
   recurrentesPaiements RecurrentePaiement[]
+  categoriesProfil     CategorieProfil[]
 
   @@map("users")
 }
@@ -67,12 +68,16 @@ model PasswordResetToken {
   @@map("password_reset_tokens")
 }
 
-// ─── BUDGET ────────────────────────────────────
+// --- BUDGET -----------------------------------
 
 model Annee {
   id                   String   @id @default(cuid())
   userId               String
   annee                Int
+  // DEPRECIE (S11) : jamais lu par aucune route. L objectif du fonds
+  // d urgence a une source unique = parametres.revenuMensuelReference
+  // multiplie par parametres.nMoisUrgence. Colonne conservee pour ne pas
+  // casser l historique, a supprimer lors d une migration dediee.
   fondsUrgenceObjectif BigInt   @default(3720000)
   notes                String?
   createdAt            DateTime @default(now())
@@ -81,7 +86,6 @@ model Annee {
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   budgetMensuel BudgetMensuel[]
   decaissements Decaissement[]
-  // banques       Banque[]
 
   @@unique([userId, annee])
   @@map("annees")
@@ -99,13 +103,15 @@ model Categorie {
 
   tauxReference    Float   @default(0)
   montantReference BigInt  @default(0)
-  enveloppeActive  Boolean @default(false) // D2 — enveloppes budgétaires
+  enveloppeActive  Boolean @default(false) // D2 - enveloppes budgetaires
 
-  // ── Liaison vers CompteFonds (epargne_autre uniquement) ──
+  // -- Liaison vers CompteFonds (epargne_autre uniquement) --
   compteFondsId String?       @map("compte_fonds_id")
   compteFonds   CompteFonds?  @relation(fields: [compteFondsId], references: [id], onDelete: SetNull)
 
-  // ── Liaison vers Banque (epargne_investissement uniquement) ──
+  // -- Liaison vers Banque (epargne_investissement uniquement) --
+  // ATTENTION : ce lien est declaratif. Aucun code n ecrit banques.solde
+  // depuis budget_mensuel. Une saisie dans Suivi n incremente pas le compte.
   banqueId      String?       @map("banque_id")
   banque        Banque?       @relation("CategorieBanque", fields: [banqueId], references: [id], onDelete: SetNull)
 
@@ -113,6 +119,7 @@ model Categorie {
   budgetMensuel BudgetMensuel[]
   projets       Projet[]
   recurrentes   Recurrente[]
+  profil        CategorieProfil[]
 
   @@map("categories")
 }
@@ -135,6 +142,13 @@ model BudgetMensuel {
   @@map("budget_mensuel")
 }
 
+// S11 : banqueId relie un fonds au compte bancaire qui HEBERGE son argent.
+// Cas d usage : les fonds Yvan et Naelle portent l objectif, les banques
+// BOA - Yvan et BOA - Naelle portent le solde reel.
+// Regle de non double comptage : quand banqueId est renseigne, le solde du
+// fonds ne doit PAS etre additionne au patrimoine, la banque fait foi.
+// Index unique partiel en base (comptes_fonds_banque_uidx) : une banque ne
+// peut heberger qu un seul fonds.
 model CompteFonds {
   id          String   @id @default(cuid())
   userId      String
@@ -145,7 +159,13 @@ model CompteFonds {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   objectif    BigInt   @default(0)
+  // seuilAlerte est la cible de reconstitution du coach (cran 1 de la
+  // cascade F12), pas seulement un seuil d affichage. objectif reste
+  // reserve a l epargne dediee (fonds non revolving).
   seuilAlerte BigInt   @default(0)
+
+  banqueId    String?  @unique(map: "comptes_fonds_banque_uidx")
+  banque      Banque?  @relation("CompteFondsBanque", fields: [banqueId], references: [id], onDelete: SetNull, map: "comptes_fonds_banque_fk")
 
   user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   repartitions DecaissementCompte[]
@@ -171,7 +191,7 @@ model Decaissement {
   soldeApresFond   BigInt?
   soldeAvantBanque BigInt?
   soldeApresBanque BigInt?
-  sourceVocale     Boolean  @default(false) // D1 — dictée vocale
+  sourceVocale     Boolean  @default(false) // D1 - dictee vocale
   banque           Banque?  @relation("DecaissementBanque", fields: [banqueId], references: [id])
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -195,6 +215,12 @@ model DecaissementCompte {
   @@map("decaissement_comptes")
 }
 
+// TROIS chemins ecrivent banques.solde :
+//   1. /api/decaissements (mode transfert) - n ecrit PAS mouvements_banque
+//   2. /api/banques/mouvements             - ecrit mouvements_banque
+//   3. PUT /api/banques (action set/increment/decrement) - n ecrit PAS
+// Toute reconciliation d historique doit unir les trois. Constat S11 sur
+// BOA-CmpteEpargneLeo : 435 000 de credits non journalises.
 model Banque {
   id         String   @id @default(cuid())
   userId     String
@@ -206,8 +232,14 @@ model Banque {
   updatedAt  DateTime @updatedAt
   seuilAlerte BigInt  @default(0)
 
+  // S11 : true = le solde compte dans le fonds d urgence.
+  // false = argent place, fleche ou non mobilisable en cas de coup dur.
+  // Le compte reste visible au patrimoine dans tous les cas.
+  compteUrgence Boolean @default(true)
+
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   categories Categorie[] @relation("CategorieBanque")
+  compteFonds CompteFonds? @relation("CompteFondsBanque")
 
   decaissements Decaissement[]  @relation("DecaissementBanque")
   mouvements    MouvementBanque[]
@@ -261,7 +293,7 @@ model Parametres {
   rapportEmailJour             Int     @default(1)
   rapportEmailHeure            Int     @default(8)
   seuilAnomaliesPct            Int     @default(50)
-  langueVocale                 String  @default("fr-FR") // D1 — dictée vocale
+  langueVocale                 String  @default("fr-FR") // D1 - dictee vocale
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -337,7 +369,7 @@ model CronLog {
   @@map("cron_logs")
 }
 
-// ─── AUTOMATISATION (Session 6) ────────────────
+// --- AUTOMATISATION (Session 6) ---------------
 
 model Recurrente {
   id          String   @id @default(dbgenerated("gen_random_uuid()::text"))
@@ -350,13 +382,12 @@ model Recurrente {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  // ── S7 / F5 — Calendrier d'échéances ──────────────────────────────────
-  // jourEcheance ne pilote PAS la génération : le cron mensuel continue de
-  // s'exécuter le 1er (idempotence (recurrenteId, periode) préservée).
-  // Ces champs alimentent le calendrier et les rappels uniquement.
+  // S7 / F5 - Calendrier d echeances.
+  // jourEcheance ne pilote PAS la generation : le cron mensuel continue de
+  // s executer le 1er (idempotence (recurrenteId, periode) preservee).
   // Contrainte CHECK en base : jourEcheance IS NULL OR BETWEEN 1 AND 31.
   // Contrainte CHECK en base (S10) : rappelJoursAvant BETWEEN 0 AND 15.
-  // Toute évolution de ces bornes exige une migration Neon dans la même session.
+  // Toute evolution de ces bornes exige une migration Neon dans la meme session.
   jourEcheance     Int?
   rappelActif      Boolean @default(false)
   rappelJoursAvant Int     @default(3)
@@ -370,6 +401,9 @@ model Recurrente {
   @@map("recurrentes")
 }
 
+// GARDE D IDEMPOTENCE DU CRON. Ne jamais ecrire dans cette table depuis le
+// front : un P2002 serait interprete comme "deja fait" et supprimerait
+// silencieusement les incrementations de budget des mois suivants.
 model RecurrenteExecution {
   id           String   @id @default(dbgenerated("gen_random_uuid()::text"))
   recurrenteId String
@@ -385,21 +419,8 @@ model RecurrenteExecution {
   @@map("recurrentes_executions")
 }
 
-// ─── POINTAGE DES PAIEMENTS (Session 9 / F5b) ──
-//
-// Table DELIBEREMENT decouplee de RecurrenteExecution. Cette derniere est la
-// garde d'idempotence du cron mensuel : y ecrire depuis l'UI supprimerait
-// silencieusement les generations futures (P2002 interprete comme "deja fait").
-// Le pointage utilisateur vit donc dans sa propre table, sans aucun effet sur
-// le budget ni sur le cron.
-//
-// Depointer un paiement = DELETE de la ligne (decision S10). L'historique est
-// conserve cote AuditLog, pas ici : la table reste un etat, pas un journal.
-//
-// Contrairement a RecurrenteExecution, la relation vers User est declaree :
-// la cle etrangere "recurrentes_paiements_userId_fkey" existe deja en base,
-// la declarer ne coute rien et retablit l'integrite referentielle cote Prisma
-// (corrige la moitie de S9-F).
+// Pointage utilisateur, table separee de RecurrenteExecution (voir ci-dessus).
+// Depointer = DELETE de la ligne. L historique vit dans AuditLog.
 model RecurrentePaiement {
   id           String   @id @default(dbgenerated("gen_random_uuid()::text"))
   recurrenteId String
@@ -431,16 +452,12 @@ model BudgetAlerte {
   @@map("budget_alertes")
 }
 
-// ─── PATRIMOINE (Session 7 / F8) ───────────────
+// --- PATRIMOINE (Session 7 / F8) --------------
 
-// Une ligne par compte et par date, jamais un agrégat pré-calculé :
-// les totaux se somment à la lecture, et on conserve la capacité de savoir
-// QUEL compte a bougé — ce qui est tout l'intérêt d'un historique.
-//
-// typeSource : 'banque' | 'fonds' (contrainte CHECK en base)
-// sourceId   : pas de clé étrangère volontairement — un compte supprimé ne doit
-//              pas effacer son historique de patrimoine. sourceNom conserve le
-//              libellé au moment de la capture.
+// Une ligne par compte et par date, jamais un agregat pre-calcule.
+// typeSource : banque | fonds (contrainte CHECK en base)
+// sourceId   : pas de cle etrangere volontairement, un compte supprime ne
+//              doit pas effacer son historique de patrimoine.
 model PatrimoineSnapshot {
   id           String   @id @default(dbgenerated("gen_random_uuid()::text"))
   userId       String
@@ -456,4 +473,29 @@ model PatrimoineSnapshot {
   @@unique([userId, dateSnapshot, typeSource, sourceId], map: "patrimoine_snapshots_unique")
   @@index([userId, dateSnapshot(sort: Desc)],            map: "patrimoine_snapshots_user_date_idx")
   @@map("patrimoine_snapshots")
+}
+
+// --- COACH BUDGETAIRE (Session 11 / F12) ------
+
+// Table separee de categories, jamais des colonnes dessus : F12 doit rester
+// retirable d un DROP TABLE sans toucher au coeur du modele.
+// Contraintes CHECK posees en base, non representables en Prisma :
+//   flexibilite IN (incompressible, negociable, arbitrable, superflu, inconnue)
+//   priorite BETWEEN 1 AND 5
+// Toute valeur ajoutee cote Zod exige une migration Neon dans la meme session.
+model CategorieProfil {
+  id              String    @id @default(dbgenerated("gen_random_uuid()::text"))
+  userId          String
+  categorieId     String
+  flexibilite     String    @default("inconnue")
+  priorite        Int       @default(3)
+  engagementFinAt DateTime? @db.Date
+  moisSaison      String?
+  updatedAt       DateTime  @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade, map: "categories_profil_user_fk")
+  categorie Categorie @relation(fields: [categorieId], references: [id], onDelete: Cascade, map: "categories_profil_categorie_fk")
+
+  @@unique([userId, categorieId], map: "categories_profil_user_categorie_uidx")
+  @@map("categories_profil")
 }
