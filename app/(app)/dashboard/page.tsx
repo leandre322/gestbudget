@@ -4,11 +4,10 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
          CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import { TrendingUp, TrendingDown, PiggyBank, Wallet, AlertTriangle,
-         Shield, ChevronDown, ChevronRight, Building2, Pencil, X, Save,
+         Shield, ShieldOff, Building2, Pencil, X, Save,
          ArrowDownCircle, ArrowUpCircle, Bell, Loader2, Check, Plus, Minus } from 'lucide-react';
 import { useMois, useLock } from '../contexts';
-import { formatFCFA, MOIS_COURTS, TYPE_LABELS, calculerScore, couleurScore,
-         ORDRE_TYPES, LABEL_PREVISION } from '@/types';
+import { formatFCFA, MOIS_COURTS, calculerScore, couleurScore, LABEL_PREVISION } from '@/types';
 import { useToast } from '@/components/Toast';
 import { usePushNotifications } from '@/lib/hooks/usePushNotifications';
 import { useDashboardGlobal, useBanques, useComptes, useCategories, useDashboardCumul, useRecapAnnuel, useAnomalies } from '@/lib/hooks/useDashboard';
@@ -16,16 +15,62 @@ import useSWR from 'swr';
 import { clsx } from 'clsx';
 import PilotageCards from '@/components/PilotageCards';
 
-// S10 : la fonction serial() qui vivait ici n'etait appelee nulle part — les
-// montants arrivent deja serialises par les routes API (lib/serial.ts).
-// Supprimee : une seconde implementation de la serialisation BigInt en dormance
-// dans un composant client est une invitation a la divergence.
+// ─────────────────────────────────────────────────────────────────────────────
+// S12 — PASSE A. Ce fichier consomme desormais la nouvelle forme de
+// /api/dashboard/global. Rappel de ce qui a change et pourquoi.
+//
+// P5/P6 — code mort
+//   L'accordeon d'OngletRecap a ete supprime en S11 mais son etat est reste :
+//   groupsOpen / setGroupsOpen / toggleGroup / toutDeployer / toutPlier, plus
+//   les imports ORDRE_TYPES, TYPE_LABELS, ChevronDown, ChevronRight. Idem pour
+//   recapLoading et mutateRecap, destructures de useRecapAnnuel sans usage.
+//   BanniereContextuelle recevait depenses / moisCourant / anneeCourante sans
+//   jamais les lire.
+//
+// P7 / Q19 — fin du 3 720 000 en dur
+//   L'objectif du fonds d'urgence etait recalcule ici avec un `|| 3720000`.
+//   Ce nombre en dur donnait un denominateur au 4e critere du score meme sans
+//   configuration, donc un score flatteur sans fondement. L'objectif vient
+//   maintenant de l'API (fondsUrgenceObjectif) et vaut 0 s'il n'est pas
+//   configure ; l'ecran le dit au lieu de l'inventer.
+//
+// M5/M6/M7 — perimetre du fonds d'urgence
+//   fondsUrgence etait la somme de TOUTES les banques. Il vient maintenant de
+//   l'API, borne aux comptes marques compteUrgence. Deux grandeurs distinctes
+//   coexistent desormais et ne doivent plus etre confondues :
+//     - Epargne Precaution = patrimoine bancaire, tous comptes actifs
+//     - Fonds urgence      = sous-ensemble mobilisable en cas de coup dur
+//
+// Q28 — toggle compteUrgence
+//   Le flag n'etait pilotable qu'en SQL. Il se bascule depuis la carte de
+//   chaque banque, avec confirmation : il deplace la barre d'urgence et le
+//   score.
+//
+// P12 — fin de la deduplication par nom
+//   L'API renvoie maintenant les 4 comptes BOA au lieu d'un seul. Rien a
+//   changer ici, mais le bloc Epargne Precaution s'allonge mecaniquement.
+//
+// P24 — double fetch de /api/budget
+//   DashboardPage faisait un fetch manuel et OngletGlobal un useSWR sur la
+//   MEME URL : deux requetes par montage, et deux jeux de donnees divergents
+//   (les alertes lisaient la version prop, les KPI la version SWR). Une seule
+//   source desormais, portee par le parent.
+//
+// Q25 — non double comptage (regle posee dans schema.prisma / M8)
+//   Un fonds adosse a une banque voit son argent compte par la banque. Le
+//   calcul d'autonomie recoit totalFondsAutonome ; les cartes affichent le
+//   detail complet avec un marqueur « adosse ».
+// ─────────────────────────────────────────────────────────────────────────────
 
 const COLORS = ['#1E40AF','#10B981','#F59E0B','#EF4444','#8B5CF6','#06B6D4','#F97316','#84CC16'];
 const MOIS_NOMS_FR: Record<number,string> = {
   1:'Janvier',2:'Février',3:'Mars',4:'Avril',5:'Mai',6:'Juin',
   7:'Juillet',8:'Août',9:'Septembre',10:'Octobre',11:'Novembre',12:'Décembre',
 };
+
+// Date de resserrement du perimetre (M7). Affichee sous le pourcentage pour
+// expliquer la chute du taux d'avancement, qui sinon ressemble a une regression.
+const DATE_PERIMETRE = '05/09';
 
 function JaugeCirculaire({ score, max=20 }: { score:number; max?:number }) {
   const [animated, setAnimated] = useState(0);
@@ -65,7 +110,9 @@ function Sparkline({ data, color='#1E40AF', height=28, width=72 }: {data:number[
   );
 }
 
-function BannièreContextuelle({revenus,depenses,epargne,solde,score,moisCourant}:{revenus:number;depenses:number;epargne:number;solde:number;score:number;anneeCourante:number;moisCourant:number}) {
+// P5 : la signature exposait depenses, moisCourant et anneeCourante, dont aucun
+// n'etait lu dans le corps. Reduite a ce qui sert reellement.
+function BannièreContextuelle({revenus,epargne,solde,score}:{revenus:number;epargne:number;solde:number;score:number}) {
   const [d,setD]=useState(false);if(d)return null;
   const tauxEp=revenus>0?(epargne/revenus)*100:0;
   const msgs:{type:string;emoji:string;text:string}[]=[];
@@ -117,28 +164,24 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
 
   const { data: _globalRaw, isLoading: _loadingGlobal, mutate: mutateGlobal } = useDashboardGlobal(moisCourant, anneeCourante);
   const { data: _banquesRaw, isLoading: _loadingBanques, mutate: mutateBanques } = useBanques();
-  const { data: _comptesRaw, mutate: mutateComptes } = useComptes();
+  const { mutate: mutateComptes } = useComptes();
   const { data: _catsRaw } = useCategories();
   const { data: _cumulRaw, mutate: mutateCumul } = useDashboardCumul();
-  const { data: _budgetRaw } = useSWR(
-    `/api/budget?annee=${anneeCourante}&mois=${moisCourant}`,
-    (url: string) => fetch(url).then(r => r.json()),
-    { revalidateOnFocus: false, dedupingInterval: 30_000 }
-  );
+
+  // P24 : le useSWR sur /api/budget qui vivait ici doublonnait celui de
+  // DashboardPage. La donnee arrive maintenant par la prop budgetMois, source
+  // unique pour les KPI, les alertes et les modales.
 
   const { data: anomaliesData } = useAnomalies(moisCourant, anneeCourante);
   const banques = _banquesRaw?.banques ?? [];
-  const _comptesAvecObj = _comptesRaw?.comptes ?? [];
-  const _fondsAvecSeuil = (_globalRaw?.fondsRoulement ?? []).map((f: any) => ({
-    ...f,
-    objectif:    _comptesAvecObj.find((c: any) => c.id === f.id)?.objectif    ?? 0,
-    seuilAlerte: _comptesAvecObj.find((c: any) => c.id === f.id)?.seuilAlerte ?? 0,
-  }));
+
+  // fondsRoulement porte desormais objectif, seuilAlerte et banqueId, renvoyes
+  // par /api/dashboard/global. Le merge avec /api/comptes (un find() par fonds,
+  // donc quadratique) n'a plus de raison d'etre et ouvrait la porte a deux
+  // valeurs divergentes pour le meme champ.
   const data = _globalRaw ? {
     ..._globalRaw,
-    fondsRoulement:   _fondsAvecSeuil,
-    _budgetMoisFrais: _budgetRaw?.budget   ?? [],
-    _categories:      _catsRaw?.categories ?? [],
+    _categories: _catsRaw?.categories ?? [],
   } : null;
   const loading    = _loadingGlobal || _loadingBanques;
   const cumulData  = _cumulRaw ?? null;
@@ -162,6 +205,9 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const [editingFondSeuilId,  setEditingFondSeuilId]  = useState<string|null>(null);
   const [editingFondSeuilVal, setEditingFondSeuilVal] = useState('');
   const [savingFondSeuil,     setSavingFondSeuil]     = useState(false);
+
+  // Q28 — bascule du perimetre d'urgence
+  const [savingUrgenceId, setSavingUrgenceId] = useState<string|null>(null);
 
   const [banqueAjouts,  setBanqueAjouts]  = useState(0);
   const [banqueRetraits,setBanqueRetraits]= useState(0);
@@ -287,19 +333,56 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     setSavingFondSeuil(false);
   };
 
+  // S12 : la reponse du PUT est desormais lue. La route valide le body (Zod)
+  // et peut repondre 400 / 409 / 422 ; l'ancien appel ignorait le statut et
+  // affichait "Seuil defini" meme quand rien n'avait ete ecrit.
   const sauvegarderSeuil = async (banqueId: string) => {
     setSavingSeuil(true);
     const seuil = parseInt(editingSeuilVal) || 0;
     try {
-      await fetch(`/api/banques?id=${banqueId}`, {
+      const res = await fetch(`/api/banques?id=${banqueId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ seuilAlerte: seuil }),
       });
-      toast.success(seuil > 0 ? 'Seuil defini' : 'Seuil supprime');
-      setEditingSeuilId(null);
-      mutateGlobal(); mutateBanques(); mutateComptes();
-    } catch { toast.error('Erreur'); }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error ?? 'Erreur');
+      } else {
+        toast.success(seuil > 0 ? 'Seuil defini' : 'Seuil supprime');
+        setEditingSeuilId(null);
+        mutateGlobal(); mutateBanques(); mutateComptes();
+      }
+    } catch { toast.error('Erreur reseau'); }
     setSavingSeuil(false);
+  };
+
+  // ── Q28 : bascule du perimetre d'urgence ────────────────────────────────
+  // Deplacer un compte dans ou hors du perimetre change le numerateur du taux
+  // d'avancement ET la 4e composante du score. Confirmation obligatoire :
+  // c'est une decision de cadrage, pas un reglage d'affichage.
+  const basculerCompteUrgence = async (b: any) => {
+    if (isLocked) { openUnlockModal(); return; }
+    const prochain = !b.compteUrgence;
+    const question = prochain
+      ? `Inclure ${b.nomBanque} (${formatFCFA(Number(b.solde||0))}) dans le fonds d'urgence ?`
+      : `Retirer ${b.nomBanque} (${formatFCFA(Number(b.solde||0))}) du fonds d'urgence ?`;
+    if (!confirm(`${question}\n\nLe taux d'avancement et le score seront recalcules.`)) return;
+
+    setSavingUrgenceId(b.id);
+    try {
+      const res = await fetch(`/api/banques?id=${b.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ compteUrgence: prochain }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error ?? 'Erreur');
+      } else {
+        toast.success(prochain ? 'Compte inclus dans le fonds urgence' : 'Compte retire du fonds urgence');
+        mutateGlobal(); mutateBanques();
+      }
+    } catch { toast.error('Erreur reseau'); }
+    setSavingUrgenceId(null);
   };
 
   useEffect(() => { chargerSparklines(); chargerBanqueKPIs(); }, [chargerSparklines, chargerBanqueKPIs]);
@@ -416,9 +499,11 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     mutateCumul();
   };
 
-  const budgetSource = data?._budgetMoisFrais ?? budgetMois;
+  // P24 : budgetMois est la source unique. Avant, budgetSource pointait sur un
+  // second useSWR local et budgetMois n'alimentait plus que les alertes, qui
+  // pouvaient donc contredire les KPI affiches juste au-dessus.
   const tot = (type:string, f:'montantAnticipe'|'montantReel') =>
-    budgetSource.filter((b:any) => b.categorie?.isActive!==false &&
+    budgetMois.filter((b:any) => b.categorie?.isActive!==false &&
       (type==='epargne'?b.categorie?.type?.startsWith('epargne'):
        type==='depense'?(b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette'):
        b.categorie?.type===type)
@@ -429,15 +514,23 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const depenses = {reel:tot('depense','montantReel'), ant:tot('depense','montantAnticipe')};
   const solde    = revenus.reel - epargne.reel - depenses.reel;
 
-  const fondsUrgence  = banques.reduce((s:number,b:any)=>s+(b.solde??0),0);
-  const revenuRef     = data?.revenuReference??0;
-  const nMoisUrgence  = data?.nMoisUrgence??6;
-  const fondsObjectif = revenuRef>0?revenuRef*nMoisUrgence:0;
-  const {score,details} = calculerScore({totalDepenses:depenses.reel,totalDepAnt:depenses.ant,totalEpargne:epargne.reel,totalRevenus:revenus.reel,solde,fondsUrgence,fondsObjectif:fondsObjectif||3720000});
+  // ── M7 / P7 : perimetre et objectif viennent de l'API ────────────────────
+  // fondsUrgence n'est PLUS un reduce local sur toutes les banques : c'est la
+  // somme des seuls comptes marques compteUrgence, calculee cote serveur.
+  const fondsUrgence     = Number(data?.fondsUrgence ?? 0);
+  const revenuRef        = Number(data?.revenuReference ?? 0);
+  const nMoisUrgence     = Number(data?.nMoisUrgence ?? 6);
+  const fondsObjectif    = Number(data?.fondsUrgenceObjectif ?? 0);
+  const urgenceConfigure = Boolean(data?.urgenceConfigure);
+
+  // Plus de `|| 3720000`. Quand l'objectif vaut 0, calculerScore garde son
+  // 4e critere a 0/5 (division protegee cote types/index.ts) et l'ecran
+  // signale explicitement que le score est incomplet.
+  const {score,details} = calculerScore({totalDepenses:depenses.reel,totalDepAnt:depenses.ant,totalEpargne:epargne.reel,totalRevenus:revenus.reel,solde,fondsUrgence,fondsObjectif});
   const scoreTendance = (() => {
     if (sparklines.revenus.length < 2) return null;
     const n = sparklines.revenus.length;
-    const calcS = (i: number) => { const rev = sparklines.revenus[i]??0, dep = sparklines.depenses[i]??0, ep = sparklines.epargne[i]??0; return calculerScore({ totalDepenses:dep, totalDepAnt:dep, totalEpargne:ep, totalRevenus:rev, solde:rev-dep-ep, fondsUrgence, fondsObjectif:fondsObjectif||3720000 }).score; };
+    const calcS = (i: number) => { const rev = sparklines.revenus[i]??0, dep = sparklines.depenses[i]??0, ep = sparklines.epargne[i]??0; return calculerScore({ totalDepenses:dep, totalDepAnt:dep, totalEpargne:ep, totalRevenus:rev, solde:rev-dep-ep, fondsUrgence, fondsObjectif }).score; };
     const prev = calcS(n-2), curr = calcS(n-1);
     return { hausse: curr >= prev, pts: Math.abs(curr - prev) };
   })();
@@ -457,7 +550,17 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     if(!modalType)return;setSavingModal(true);
     try {
       if(modalType==='urgence'){await fetch('/api/parametres',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revenuMensuelReference:parseInt(modalVals['revenu']||'0')||0,nMoisUrgence:parseInt(modalVals['nMois']||'6')||6})});toast.success("Fonds urgence mis a jour");}
-      else if(modalType==='banques'){for(const[id,s]of Object.entries(modalVals)){await fetch(`/api/banques?id=${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set',montant:parseInt(s)||0})});};toast.success('Soldes banques mis a jour');}
+      else if(modalType==='banques'){
+        // Q14 mode B : chaque `action:'set'` ecrit desormais une ligne
+        // mouvements_banque cote serveur, dans la meme transaction que le
+        // solde. Les corrections faites ici cessent d'etre invisibles a
+        // l'historique (constat S11 : 435 000 non journalises).
+        for(const[id,s]of Object.entries(modalVals)){
+          const res = await fetch(`/api/banques?id=${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set',montant:parseInt(s)||0,motif:'Correction de solde depuis le Dashboard'})});
+          if(!res.ok){const err=await res.json().catch(()=>({}));toast.error(err.error??'Erreur sur un compte');}
+        }
+        toast.success('Soldes banques mis a jour');
+      }
       else{const r=await fetch(`/api/budget?annee=${anneeCourante}&mois=${moisCourant}`);if(r.ok){const d=await r.json();const lignes:Record<string,any>={};for(const b of d.budget){lignes[b.categorieId]={anticipe:String(b.montantAnticipe??0),reel:modalVals[b.categorieId]!==undefined?modalVals[b.categorieId]:String(b.montantReel??0)};};await fetch('/api/budget',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({anneeId:d.anneeId,mois:moisCourant,lignes})});toast.success('Donnees mises a jour');}}
       mutateGlobal(); mutateBanques(); mutateComptes(); setModalType(null);
     } catch{toast.error('Erreur lors de la sauvegarde');}
@@ -471,7 +574,17 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   const pctFonds = fondsObjectif>0?(fondsUrgence/fondsObjectif)*100:0;
   const barColor = pctFonds<50?'bg-red-500':pctFonds<80?'bg-orange-400':'bg-green-500';
   const textColor = pctFonds<50?'text-red-500':pctFonds<80?'text-orange-500':'text-green-600';
-  const totalPrecaution = banques.reduce((s:number,b:any)=>s+(b.solde??0),0);
+
+  // Q27 : deux grandeurs distinctes, a ne plus confondre.
+  //   totalPrecaution = patrimoine bancaire (tous comptes actifs)
+  //   fondsUrgence    = sous-ensemble mobilisable (compteUrgence = true)
+  const totalPrecaution = banques.reduce((s:number,b:any)=>s+Number(b.solde??0),0);
+  const banquesUrgence  = banques.filter((b:any)=>b.compteUrgence);
+
+  // Q25 : les fonds adosses a une banque ne sont pas re-comptes dans le calcul
+  // d'autonomie — leur argent est deja porte par le solde bancaire.
+  const totalFondsAutonome = Number(data?.totalFondsAutonome ?? totalFonds ?? 0);
+
   const getBorderFond = (s:number,o:number) => { if(o<=0)return 'border-[var(--border)]'; const p=(s/o)*100; return p>=100?'border-green-500':p>=50?'border-amber-400':'border-primary/40'; };
 
   const cumRev   = cumulData?.totalRevenus  ?? data.totalRevenus  ?? 0;
@@ -487,6 +600,13 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
 
   const fondAjouts    = Number(totalAjouts        ?? 0);
   const fondRetraits  = Number(totalDecaissements ?? 0);
+
+  // Q19 : scoreGlobal vaut null tant que l'objectif d'urgence n'est pas
+  // configure. L'ancien `data?.scoreGlobal ?? score` retombait alors sur le
+  // score du MOIS COURANT en le libellant "Score global" — un chiffre juste
+  // sous une etiquette fausse.
+  const scoreGlobalApi: number | null =
+    data.scoreGlobal === null || data.scoreGlobal === undefined ? null : Number(data.scoreGlobal);
 
   return (
     <div className="space-y-5">
@@ -545,7 +665,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       <DashboardModal isOpen={modalType!==null} onClose={()=>setModalType(null)} titre={modalType==='urgence'?"Fonds urgence — Objectif":modalType==='banques'?'Epargne Precaution — Soldes':modalType==='revenus'?`Revenus — ${MOIS_NOMS_FR[moisCourant]} ${anneeCourante}`:modalType==='depenses'?`Depenses — ${MOIS_NOMS_FR[moisCourant]} ${anneeCourante}`:''}>
         <div className="space-y-3">
           {modalType==='urgence'&&(<div className="space-y-3"><div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Revenu mensuel de reference (FCFA)</label><input type="number" value={modalVals['revenu']??''} placeholder="Ex: 690 000" className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,revenu:e.target.value}))}/></div><div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Nombre de mois de precaution</label><input type="number" value={modalVals['nMois']??String(nMoisUrgence)} min="1" max="24" className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,nMois:e.target.value}))}/></div><div className="bg-primary/5 rounded-xl p-3"><p className="text-xs text-[var(--text-muted)]">Objectif calcule :</p><p className="text-lg font-bold text-primary mt-1">{formatFCFA((parseInt(modalVals['revenu']||'0')||0)*(parseInt(modalVals['nMois']||'6')||6))}</p></div></div>)}
-          {modalType==='banques'&&(<div className="space-y-2">{banques.map((b:any)=>(<div key={b.id} className="flex items-center gap-3"><span className="flex-1 text-sm text-[var(--text)] font-medium">{b.nomBanque}</span><input type="number" value={modalVals[b.id]??''} placeholder="0" className="w-36 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,[b.id]:e.target.value}))}/></div>))}</div>)}
+          {modalType==='banques'&&(<div className="space-y-2"><p className="text-xs text-[var(--text-muted)] bg-slate-50 dark:bg-dark-card rounded-lg px-3 py-2">Chaque correction ecrit une ligne dans l&apos;historique du compte.</p>{banques.map((b:any)=>(<div key={b.id} className="flex items-center gap-3"><span className="flex-1 text-sm text-[var(--text)] font-medium">{b.nomBanque}{!b.compteUrgence&&<span className="ml-1.5 text-[10px] text-[var(--text-muted)]">(hors urgence)</span>}</span><input type="number" value={modalVals[b.id]??''} placeholder="0" className="w-36 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,[b.id]:e.target.value}))}/></div>))}</div>)}
           {(modalType==='revenus'||modalType==='depenses')&&(<div className="space-y-2"><div className="grid grid-cols-2 gap-2 text-xs font-semibold text-[var(--text-muted)] uppercase pb-2 border-b border-[var(--border)]"><span>Categorie</span><span className="text-right">{LABEL_PREVISION} - Reel</span></div>{budgetMois.filter((b:any)=>{if(modalType==='revenus')return b.categorie?.type==='revenu';if(modalType==='depenses')return b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette';return false;}).map((b:any)=>(<div key={b.categorieId} className="flex items-center gap-3"><span className="flex-1 text-sm text-[var(--text)] truncate">{b.categorie?.nom}</span><div className="flex items-center gap-1.5 flex-shrink-0"><span className="text-xs text-[var(--text-muted)] w-24 text-right">{b.montantAnticipe>0?formatFCFA(b.montantAnticipe):'—'}</span><input type="number" value={modalVals[b.categorieId]??''} placeholder="0" className="w-32 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,[b.categorieId]:e.target.value}))}/></div></div>))}</div>)}
           <div className="flex justify-end gap-2 pt-3 border-t border-[var(--border)] mt-4"><button onClick={()=>setModalType(null)} className="px-4 py-2 rounded-xl text-sm border border-[var(--border)] text-[var(--text-muted)]">Annuler</button><button onClick={sauvegarderModal} disabled={savingModal} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium bg-primary text-white disabled:opacity-60"><Save size={14}/>{savingModal?'Sauvegarde...':'Sauvegarder'}</button></div>
         </div>
@@ -558,7 +678,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
 
       <Separateur emoji="📅" label={`${MOIS_NOMS_FR[moisCourant]} ${anneeCourante} — Mois courant`}/>
       {!loadingMois && revenus.reel > 0 && (
-        <BannièreContextuelle revenus={revenus.reel} depenses={depenses.reel} epargne={epargne.reel} solde={solde} score={score} anneeCourante={anneeCourante} moisCourant={moisCourant}/>
+        <BannièreContextuelle revenus={revenus.reel} epargne={epargne.reel} solde={solde} score={score}/>
       )}
       {loadingMois ? <div className="flex items-center justify-center h-20"><div className="spinner"/></div> : (
         <div className="space-y-3">
@@ -584,6 +704,13 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
               <div className="w-full space-y-1 mt-1">{details.map((d:any,i:number)=>(
                 <div key={i} className="flex items-center gap-1.5"><div className="flex-1 h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden"><div className={clsx('h-full rounded-full transition-all',d.pts>=d.max?'bg-green-500':d.pts>=d.max/2?'bg-amber-400':'bg-red-400')} style={{width:`${(d.pts/d.max)*100}%`}}/></div><span className="text-[10px] text-[var(--text-muted)] w-6 text-right">{d.pts}/{d.max}</span></div>
               ))}</div>
+              {/* P7 : sans objectif d'urgence, le 4e critere vaut 0/5. On le dit
+                  au lieu de laisser croire a une contre-performance. */}
+              {!urgenceConfigure && (
+                <p className="text-[10px] text-amber-600 dark:text-amber-400 text-center leading-tight mt-0.5">
+                  Critere fonds urgence a 0/5 : objectif non configure
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -597,7 +724,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
         epargneReel={epargne.reel}
         solde={solde}
         epargnePrecaution={totalPrecaution}
-        totalFonds={Number(totalFonds ?? 0)}
+        totalFonds={totalFondsAutonome}
         depensesHistorique={sparklines.depenses}
         moisCourant={moisCourant}
         anneeCourante={anneeCourante}
@@ -620,6 +747,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
               const pct = objNum>0?Math.min(100,Math.round((soldeNum/objNum)*100)):null;
               const isEditing = editingFondId===f.id, isSaving = savingFondId===f.id;
               const evo = evolutionFonds[f.id]??[];
+              const estAdosse = Boolean(f.banqueId);
               return (
                 <div key={f.id} className={clsx('rounded-2xl border p-3.5 relative group transition-all hover:shadow-sm',isAlerteFond?'border-red-400 dark:border-red-600':getBorderFond(soldeNum,objNum))}>
                   <p className="text-xs font-medium text-[var(--text-muted)] truncate mb-1 pr-7">{f.nom}</p>
@@ -631,6 +759,11 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
                     </div>
                   ) : (
                     <p className="text-base font-bold text-primary cursor-text hover:text-primary-dark transition-colors" onClick={()=>startEditFond(f)} title={isLocked?"Verrouillez pour modifier":"Cliquer pour corriger"} style={isLocked?{cursor:"not-allowed",opacity:0.6}:{}}>{formatFCFA(soldeNum)}</p>
+                  )}
+                  {/* Q25 : marqueur de non double comptage. L'argent de ce fonds
+                      est heberge par une banque, deja comptee au patrimoine. */}
+                  {estAdosse && (
+                    <p className="text-[10px] text-blue-500 dark:text-blue-400 mt-0.5">Adosse a un compte bancaire</p>
                   )}
                   {pct!==null && (
                     <div className="mt-1.5">
@@ -665,6 +798,11 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
         ) : (
           <p className="text-sm text-[var(--text-muted)] py-2">Aucun fond configure. <a href="/parametres" className="text-primary underline">Ajouter dans Parametres</a></p>
         )}
+        {(fondsRoulement??[]).some((f:any)=>f.banqueId) && (
+          <p className="text-[11px] text-[var(--text-muted)] mt-3 pt-3 border-t border-[var(--border)]">
+            Les fonds adosses a un compte bancaire ne sont pas recomptes dans le calcul d&apos;autonomie : leur argent est deja porte par le solde de la banque.
+          </p>
+        )}
       </div>
 
       {banques.filter((b:any)=>Number(b.seuilAlerte||0)>0&&Number(b.solde||0)<Number(b.seuilAlerte||0)).length>0&&(
@@ -683,10 +821,15 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
         </div>
       )}
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2"><Building2 size={17} className="text-primary"/><h3 className="font-semibold text-[var(--text)]">Epargne Precaution</h3></div>
           <div className="flex items-center gap-2"><span className="text-sm font-bold text-primary">{formatFCFA(totalPrecaution)}</span><button onClick={()=>ouvrirModal('banques')} disabled={isLocked} className={isLocked?"p-1.5 rounded-lg border border-[var(--border)] opacity-30 cursor-not-allowed":"p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card transition-colors"}><Pencil size={13} className="text-[var(--text-muted)]"/></button></div>
         </div>
+        {/* Q27 : ce total est le patrimoine bancaire, pas le fonds d'urgence.
+            Les deux etaient confondus avant le resserrement du perimetre. */}
+        <p className="text-[11px] text-[var(--text-muted)] mb-4">
+          Patrimoine bancaire, tous comptes actifs. Le bouclier marque les comptes retenus dans le fonds d&apos;urgence.
+        </p>
         {(() => {
           const cats = data?._categories??[];
           const banquesInvestIds = new Set(cats.filter((c:any)=>c.type==='epargne_investissement'&&c.banqueId).map((c:any)=>c.banqueId));
@@ -696,16 +839,27 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
             const isAlerte = seuil > 0 && Number(b.solde||0) < seuil;
             const pctSeuil = seuil > 0 ? Math.round((Number(b.solde||0)/seuil)*100) : null;
             const isEditingSeuil = editingSeuilId === b.id;
+            const dansUrgence = Boolean(b.compteUrgence);
+            const savingUrg   = savingUrgenceId === b.id;
             return(
               <div key={b.id} className={clsx("rounded-2xl border p-3.5 relative group transition-all",
                 isAlerte ? "border-red-400 dark:border-red-600" : "border-[var(--border)]", accentCls)}>
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center justify-between mb-1 gap-1">
                   <p className="text-xs text-[var(--text-muted)] font-medium truncate">{b.nomBanque}</p>
-                  <button onClick={() => { if(isLocked){openUnlockModal();return;} setEditingSeuilId(b.id); setEditingSeuilVal(String(seuil||"")); }}
-                    title={isAlerte ? "Sous le seuil" : seuil > 0 ? "Modifier le seuil" : "Definir un seuil"}
-                    className={clsx("transition-all flex-shrink-0", isAlerte ? "text-red-500" : seuil > 0 ? "text-amber-500 opacity-70 hover:opacity-100" : "opacity-0 group-hover:opacity-50 text-slate-400 hover:text-amber-500")}>
-                    <IconeSeuil alerte={isAlerte} defini={seuil > 0} size={12}/>
-                  </button>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {/* Q28 : bascule du perimetre d'urgence */}
+                    <button onClick={() => basculerCompteUrgence(b)} disabled={savingUrg}
+                      title={dansUrgence ? "Compte retenu dans le fonds d'urgence — cliquer pour l'exclure" : "Compte exclu du fonds d'urgence — cliquer pour l'inclure"}
+                      className={clsx("transition-all disabled:opacity-50",
+                        dansUrgence ? "text-emerald-500 opacity-80 hover:opacity-100" : "text-slate-400 opacity-50 hover:opacity-100 hover:text-emerald-500")}>
+                      {savingUrg ? <Loader2 size={12} className="animate-spin"/> : dansUrgence ? <Shield size={12}/> : <ShieldOff size={12}/>}
+                    </button>
+                    <button onClick={() => { if(isLocked){openUnlockModal();return;} setEditingSeuilId(b.id); setEditingSeuilVal(String(seuil||"")); }}
+                      title={isAlerte ? "Sous le seuil" : seuil > 0 ? "Modifier le seuil" : "Definir un seuil"}
+                      className={clsx("transition-all", isAlerte ? "text-red-500" : seuil > 0 ? "text-amber-500 opacity-70 hover:opacity-100" : "opacity-0 group-hover:opacity-50 text-slate-400 hover:text-amber-500")}>
+                      <IconeSeuil alerte={isAlerte} defini={seuil > 0} size={12}/>
+                    </button>
+                  </div>
                 </div>
                 <p className={clsx("text-base font-bold", isAlerte ? "text-red-500" : textCls)}>{formatFCFA(b.solde??0)}</p>
                 {seuil > 0 && pctSeuil !== null && (
@@ -735,11 +889,23 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       </div>
 
       <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
-        <div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><Shield size={17} className="text-primary"/><h3 className="font-semibold text-[var(--text)]">Fonds urgence</h3></div><div className="flex items-center gap-2">{revenuRef>0&&<span className={clsx('text-sm font-bold',textColor)}>{pctFonds.toFixed(1)}%</span>}<button onClick={()=>ouvrirModal('urgence')} disabled={isLocked} className={isLocked?"p-1.5 rounded-lg border border-[var(--border)] opacity-30 cursor-not-allowed":"p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card"}><Pencil size={13} className="text-[var(--text-muted)]"/></button></div></div>
-        {revenuRef===0 ? (
-          <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl p-4"><p className="text-sm font-semibold text-orange-700 dark:text-orange-400 mb-1">Revenu de reference non configure</p><p className="text-xs text-orange-600 dark:text-orange-400 mb-3">Objectif calcule : Revenu mensuel x Nombre de mois.</p><div className="flex items-center justify-between"><div><p className="text-xs text-[var(--text-muted)]">Epargne precaution actuelle</p><p className="text-lg font-bold text-primary">{formatFCFA(fondsUrgence)}</p></div><button onClick={()=>ouvrirModal('urgence')} className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white rounded-xl text-xs font-medium"><Pencil size={12}/>Configurer</button></div></div>
+        <div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><Shield size={17} className="text-primary"/><h3 className="font-semibold text-[var(--text)]">Fonds urgence</h3></div><div className="flex items-center gap-2">{urgenceConfigure&&<span className={clsx('text-sm font-bold',textColor)}>{pctFonds.toFixed(1)}%</span>}<button onClick={()=>ouvrirModal('urgence')} disabled={isLocked} className={isLocked?"p-1.5 rounded-lg border border-[var(--border)] opacity-30 cursor-not-allowed":"p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-dark-card"}><Pencil size={13} className="text-[var(--text-muted)]"/></button></div></div>
+        {!urgenceConfigure ? (
+          <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl p-4"><p className="text-sm font-semibold text-orange-700 dark:text-orange-400 mb-1">Revenu de reference non configure</p><p className="text-xs text-orange-600 dark:text-orange-400 mb-3">Objectif calcule : Revenu mensuel x Nombre de mois. Sans lui, le score reste incomplet.</p><div className="flex items-center justify-between"><div><p className="text-xs text-[var(--text-muted)]">Fonds urgence actuel</p><p className="text-lg font-bold text-primary">{formatFCFA(fondsUrgence)}</p></div><button onClick={()=>ouvrirModal('urgence')} className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white rounded-xl text-xs font-medium"><Pencil size={12}/>Configurer</button></div></div>
         ) : (
-          <><div className="flex justify-between text-sm mb-2"><span className="font-medium text-[var(--text)]">{formatFCFA(fondsUrgence)}</span><span className="text-[var(--text-muted)]">Objectif : {formatFCFA(fondsObjectif)} <span className="text-xs">({nMoisUrgence}x{formatFCFA(revenuRef)})</span></span></div><div className="h-3 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden"><div className={clsx('h-full rounded-full transition-all',barColor)} style={{width:`${Math.min(100,pctFonds)}%`}}/></div><div className="flex justify-between mt-2 text-xs text-[var(--text-muted)]"><span className={clsx('font-medium',textColor)}>{pctFonds<50?'En dessous de 50%':pctFonds<80?'En bonne voie':'Objectif atteint'}</span><span>Reste : {formatFCFA(Math.max(0,fondsObjectif-fondsUrgence))}</span></div></>
+          <>
+            <div className="flex justify-between text-sm mb-2"><span className="font-medium text-[var(--text)]">{formatFCFA(fondsUrgence)}</span><span className="text-[var(--text-muted)]">Objectif : {formatFCFA(fondsObjectif)} <span className="text-xs">({nMoisUrgence}x{formatFCFA(revenuRef)})</span></span></div>
+            <div className="h-3 bg-slate-100 dark:bg-dark-card rounded-full overflow-hidden"><div className={clsx('h-full rounded-full transition-all',barColor)} style={{width:`${Math.min(100,pctFonds)}%`}}/></div>
+            <div className="flex justify-between mt-2 text-xs text-[var(--text-muted)]"><span className={clsx('font-medium',textColor)}>{pctFonds<50?'En dessous de 50%':pctFonds<80?'En bonne voie':'Objectif atteint'}</span><span>Reste : {formatFCFA(Math.max(0,fondsObjectif-fondsUrgence))}</span></div>
+            {/* M7 : sans cette ligne, la chute du taux d'avancement au 05/09
+                ressemble a une regression alors que c'est un changement de
+                perimetre. */}
+            <p className="text-[11px] text-[var(--text-muted)] mt-2 pt-2 border-t border-[var(--border)]">
+              Perimetre resserre le {DATE_PERIMETRE} : {banquesUrgence.length} compte(s) sur {banques.length} retenus.
+              {banquesUrgence.length > 0 && <span className="text-[var(--text)]"> {banquesUrgence.map((b:any)=>b.nomBanque).join(' · ')}</span>}
+              {banquesUrgence.length === 0 && <span className="text-amber-600 dark:text-amber-400"> Aucun compte marque : le fonds urgence est a zero.</span>}
+            </p>
+          </>
         )}
       </div>
 
@@ -776,8 +942,17 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
         ))}
         <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 transition-colors col-span-2 lg:col-span-1">
           <p className="text-xs font-medium text-purple-500 dark:text-purple-400 mb-1">Score global</p>
-          <p className={clsx('text-2xl font-bold',couleurScore(data?.scoreGlobal??score))}>{data?.scoreGlobal??score}<span className="text-sm text-[var(--text-muted)] font-normal">/20</span></p>
-          <p className="text-xs text-[var(--text-muted)] mt-1">{data?.nbMoisScore?`Moyenne sur ${data.nbMoisScore} mois`:'Toutes annees'}</p>
+          {scoreGlobalApi === null ? (
+            <>
+              <p className="text-2xl font-bold text-[var(--text-muted)]">—<span className="text-sm font-normal">/20</span></p>
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Objectif d&apos;urgence non configure</p>
+            </>
+          ) : (
+            <>
+              <p className={clsx('text-2xl font-bold',couleurScore(scoreGlobalApi))}>{scoreGlobalApi}<span className="text-sm text-[var(--text-muted)] font-normal">/20</span></p>
+              <p className="text-xs text-[var(--text-muted)] mt-1">{data?.nbMoisScore?`Moyenne sur ${data.nbMoisScore} mois`:'Toutes annees'}</p>
+            </>
+          )}
         </div>
       </div>
 
@@ -824,21 +999,20 @@ function OngletRecap({moisCourant}:{moisCourant:number}) {
   const [anneeSelect,setAnneeSelect]=useState(anneeActuelle);
 
   // SUJET 2 : recapData est la source principale (SWR)
-  const { data: recapData, isLoading: recapLoading, mutate: mutateRecap } = useRecapAnnuel(anneeSelect, moisCourant);
+  // P5 : recapLoading et mutateRecap etaient destructures sans usage.
+  const { data: recapData } = useRecapAnnuel(anneeSelect, moisCourant);
   const [data,setData]=useState<any>(null);
   const [hist,setHist]=useState<any[]>([]);
   const [loading,setLoading]=useState(true);
   const [exporting,setExporting]=useState<'excel'|'pdf'|null>(null);
   const [anneesDispos,setAnneesDispos]=useState<number[]>([anneeActuelle]);
-  const [groupsOpen,setGroupsOpen]=useState<Record<string,boolean>>({});
   const [decStats,setDecStats]=useState({fondAjouts:0,fondRetraits:0,banqueAjouts:0,banqueRetraits:0});
 
-  useEffect(()=>{const def:Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{def[t]=false;});setGroupsOpen(def);},[]);
-  const toggleGroup=(t:string)=>setGroupsOpen(p=>({...p,[t]:!p[t]}));
-  const toutDeployer=()=>{const n:Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{n[t]=true;});setGroupsOpen(n);};
-  const toutPlier=()=>{const n:Record<string,boolean>={};ORDRE_TYPES.forEach(t=>{n[t]=false;});setGroupsOpen(n);};
+  // P6 : groupsOpen / toggleGroup / toutDeployer / toutPlier et l'effet
+  // d'initialisation sur ORDRE_TYPES pilotaient l'accordeon supprime en S11.
+  // Aucun n'etait rendu. Supprimes avec leurs imports.
 
-  useEffect(()=>{fetch('/api/annees').then(r=>r.json()).then(d=>{if(d.annees?.length){setAnneesDispos(d.annees);if(!d.annees.includes(anneeActuelle))setAnneeSelect(d.annees[d.annees.length-1]);}}).catch(()=>{});},[]);
+  useEffect(()=>{fetch('/api/annees').then(r=>r.json()).then(d=>{if(d.annees?.length){setAnneesDispos(d.annees);if(!d.annees.includes(anneeActuelle))setAnneeSelect(d.annees[d.annees.length-1]);}}).catch(()=>{});},[anneeActuelle]);
 
   // SUJET 2 fix A — charger avec recapData dans les deps (evite race condition)
   const charger=useCallback(async()=>{
@@ -900,12 +1074,20 @@ function OngletRecap({moisCourant}:{moisCourant:number}) {
 export default function DashboardPage() {
   const {mois,annee,setMois,setAnnee}=useMois();
   const [onglet,setOnglet]=useState<'global'|'recap'>('global');
-  const [data,setData]=useState<any>(null);
-  const [loading,setLoading]=useState(true);
+
+  // P24 : useSWR remplace le trio useState / useCallback / useEffect qui
+  // faisait un fetch manuel sur la MEME URL que le useSWR d'OngletGlobal.
+  // Deux requetes partaient a chaque montage et alimentaient deux etats
+  // distincts. Une seule source ici, passee en prop.
+  const { data: budgetData, isLoading: loadingMois } = useSWR(
+    `/api/budget?annee=${annee}&mois=${mois}`,
+    (url: string) => fetch(url).then(r => r.json()),
+    { revalidateOnFocus: false, dedupingInterval: 30_000 }
+  );
+
   const moisCourantReel=new Date().getMonth()+1, anneeCouranteReelle=new Date().getFullYear();
   const estMoisCourant=mois===moisCourantReel&&annee===anneeCouranteReelle;
-  const charger=useCallback(async()=>{setLoading(true);const res=await fetch(`/api/budget?annee=${annee}&mois=${mois}`);if(!res.ok){setLoading(false);return;}setData(await res.json());setLoading(false);},[mois,annee]);
-  useEffect(()=>{charger();},[charger]);
+
   return (
     <div className="space-y-5 animate-fadeIn">
       <div className="flex items-center justify-between">
@@ -915,7 +1097,7 @@ export default function DashboardPage() {
       <div className="flex gap-1 bg-slate-100 dark:bg-dark-card rounded-xl p-1 w-fit">
         {([['global','Global'],['recap','Recapitulatif']] as const).map(([key,label])=>(<button key={key} onClick={()=>setOnglet(key)} className={clsx('px-4 py-2 rounded-lg text-sm font-medium transition-all',onglet===key?'bg-white dark:bg-dark-surface text-primary shadow-sm':'text-[var(--text-muted)] hover:text-[var(--text)]')}>{label}</button>))}
       </div>
-      {onglet==='global'?(<OngletGlobal moisCourant={mois} anneeCourante={annee} budgetMois={data?.budget??[]} loadingMois={loading}/>):(<OngletRecap moisCourant={mois}/>)}
+      {onglet==='global'?(<OngletGlobal moisCourant={mois} anneeCourante={annee} budgetMois={budgetData?.budget??[]} loadingMois={loadingMois}/>):(<OngletRecap moisCourant={mois}/>)}
     </div>
   );
 }
