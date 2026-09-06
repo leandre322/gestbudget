@@ -51,6 +51,7 @@ model User {
   patrimoineSnapshots PatrimoineSnapshot[]
   recurrentesPaiements RecurrentePaiement[]
   categoriesProfil     CategorieProfil[]
+  parametresTypes      ParametresType[]
 
   @@map("users")
 }
@@ -498,4 +499,37 @@ model CategorieProfil {
 
   @@unique([userId, categorieId], map: "categories_profil_user_categorie_uidx")
   @@map("categories_profil")
+}
+
+// --- ALLOCATION PAR TYPE (Session 12 / M9) ----
+
+// Q30 = C : l allocation budgetaire par grande categorie vit ICI, plus sur
+// categories.tauxReference. Motif (P2) : /api/parametres faisait un updateMany
+// sur categories.montantReference, ecrasant sans trace les glissements
+// d enveloppes ecrits par /api/enveloppes/glissement.
+// Regle : /api/parametres n ecrit PLUS JAMAIS sur categories.
+//
+// P29 : categories.tauxReference repetait le taux du type sur chaque ligne.
+// budget/page.tsx en faisait la SOMME (296,14 % au lieu de 22,78 % sur
+// depense_fixe), parametres/page.tsx le MAX. Une table dediee supprime
+// l ambiguite. La colonne categories.tauxReference sera supprimee en fin de
+// S13, apres deploiement du code qui cesse de la lire (expand/contract).
+//
+// Backfill M9 verifie en S13 : semantique MAX, somme des 8 taux = 100,00 %,
+// somme des montants = 790 000 = revenuMensuelReference. Donnees saines.
+//
+// Contrainte SUM(tauxReference) <= 100 par utilisateur : non representable en
+// base, portee par le superRefine Zod cote /api/parametres (P28).
+model ParametresType {
+  id               String        @id @default(dbgenerated("gen_random_uuid()::text"))
+  userId           String
+  type             TypeCategorie
+  tauxReference    Float         @default(0)
+  montantReference BigInt        @default(0)
+  updatedAt        DateTime      @updatedAt @db.Timestamp(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, map: "parametres_types_user_fk")
+
+  @@unique([userId, type], map: "parametres_types_user_type_uidx")
+  @@map("parametres_types")
 }
