@@ -1,8 +1,33 @@
 'use client';
 
+// =============================================================================
+// app/(app)/parametres/page.tsx  --  etape 6 (S14)
+// =============================================================================
+// P34  — double fetch au montage : charger() et chargerOnglet('categories')
+//        partaient tous les deux, donc /api/categories et /api/comptes etaient
+//        appeles deux fois. Le second effet ignore desormais le montage.
+// Q40  — le MAX(tauxReference) sur d.categories disparait. Les taux et les
+//        montants viennent de d.parType, calcule par lib/reference.ts a partir
+//        de parametres_types. Plus aucune lecture de categories.tauxReference :
+//        la colonne peut etre supprimee (expand/contract, etape 11).
+// I3   — le PUT des taux transporte `version`. Un 409 signifie que les
+//        parametres ont bouge ailleurs : on recharge au lieu d ecraser.
+// P27  — nMoisUrgence est desormais renvoye par le GET et editable ici, borne
+//        1-24 comme le CHECK en base. L objectif du fonds d urgence n est plus
+//        code en dur a x6 : il vient du serveur (objectifUrgence).
+// Q54  — le PUT applique une homothetie sur les categories. L ecriture ne doit
+//        pas etre silencieuse : la reponse (mode par type, nombre de lignes
+//        reequilibrees, alertes) est affichee apres la sauvegarde.
+// P56  — sauvegarderCat envoie toujours l objet categorie complet ; le serveur
+//        retire montantReference. Aucun changement necessaire ici, mais la
+//        reponse peut contenir un bloc `repartition` (changement de type ou
+//        desactivation) : il est restitue a l utilisateur.
+// =============================================================================
+
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Plus, Pencil, Trash2, Check, X, Upload, Save, Link, Link2Off,
-         ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Lock, AlertTriangle } from 'lucide-react';
+         ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Lock, AlertTriangle,
+         Info } from 'lucide-react';
 import { TYPE_LABELS, ORDRE_TYPES, formatFCFA } from '@/types';
 import { clsx } from 'clsx';
 import { PushSubscribeButton } from '@/components/notifications/PushSubscribeButton';
@@ -15,6 +40,16 @@ const GRANDES_CATEGORIES = [
 type GrandeCategorie = typeof GRANDES_CATEGORIES[number];
 
 const LS_MODE_KEY = 'gb_cat_input_mode';
+
+const N_MOIS_URGENCE_MIN = 1;
+const N_MOIS_URGENCE_MAX = 24; // CHECK en base (S13)
+
+const LIBELLE_MODE: Record<string, string> = {
+  prorata:    'Prorata 12 mois',
+  egal:       'Parts egales',
+  homothetie: 'Rapports conserves',
+  vide:       'Aucune categorie',
+};
 
 export default function ParametresPage() {
   const { isLocked, openUnlockModal } = useLock();
@@ -46,9 +81,15 @@ export default function ParametresPage() {
   const [tauxRef,    setTauxRef]    = useState<Record<GrandeCategorie, number>>({} as Record<GrandeCategorie, number>);
   const [montantRef, setMontantRef] = useState<Record<GrandeCategorie, number>>({} as Record<GrandeCategorie, number>);
   const [revenuRef,  setRevenuRef]  = useState<number>(0);
+  const [nMoisUrgence,    setNMoisUrgence]    = useState<number>(6);
+  const [objectifUrgence, setObjectifUrgence] = useState<number>(0);
+  const [version,    setVersion]    = useState<string|null>(null);
+  const [incoherents, setIncoherents] = useState<string[]>([]);
   const [savingTaux, setSavingTaux] = useState(false);
   const [savedTaux,  setSavedTaux]  = useState(false);
   const [tauxError,  setTauxError]  = useState<string | null>(null);
+  const [repartitionInfo, setRepartitionInfo] = useState<any>(null);
+  const [catMessage, setCatMessage] = useState<string | null>(null);
 
   // ── Mode saisie (Montant FCFA ou Taux %) ─────────────────────────────────
   const [inputMode, setInputMode] = useState<'montant' | 'taux'>('montant');
@@ -67,17 +108,11 @@ export default function ParametresPage() {
   const [catGroupsOpen,    setCatGroupsOpen]    = useState<Record<string,boolean>>({});
 
   // ── Alertes ───────────────────────────────────────────────────────────────
-  // S10 : rapportEmailJour et rapportEmailHeure restent charges et renvoyes tels
-  // quels a l'API, mais ne sont PLUS editables. Depuis S8/Q5, le rapport mensuel
-  // part du cron du 1er (/api/cron/recurrentes-mensuelles) pour tous les
-  // utilisateurs ayant rapportEmailActif = true : le filtre par jour a ete
-  // abandonne. Laisser ces deux champs modifiables faisait croire a un reglage
-  // qui n'avait plus aucun effet.
   const [rapportEmailActif, setRapportEmailActif] = useState(true);
   const [rapportEmailJour,  setRapportEmailJour]  = useState(1);
   const [rapportEmailHeure, setRapportEmailHeure] = useState(8);
   const [seuilAnomaliesPct, setSeuilAnomaliesPct] = useState(50);
-  const [langueVocale,      setLangueVocale]      = useState('fr-FR'); // D1
+  const [langueVocale,      setLangueVocale]      = useState('fr-FR');
   const [savingAlertes,     setSavingAlertes]     = useState(false);
   const [savedAlertes,      setSavedAlertes]      = useState(false);
 
@@ -85,8 +120,9 @@ export default function ParametresPage() {
   const ouvrirTousCats = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t]=true; }); setCatGroupsOpen(n); };
   const plierTousCats  = () => setCatGroupsOpen({});
   const isDirty        = useRef(false);
+  const premierMontage = useRef(true); // P34
 
-  // ── Fonctions de conversion ───────────────────────────────────────────────
+  // ── Conversions ───────────────────────────────────────────────────────────
   const tauxToMontant = (taux: number): number =>
     revenuRef > 0 ? Math.round((taux / 100) * revenuRef) : 0;
 
@@ -128,24 +164,30 @@ export default function ParametresPage() {
       if (rParams.ok) {
         const d = await rParams.json();
         if (!isDirty.current || force) {
-          const revenu = d.revenuMensuelReference ?? 0;
-          setRevenuRef(revenu);
-          const taux = {} as Record<GrandeCategorie, number>;
+          setRevenuRef(d.revenuMensuelReference ?? 0);
+          setNMoisUrgence(d.nMoisUrgence ?? 6);
+          setObjectifUrgence(d.objectifUrgence ?? 0);
+          setVersion(d.version ?? null);
+
+          // Q40 — source unique : d.parType, plus de MAX sur d.categories.
+          const taux     = {} as Record<GrandeCategorie, number>;
           const montants = {} as Record<GrandeCategorie, number>;
+          const desync: string[] = [];
           GRANDES_CATEGORIES.forEach(type => {
-            const cats = (d.categories ?? []).filter((c:any) => c.type === type);
-            const t = cats.reduce((max:number,c:any) => Math.max(max, c.tauxReference ?? 0), 0);
-            taux[type]    = t;
-            montants[type] = revenu > 0 ? Math.round((t / 100) * revenu) : 0;
+            const bloc = d.parType?.[type];
+            taux[type]     = bloc?.taux    ?? 0;
+            montants[type] = bloc?.montant ?? 0;
+            if (bloc && bloc.coherent === false) desync.push(type);
           });
           setTauxRef(taux);
           setMontantRef(montants);
-          // Alertes
+          setIncoherents(desync);
+
           setRapportEmailActif(d.rapportEmailActif ?? true);
           setRapportEmailJour(d.rapportEmailJour   ?? 1);
-          setRapportEmailHeure(d.rapportEmailHeure  ?? 8);
-          setSeuilAnomaliesPct(d.seuilAnomaliesPct  ?? 50);
-          setLangueVocale(d.langueVocale ?? 'fr-FR'); // D1
+          setRapportEmailHeure(d.rapportEmailHeure ?? 8);
+          setSeuilAnomaliesPct(d.seuilAnomaliesPct ?? 50);
+          setLangueVocale(d.langueVocale ?? 'fr-FR');
           isDirty.current = false;
         }
       }
@@ -159,6 +201,7 @@ export default function ParametresPage() {
     if (isLocked) return;
     isDirty.current = true;
     setTauxError(null);
+    setRepartitionInfo(null);
     setRevenuRef(newRevenu);
     setMontantRef(prev => {
       const m = { ...prev } as Record<GrandeCategorie, number>;
@@ -169,22 +212,18 @@ export default function ParametresPage() {
     });
   };
 
-  // ── Sauvegarder alertes (D1 : + langueVocale) ─────────────────────────────
-  // rapportEmailJour / rapportEmailHeure sont renvoyes inchanges : le but est de
-  // ne PAS ecraser les valeurs en base, pas de les piloter depuis cet ecran.
   const sauvegarderAlertes = async () => {
     if (isLocked) { openUnlockModal(); return; }
     setSavingAlertes(true);
     try {
+      // Pas de `version` ici : ce PUT ne touche pas a l allocation, un conflit
+      // sur les taux ne doit pas bloquer un reglage d alerte.
       const res = await fetch('/api/parametres', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          rapportEmailActif,
-          rapportEmailJour,
-          rapportEmailHeure,
-          seuilAnomaliesPct,
-          langueVocale, // D1
+          rapportEmailActif, rapportEmailJour, rapportEmailHeure,
+          seuilAnomaliesPct, langueVocale,
         }),
       });
       if (res.ok) { setSavedAlertes(true); setTimeout(() => setSavedAlertes(false), 3000); }
@@ -208,7 +247,12 @@ export default function ParametresPage() {
     } catch(e){ console.error('chargerOnglet error:',e); }
   },[]);
 
-  useEffect(() => { chargerOnglet(activeTab); },[activeTab,chargerOnglet]);
+  // P34 — charger() a deja tout recupere au montage. Ce second effet ne doit
+  // agir que sur les changements d onglet ulterieurs.
+  useEffect(() => {
+    if (premierMontage.current) { premierMontage.current = false; return; }
+    chargerOnglet(activeTab);
+  },[activeTab,chargerOnglet]);
 
   // ── Sauvegarder taux ──────────────────────────────────────────────────────
   const sauvegarderTaux = async () => {
@@ -218,23 +262,52 @@ export default function ParametresPage() {
       return;
     }
     setTauxError(null);
+    setRepartitionInfo(null);
     setSavingTaux(true);
     try {
       const res = await fetch('/api/parametres', {
         method:  'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ revenuMensuelReference: revenuRef, tauxReference: tauxRef }),
+        body:    JSON.stringify({
+          revenuMensuelReference: revenuRef,
+          nMoisUrgence,
+          tauxReference: tauxRef,
+          ...(version ? { version } : {}),
+        }),
       });
-      if (res.ok) {
+
+      if (res.status === 409) {
+        setTauxError(
+          'Les parametres ont ete modifies ailleurs depuis le chargement de cette page. '
+          + 'Les valeurs a l ecran ont ete rechargees : verifiez avant de sauvegarder a nouveau.'
+        );
         isDirty.current = false;
-        setSavedTaux(true);
-        setTimeout(() => setSavedTaux(false), 3000);
         await charger(true);
-      } else {
-        const err = await res.json();
-        alert(`Erreur : ${err.error ?? 'Inconnue'}`);
+        return;
       }
-    } catch(e){ console.error(e); }
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setTauxError(err.error ?? 'Erreur inconnue');
+        return;
+      }
+
+      const d = await res.json();
+      isDirty.current = false;
+      setSavedTaux(true);
+      setTimeout(() => setSavedTaux(false), 3000);
+      setRepartitionInfo({
+        modeParType: d.repartition?.modeParType ?? [],
+        nbCategoriesModifiees: d.repartition?.nbCategoriesModifiees ?? 0,
+        nbRemisAZero: d.repartition?.nbRemisAZero ?? 0,
+        invariantOk: d.repartition?.invariant?.ok ?? null,
+        alertes: d.alertes ?? [],
+      });
+      await charger(true);
+    } catch(e){
+      console.error(e);
+      setTauxError('Erreur reseau pendant la sauvegarde');
+    }
     finally{ setSavingTaux(false); }
   };
 
@@ -261,22 +334,61 @@ export default function ParametresPage() {
 
   const ajouterCategorie = async () => {
     if(isLocked){openUnlockModal();return;}
-    if(!newCat.nom)return;
-    await fetch('/api/categories',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(newCat)});
-    setNewCat({nom:'',type:'depense_variable',sousType:''});setShowNewCat(false);chargerOnglet('categories');
+    if(!newCat.nom.trim())return;
+    const res = await fetch('/api/categories',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        nom: newCat.nom.trim(),
+        type: newCat.type,
+        sousType: newCat.sousType.trim() || null,
+      }),
+    });
+    if (res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setCatMessage(d.info ?? 'Categorie creee.');
+      setTimeout(() => setCatMessage(null), 8000);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      setCatMessage(err.error ?? 'Erreur lors de la creation');
+      setTimeout(() => setCatMessage(null), 6000);
+    }
+    setNewCat({nom:'',type:'depense_variable',sousType:''});setShowNewCat(false);
+    chargerOnglet('categories');
   };
 
+  // Le serveur retire montantReference du body (P56) et declenche une
+  // repartition si le type ou isActive change (P57).
   const sauvegarderCat = async () => {
     if(isLocked)return;
     if(!editCat)return;
-    await fetch('/api/categories',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(editCat)});
+    const res = await fetch('/api/categories',{
+      method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ id: editCat.id, nom: editCat.nom, sousType: editCat.sousType ?? null }),
+    });
+    if (res.ok) {
+      const d = await res.json().catch(() => ({}));
+      if (d.repartition) {
+        setCatMessage(`Budgets de reference reequilibres : ${d.repartition.nbCategories} ligne(s).`);
+        setTimeout(() => setCatMessage(null), 8000);
+        charger(true);
+      }
+    }
     setEditCat(null);chargerOnglet('categories');
   };
 
   const supprimerCat = async (id:string) => {
     if(isLocked){openUnlockModal();return;}
-    if(!confirm('Desactiver cette categorie ?'))return;
-    await fetch(`/api/categories?id=${id}`,{method:'DELETE'});chargerOnglet('categories');
+    if(!confirm('Desactiver cette categorie ? Son budget de reference sera redistribue aux autres categories du meme type.'))return;
+    const res = await fetch(`/api/categories?id=${id}`,{method:'DELETE'});
+    if (res.ok) {
+      const d = await res.json().catch(() => ({}));
+      if (d.repartition) {
+        setCatMessage(`Categorie desactivee. ${d.repartition.nbCategories} budget(s) reequilibre(s).`);
+        setTimeout(() => setCatMessage(null), 8000);
+      }
+      charger(true);
+    }
+    chargerOnglet('categories');
   };
 
   const ajouterCompte = async () => {
@@ -299,9 +411,6 @@ export default function ParametresPage() {
     await fetch(`/api/comptes?id=${id}`,{method:'DELETE'});chargerOnglet('comptes');
   };
 
-  // ── S10 / S3 : .xlsx uniquement ───────────────────────────────────────────
-  // Le serveur refuse desormais le .xls (parseur CFB retire de la surface
-  // d'attaque). On filtre aussi cote client pour eviter un upload inutile.
   const importerExcel = async (e:React.ChangeEvent<HTMLInputElement>) => {
     if(isLocked){openUnlockModal();return;}
     const file=e.target.files?.[0];if(!file)return;
@@ -389,6 +498,7 @@ export default function ParametresPage() {
               </div>
             </div>
 
+            {/* Revenu + fonds d'urgence */}
             <div className="mb-5 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-800">
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex-1 min-w-48">
@@ -402,13 +512,43 @@ export default function ParametresPage() {
                         ?'border-blue-200 dark:border-blue-800 bg-slate-50 dark:bg-dark-card text-[var(--text-muted)] cursor-not-allowed'
                         :'border-blue-300 dark:border-blue-700 bg-white dark:bg-dark-card text-[var(--text)] focus:border-primary')}/>
                 </div>
+                <div className="w-40">
+                  <label className="text-xs font-semibold text-blue-700 dark:text-blue-400 mb-1 block">
+                    Mois de fonds d&apos;urgence
+                  </label>
+                  <input type="number" min={N_MOIS_URGENCE_MIN} max={N_MOIS_URGENCE_MAX} step="1"
+                    value={nMoisUrgence} disabled={isLocked}
+                    onChange={e=>{
+                      if(isLocked)return;
+                      isDirty.current = true; setTauxError(null); setRepartitionInfo(null);
+                      const v = parseInt(e.target.value) || N_MOIS_URGENCE_MIN;
+                      setNMoisUrgence(Math.min(N_MOIS_URGENCE_MAX, Math.max(N_MOIS_URGENCE_MIN, v)));
+                    }}
+                    className={clsx('w-full border rounded-xl px-3 py-2 text-sm outline-none text-right',
+                      isLocked
+                        ?'border-blue-200 dark:border-blue-800 bg-slate-50 dark:bg-dark-card text-[var(--text-muted)] cursor-not-allowed'
+                        :'border-blue-300 dark:border-blue-700 bg-white dark:bg-dark-card text-[var(--text)] focus:border-primary')}/>
+                  <p className="text-[10px] text-blue-500 mt-1">Entre {N_MOIS_URGENCE_MIN} et {N_MOIS_URGENCE_MAX}</p>
+                </div>
                 <div className="text-right">
                   <p className="text-xs text-blue-600 dark:text-blue-400">100%</p>
                   <p className="text-lg font-bold text-blue-700 dark:text-blue-400">{formatFCFA(revenuRef)}</p>
-                  <p className="text-xs text-blue-500">Fonds urgence x6 : {formatFCFA(revenuRef*6)}</p>
+                  <p className="text-xs text-blue-500">
+                    Fonds urgence x{nMoisUrgence} : {formatFCFA(objectifUrgence || revenuRef * nMoisUrgence)}
+                  </p>
                 </div>
               </div>
             </div>
+
+            {incoherents.length > 0 && (
+              <div className="mb-4 flex items-start gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl px-3 py-2.5">
+                <AlertTriangle size={14} className="text-amber-500 flex-shrink-0 mt-0.5"/>
+                <span className="text-xs text-amber-700 dark:text-amber-400">
+                  Allocation desynchronisee sur {incoherents.length} type(s) : le montant enregistre ne correspond
+                  plus au taux multiplie par le revenu. Sauvegardez pour recalculer.
+                </span>
+              </div>
+            )}
 
             <div className="space-y-3">
               {GRANDES_CATEGORIES.map(type => {
@@ -424,7 +564,7 @@ export default function ParametresPage() {
                           <input type="number" min="0" step="1000" value={montantRef[type] || ''} placeholder="0" disabled={isLocked}
                             onChange={e => {
                               if (isLocked) return;
-                              isDirty.current = true; setTauxError(null);
+                              isDirty.current = true; setTauxError(null); setRepartitionInfo(null);
                               const m = parseInt(e.target.value) || 0;
                               const newTaux = montantToTaux(m);
                               setMontantRef(prev => ({ ...prev, [type]: m }));
@@ -439,7 +579,7 @@ export default function ParametresPage() {
                           <input type="number" min="0" max="100" step="0.5" value={taux||''} placeholder="0" disabled={isLocked}
                             onChange={e => {
                               if (isLocked) return;
-                              isDirty.current = true; setTauxError(null);
+                              isDirty.current = true; setTauxError(null); setRepartitionInfo(null);
                               const newTaux = parseFloat(e.target.value) || 0;
                               setTauxRef(prev => ({ ...prev, [type]: newTaux }));
                               setMontantRef(prev => ({ ...prev, [type]: tauxToMontant(newTaux) }));
@@ -495,13 +635,55 @@ export default function ParametresPage() {
               </div>
 
               {tauxError && (
-                <div className="flex items-center gap-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl px-3 py-2.5">
-                  <AlertTriangle size={14} className="text-red-500 flex-shrink-0"/>
+                <div className="flex items-start gap-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl px-3 py-2.5">
+                  <AlertTriangle size={14} className="text-red-500 flex-shrink-0 mt-0.5"/>
                   <span className="text-xs text-red-600 dark:text-red-400 font-medium">{tauxError}</span>
+                </div>
+              )}
+
+              {/* Q54 — restitution de l'ecriture appliquee sur les categories */}
+              {repartitionInfo && (
+                <div className="mt-2 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 px-3 py-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Info size={14} className="text-blue-500 flex-shrink-0"/>
+                    <span className="text-xs font-semibold text-blue-700 dark:text-blue-400">
+                      Budgets de reference recalcules — {repartitionInfo.nbCategoriesModifiees} categorie(s) mise(s) a jour
+                      {repartitionInfo.nbRemisAZero > 0 ? `, ${repartitionInfo.nbRemisAZero} remise(s) a zero` : ''}
+                      {repartitionInfo.invariantOk === false ? ' — controle de coherence en echec' : ''}
+                    </span>
+                  </div>
+                  <div className="space-y-0.5">
+                    {repartitionInfo.modeParType
+                      .filter((b:any) => b.allocation > 0 || b.sommeAvant > 0)
+                      .map((b:any) => (
+                        <div key={b.type} className="flex items-center justify-between text-[11px] text-blue-700 dark:text-blue-300">
+                          <span className="truncate">{TYPE_LABELS[b.type as keyof typeof TYPE_LABELS] ?? b.type}</span>
+                          <span className="flex items-center gap-2 flex-shrink-0">
+                            <span className="opacity-70">{LIBELLE_MODE[b.mode] ?? b.mode}</span>
+                            <span className="opacity-70">{b.nbCategories} cat.</span>
+                            <span className="font-semibold">{formatFCFA(b.allocation)}</span>
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                  {repartitionInfo.alertes.length > 0 && (
+                    <div className="pt-1 border-t border-blue-200 dark:border-blue-800 space-y-1">
+                      {repartitionInfo.alertes.map((a:string, i:number) => (
+                        <p key={i} className="text-[11px] text-amber-600 dark:text-amber-400">{a}</p>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           </div>
+
+          {catMessage && (
+            <div className="flex items-start gap-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl px-3 py-2.5">
+              <Info size={14} className="text-blue-500 flex-shrink-0 mt-0.5"/>
+              <span className="text-xs text-blue-700 dark:text-blue-400">{catMessage}</span>
+            </div>
+          )}
 
           <div className="flex justify-between items-center flex-wrap gap-2">
             <p className="text-sm text-[var(--text-muted)]">{categories.filter(c=>c.isActive).length} categories actives</p>
@@ -531,7 +713,7 @@ export default function ParametresPage() {
                 </div>
                 {(tauxRef[type as GrandeCategorie]??0)>0&&(
                   <span className="text-xs font-semibold text-primary">
-                    {(tauxRef[type as GrandeCategorie]).toFixed(2)}% → {formatFCFA(tauxToMontant(tauxRef[type as GrandeCategorie]))}
+                    {(tauxRef[type as GrandeCategorie]).toFixed(2)}% → {formatFCFA(montantRef[type as GrandeCategorie] ?? 0)}
                   </span>
                 )}
               </div>
@@ -548,6 +730,11 @@ export default function ParametresPage() {
                       ):(
                         <>
                           <span className="flex-1 text-sm text-[var(--text)]">{cat.nom}</span>
+                          {cat.montantReference > 0 && (
+                            <span className="text-xs text-[var(--text-muted)] flex-shrink-0" title="Budget de reference calcule">
+                              {formatFCFA(cat.montantReference)}
+                            </span>
+                          )}
                           {cat.sousType&&<span className="text-xs text-[var(--text-muted)]">{cat.sousType}</span>}
                           {type==='epargne_autre'&&cat.isActive&&(
                             <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -716,7 +903,6 @@ export default function ParametresPage() {
       {activeTab==='alertes'&&(
         <div className="space-y-5">
 
-          {/* Rapport email */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
             <div className="flex items-center justify-between mb-4">
               <div>
@@ -736,7 +922,6 @@ export default function ParametresPage() {
             )}
           </div>
 
-          {/* Detection anomalies */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
             <h3 className="font-semibold text-[var(--text)] mb-1">Detection d&apos;anomalies</h3>
             <p className="text-xs text-[var(--text-muted)] mb-4">Alerte Dashboard et email si une depense depasse la moyenne des 3 mois precedents</p>
@@ -758,7 +943,6 @@ export default function ParametresPage() {
             </div>
           </div>
 
-          {/* ── D1 — Dictée vocale ────────────────────────────────────────────── */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
             <h3 className="font-semibold text-[var(--text)] mb-1">Dictee vocale</h3>
             <p className="text-xs text-[var(--text-muted)] mb-4">
@@ -790,7 +974,6 @@ export default function ParametresPage() {
             </div>
           </div>
 
-          {/* ── Notifications push ───────────────────────────────────────── */}
           <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
             <h3 className="font-semibold text-[var(--text)] mb-1">Notifications push</h3>
             <p className="text-xs text-[var(--text-muted)] mb-4">
@@ -803,7 +986,6 @@ export default function ParametresPage() {
             <PushSubscribeButton />
           </div>
 
-          {/* Bouton sauvegarder */}
           <div className="flex justify-end">
             <button onClick={sauvegarderAlertes} disabled={savingAlertes||isLocked}
               className={clsx('flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-medium transition-all disabled:opacity-60',

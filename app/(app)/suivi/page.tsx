@@ -1,5 +1,52 @@
 'use client';
 
+// =============================================================================
+// app/(app)/suivi/page.tsx  --  etape 10 (S14)
+// =============================================================================
+// Ferme : P51, P52, P54, Q43 (scope). Attenue I10.
+//
+// P52 (critique) — le bloc « incrementer banques » calculait
+//     diff = reelSaisi - localStorage['banque-saved-{annee}-{mois}-{banqueId}']
+//     Vider le cache, changer d appareil ou passer en navigation privee ramene
+//     l ancrage a 0 : la TOTALITE du montant est re-incrementee sur
+//     banques.solde. C est le troisieme chemin d ecriture de banques.solde,
+//     celui qui n ecrit pas mouvements_banque, et tres probablement l origine
+//     des 435 000 non journalises de P10.
+//     Correction en deux temps :
+//       1. l ancrage est la valeur DB de la categorie epargne_precaution
+//          correspondante au dernier chargement, conservee dans refDB. C est
+//          exactement le mecanisme du bloc CompteFonds, qui lui etait correct.
+//       2. la regle de chargement « garder localStorage si > 0, sinon la DB »
+//          rendait le cache prioritaire sur la base. localStorage ne conserve
+//          plus que la STRUCTURE (quelle banque sur quelle ligne). Les montants
+//          viennent toujours de la DB.
+//     Les anciennes cles banque-saved-* sont purgees au montage.
+//
+// P51 — la protection quickadd:done ne couvrait que l onglet courant. Un ajout
+//     mobile, un decaissement ou le cron du 1er passait au travers, et
+//     l auto-save a 30 s ecrasait l increment avec des valeurs absolues.
+//     Le PUT n envoie desormais que les categories REELLEMENT modifiees depuis
+//     le dernier chargement (dirtyCats). Une categorie non touchee n est jamais
+//     reecrite : la protection ne depend plus d un evenement local.
+//     Complement : rechargement au retour d onglet (visibilitychange).
+//
+// P54 — sauvegarder() appelait deux fois PUT /api/budget (budget puis
+//     precaution), soit ~92 upserts et deux lignes d audit pour un seul geste.
+//     Les deux payloads sont fusionnes en un seul appel.
+//
+// Q43 — cet ecran envoie scope: 'suivi'. Il n ecrit plus montantAnticipe, dont
+//     il n affiche qu une lecture seule. Exception assumee : la modale KPI, qui
+//     saisit explicitement les deux colonnes (voir Q60 en fin de fichier).
+//
+// I10 — l historique 6 mois enchainait 6 fetch sequentiels. Parallelises.
+//
+// LIMITE CONNUE (P59) : les incrementations de banques.solde et de
+// comptes_fonds.soldeActuel restent des effets de bord pilotes par le client,
+// hors transaction. Une coupure en cours de boucle laisse un etat partiel. Le
+// correctif structurel est une route serveur unique qui journalise dans
+// mouvements_banque ; il est hors du perimetre de ce fichier.
+// =============================================================================
+
 import { useEffect, useState, useCallback, useRef, Fragment } from 'react';
 import { Copy, Save, ChevronsDownUp, ChevronsUpDown, Plus, Trash2, Pencil,
          ChevronDown, ChevronRight } from 'lucide-react';
@@ -13,6 +60,7 @@ import { formatFCFA, MOIS_LABELS, ORDRE_TYPES, TYPE_LABELS,
          LABEL_PREVISION, LABEL_REEL, LABEL_ECART, LABEL_EXEC } from '@/types';
 import { clsx } from 'clsx';
 import EnveloppesSection from '@/components/EnveloppesSection';
+import { estMoisVerrouille } from '@/lib/periode';
 
 // ── Bloquer les caractères non numériques ─────────────────────────────────────
 const onlyNumbers = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -28,30 +76,65 @@ const TYPES_OUVERTS_PAR_DEFAUT: string[] = []; // Tout plié par défaut
 const MOIS_COURTS  = ['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
 const DONUT_COLORS = ['#1E40AF','#EF4444','#F59E0B','#10B981','#8B5CF6','#06B6D4','#F97316'];
 
+// Structure des lignes banque uniquement (banqueId + ordre). Jamais de montant :
+// les montants sont ceux de la base. Voir P52.
+const CLE_STRUCT_BANQUE = (a: number, m: number) => `lignes-banque-${a}-${m}`;
+
 // ── Normalisation pour matching robuste ──────────────────────────────────────
-// Gère : "Fête / Vacances" = "Fête / Vacances", accents, espaces autour des /
 function normaliser(s: string): string {
   return s
     .toLowerCase()
     .trim()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // supprime les accents
-    .replace(/\s*\/\s*/g, '/')                         // normalise espaces autour de /
-    .replace(/\s+/g, ' ');                             // espaces multiples → un seul
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s*\/\s*/g, '/')
+    .replace(/\s+/g, ' ');
 }
 
 // ── Correspondance catégorie → CompteFonds par nom (Option A) ────────────────
 function trouverCompteParNom(catNom: string, comptes: any[]): any | null {
   if (!catNom || !comptes.length) return null;
   const cat = normaliser(catNom);
-  // 1. Correspondance exacte normalisée
   let match = comptes.find(c => normaliser(c.nom) === cat);
   if (match) return match;
-  // 2. Le nom du fond est contenu dans la catégorie
   match = comptes.find(c => cat.includes(normaliser(c.nom)));
   if (match) return match;
-  // 3. La catégorie est contenue dans le nom du fond
   match = comptes.find(c => normaliser(c.nom).includes(cat));
   return match ?? null;
+}
+
+/**
+ * P52 — purge unique des ancrages localStorage devenus obsoletes. Ils ne sont
+ * plus ecrits par ce fichier ; les laisser en place ferait ressurgir le bug si
+ * un ancien bundle etait servi depuis un cache navigateur.
+ */
+function purgerAncragesObsoletes() {
+  try {
+    const aSupprimer: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('banque-saved-')) aSupprimer.push(k);
+    }
+    aSupprimer.forEach(k => localStorage.removeItem(k));
+  } catch {}
+}
+
+/**
+ * Repartit les lignes banque sur les categories epargne_precaution.
+ * Mapping strictement 1:1 par index. Le nombre de lignes banque ne peut pas
+ * depasser le nombre de categories precaution (voir ajouterLigneBanque) : sans
+ * cette contrainte, une ligne excedentaire incrementerait banques.solde sans
+ * aucun ancrage en base, ce qui recreerait P52 sous une autre forme.
+ */
+function valeursPrecautionDepuisBanques(
+  lignesBanque: LigneBanque[],
+  catsPrecaution: any[],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  catsPrecaution.forEach((cat: any, idx: number) => {
+    const lb = lignesBanque[idx];
+    out[cat.id] = lb ? String(parseInt(lb.reel) || 0) : '0';
+  });
+  return out;
 }
 
 export default function SuiviPage() {
@@ -65,7 +148,7 @@ export default function SuiviPage() {
   const [comptes,      setComptes]      = useState<any[]>([]);
   const [lignesBanque, setLignesBanque] = useState<LigneBanque[]>([]);
   const [hist,         setHist]         = useState<any[]>([]);
-  const [recCatIds,    setRecCatIds]    = useState<Set<string>>(new Set()); // S6 — badge récurrentes
+  const [recCatIds,    setRecCatIds]    = useState<Set<string>>(new Set());
   const [loading,      setLoading]      = useState(true);
   const [saving,       setSaving]       = useState(false);
   const [saved,        setSaved]        = useState(false);
@@ -86,11 +169,23 @@ export default function SuiviPage() {
   const expandAllGroups   = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = true;  }); setGroupsOpen(n); };
   const collapseAllGroups = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t] = false; }); setGroupsOpen(n); };
 
-  const timerRef            = useRef<NodeJS.Timeout | null>(null);
-  // ── sauvegarderRef : toujours pointer vers la dernière version de sauvegarder ──
-  // Évite le bug de stale closure : le timer scheduleSave capturerait sinon
-  // l'ancienne version de sauvegarder (avec les anciens lignes) → écrase les nouvelles valeurs
+  const timerRef       = useRef<NodeJS.Timeout | null>(null);
   const sauvegarderRef = useRef<() => Promise<void>>(async () => {});
+
+  // ── P51 : categories modifiees depuis le dernier chargement ───────────────
+  // Seules celles-ci sont envoyees au PUT. Une categorie non touchee ne peut
+  // donc plus ecraser un ajout rapide, un decaissement ou le cron du 1er.
+  const dirtyCats   = useRef<Set<string>>(new Set());
+  const dirtyBanque = useRef<boolean>(false);
+
+  // ── P52 : ancrages issus de la BASE au dernier chargement ─────────────────
+  // budgetParCat : montantReel en base, par categorie.
+  // banqueParLigne : valeur DB attribuee a chaque ligne banque (index -> montant).
+  const refDB = useRef<{
+    budgetParCat: Record<string, number>;
+    banqueParLigne: number[];
+  }>({ budgetParCat: {}, banqueParLigne: [] });
+
   const moisCourantReel     = new Date().getMonth() + 1;
   const anneeCouranteReelle = new Date().getFullYear();
 
@@ -100,148 +195,175 @@ export default function SuiviPage() {
     try { localStorage.setItem('suivi-show-totals', String(next)); } catch {}
   };
 
+  useEffect(() => { purgerAncragesObsoletes(); }, []);
+
   // ── Chargement ──────────────────────────────────────────────────────────
   const charger = useCallback(async () => {
     setLoading(true);
-    const [resBudget, resBanques, resComptes] = await Promise.all([
-      fetch(`/api/budget?annee=${annee}&mois=${mois}`),
-      fetch('/api/banques'),
-      fetch('/api/comptes'),
-    ]);
-    if (!resBudget.ok) { setLoading(false); return; }
-    const d = await resBudget.json();
-    setData(d);
+    try {
+      const [resBudget, resBanques, resComptes] = await Promise.all([
+        fetch(`/api/budget?annee=${annee}&mois=${mois}`),
+        fetch('/api/banques'),
+        fetch('/api/comptes'),
+      ]);
+      if (!resBudget.ok) { setLoading(false); return; }
+      const d = await resBudget.json();
+      setData(d);
 
-    const init: Lignes = {};
-    for (const cat of d.categories) {
-      const b = d.budget.find((b: any) => b.categorieId === cat.id);
-      // Note : on utilise !== undefined/null pour gérer 0 correctement (0 est falsy!)
-      init[cat.id] = {
-        anticipe: (b?.montantAnticipe != null && b.montantAnticipe !== 0)
-          ? String(b.montantAnticipe) : '',
-        reel:     (b?.montantReel     != null && b.montantReel     !== 0)
-          ? String(b.montantReel)     : '',
-      };
-    }
-    setLignes(init);
+      // ── Ancrage DB par categorie ───────────────────────────────────────
+      const budgetParCat: Record<string, number> = {};
+      for (const b of (d.budget ?? [])) {
+        budgetParCat[b.categorieId] = Number(b.montantReel ?? 0);
+      }
 
-    if (resComptes.ok) {
-      const dc = await resComptes.json();
-      setComptes(dc.comptes ?? []);
-    }
+      const init: Lignes = {};
+      for (const cat of (d.categories ?? [])) {
+        const b = (d.budget ?? []).find((x: any) => x.categorieId === cat.id);
+        init[cat.id] = {
+          anticipe: (b?.montantAnticipe != null && b.montantAnticipe !== 0)
+            ? String(b.montantAnticipe) : '',
+          reel: (b?.montantReel != null && b.montantReel !== 0)
+            ? String(b.montantReel) : '',
+        };
+      }
 
-    if (resBanques.ok) {
-      const db  = await resBanques.json();
-      const bqs = db.banques ?? [];
-      setBanques(bqs);
-      // ── Init lignesBanque + lignes[catPrec] depuis DB ───────────────────────
-      const catsPrecaution   = d.categories.filter((c: any) => c.type === 'epargne_precaution');
-      const totalAnticipe    = catsPrecaution.reduce((s: number, c: any) => {
-        const b = d.budget.find((b: any) => b.categorieId === c.id);
-        return s + (b?.montantAnticipe ?? 0);
-      }, 0);
-      const anticipeParLigne = bqs.length > 0 ? Math.round(totalAnticipe / Math.min(2, bqs.length)) : 0;
+      if (resComptes.ok) {
+        const dc = await resComptes.json();
+        setComptes(dc.comptes ?? []);
+      }
 
-      // Récupérer les réels DB par catégorie précaution (source de vérité)
-      const dbReelByCatId: Record<string, string> = {};
-      catsPrecaution.forEach((cat: any) => {
-        const bBudget = d.budget.find((b: any) => b.categorieId === cat.id);
-        dbReelByCatId[cat.id] = String(bBudget?.montantReel || '');
-      });
+      let bqs: any[] = [];
+      let lignesBanqueDB: LigneBanque[] = [];
 
-      try {
-        const key = `lignes-banque-${annee}-${mois}`;
-        const sv  = localStorage.getItem(key);
-        let finalLignesBanque: LigneBanque[];
+      if (resBanques.ok) {
+        const db = await resBanques.json();
+        bqs = db.banques ?? [];
+        setBanques(bqs);
 
-        if (sv) {
-          const parsed: LigneBanque[] = JSON.parse(sv);
-          // Merger : garder localStorage si > 0, sinon prendre DB
-          finalLignesBanque = parsed.map((lb: LigneBanque, idx: number) => {
-            const catPrec = catsPrecaution[idx];
-            const dbReel  = catPrec ? (dbReelByCatId[catPrec.id] ?? '') : '';
-            return { ...lb, reel: (lb.reel && parseInt(lb.reel) > 0) ? lb.reel : dbReel };
-          });
-        } else {
-          // Construire depuis banques + valeurs DB
-          finalLignesBanque = bqs.map((bq: any, idx: number) => {
-            const catPrec = catsPrecaution[idx];
-            return {
-              id:        `lb-${Date.now()}-${idx + 1}`,
-              banqueId:  bq.id ?? '',
-              anticipe:  anticipeParLigne,
-              reel:      catPrec ? (dbReelByCatId[catPrec.id] ?? '') : '',
-            };
-          });
-          if (finalLignesBanque.length === 0) {
-            finalLignesBanque = [{ id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: 0, reel: '' }];
+        const catsPrecaution = (d.categories ?? [])
+          .filter((c: any) => c.type === 'epargne_precaution');
+
+        // ── Structure des lignes depuis localStorage, montants depuis la DB ──
+        // P52 : le cache ne porte plus que banqueId. Les anciennes entrees
+        // contiennent encore un `reel` : il est volontairement ignore.
+        let structure: Array<{ id: string; banqueId: string }> = [];
+        try {
+          const sv = localStorage.getItem(CLE_STRUCT_BANQUE(annee, mois));
+          if (sv) {
+            const parsed = JSON.parse(sv);
+            if (Array.isArray(parsed)) {
+              structure = parsed
+                .filter((x: any) => x && typeof x.banqueId === 'string')
+                .map((x: any, i: number) => ({
+                  id: typeof x.id === 'string' ? x.id : `lb-${i + 1}`,
+                  banqueId: x.banqueId,
+                }));
+            }
           }
+        } catch {}
+
+        if (structure.length === 0) {
+          structure = catsPrecaution.map((_: any, idx: number) => ({
+            id: `lb-${idx + 1}`,
+            banqueId: bqs[idx]?.id ?? '',
+          }));
         }
 
-        setLignesBanque(finalLignesBanque);
+        // Jamais plus de lignes que de categories precaution (voir en-tete).
+        if (structure.length > catsPrecaution.length) {
+          structure = structure.slice(0, Math.max(catsPrecaution.length, 1));
+        }
+        if (structure.length === 0) {
+          structure = [{ id: 'lb-1', banqueId: bqs[0]?.id ?? '' }];
+        }
 
-        // ── Sync lignes[catPrec] depuis finalLignesBanque (SÉPARÉ de setLignesBanque) ──
-        setLignes(prev => {
-          const synced = { ...prev };
-          catsPrecaution.forEach((cat: any, idx: number) => {
-            const lb = finalLignesBanque[idx];
-            synced[cat.id] = {
-              anticipe: prev[cat.id]?.anticipe ?? '0',
-              reel:     lb ? (lb.reel || '0') : '0',
-            };
-          });
-          return synced;
+        lignesBanqueDB = structure.map((s, idx) => {
+          const catPrec = catsPrecaution[idx];
+          const reelDB  = catPrec ? (budgetParCat[catPrec.id] ?? 0) : 0;
+          const bBudget = catPrec
+            ? (d.budget ?? []).find((x: any) => x.categorieId === catPrec.id)
+            : null;
+          return {
+            id:       s.id,
+            banqueId: s.banqueId,
+            anticipe: Number(bBudget?.montantAnticipe ?? 0),
+            reel:     reelDB !== 0 ? String(reelDB) : '',
+          };
         });
 
-      } catch {
-        const fallback: LigneBanque[] = [
-          { id: `lb-${Date.now()}-1`, banqueId: bqs[0]?.id ?? '', anticipe: anticipeParLigne, reel: catsPrecaution[0] ? (dbReelByCatId[catsPrecaution[0]?.id] ?? '') : '' },
-          { id: `lb-${Date.now()}-2`, banqueId: bqs[1]?.id ?? '', anticipe: anticipeParLigne, reel: catsPrecaution[1] ? (dbReelByCatId[catsPrecaution[1]?.id] ?? '') : '' },
-        ];
-        setLignesBanque(fallback);
-        setLignes(prev => {
-          const synced = { ...prev };
-          catsPrecaution.forEach((cat: any, idx: number) => {
-            synced[cat.id] = { anticipe: prev[cat.id]?.anticipe ?? '0', reel: dbReelByCatId[cat.id] ?? '0' };
-          });
-          return synced;
+        setLignesBanque(lignesBanqueDB);
+
+        // lignes[catPrec] reflete la valeur DB, pas une valeur de cache.
+        catsPrecaution.forEach((cat: any, idx: number) => {
+          const lb = lignesBanqueDB[idx];
+          init[cat.id] = {
+            anticipe: init[cat.id]?.anticipe ?? '',
+            reel:     lb ? (lb.reel || '') : '',
+          };
         });
       }
-    }
 
-    // Historique 6 mois
-    const histData = [];
-    for (let i = 5; i >= 0; i--) {
-      let m = mois - i, a = annee;
-      if (m <= 0) { m += 12; a--; }
-      try {
-        const hr = await fetch(`/api/budget?annee=${a}&mois=${m}`);
-        if (!hr.ok) { histData.push({ mois: MOIS_COURTS[m], prev: 0, reel: 0 }); continue; }
-        const hd = await hr.json();
-        histData.push({
-          mois: MOIS_COURTS[m],
-          prev: hd.budget?.filter((b: any) => b.categorie?.type?.startsWith('depense')).reduce((s: number, b: any) => s + (b.montantAnticipe ?? 0), 0) ?? 0,
-          reel: hd.budget?.filter((b: any) => b.categorie?.type?.startsWith('depense')).reduce((s: number, b: any) => s + (b.montantReel ?? 0), 0) ?? 0,
-        });
-      } catch {
-        histData.push({ mois: MOIS_COURTS[m], prev: 0, reel: 0 });
+      setLignes(init);
+
+      refDB.current = {
+        budgetParCat,
+        banqueParLigne: lignesBanqueDB.map(lb => parseInt(lb.reel) || 0),
+      };
+      dirtyCats.current = new Set();
+      dirtyBanque.current = false;
+
+      // ── I10 : historique 6 mois en parallele ─────────────────────────────
+      const fenetre: Array<{ m: number; a: number }> = [];
+      for (let i = 5; i >= 0; i--) {
+        let m = mois - i, a = annee;
+        if (m <= 0) { m += 12; a--; }
+        fenetre.push({ m, a });
       }
+      const histData = await Promise.all(fenetre.map(async ({ m, a }) => {
+        try {
+          const hr = await fetch(`/api/budget?annee=${a}&mois=${m}`);
+          if (!hr.ok) return { mois: MOIS_COURTS[m], prev: 0, reel: 0 };
+          const hd = await hr.json();
+          const dep = (hd.budget ?? []).filter((b: any) => b.categorie?.type?.startsWith('depense'));
+          return {
+            mois: MOIS_COURTS[m],
+            prev: dep.reduce((s: number, b: any) => s + (b.montantAnticipe ?? 0), 0),
+            reel: dep.reduce((s: number, b: any) => s + (b.montantReel ?? 0), 0),
+          };
+        } catch {
+          return { mois: MOIS_COURTS[m], prev: 0, reel: 0 };
+        }
+      }));
+      setHist(histData);
+    } catch (e) {
+      console.error('charger:', e);
+    } finally {
+      setLoading(false);
     }
-    setHist(histData);
-    setLoading(false);
   }, [mois, annee]);
 
   useEffect(() => { charger(); }, [charger]);
 
-  // ── S6 : Quick Add — recharger quand un ajout rapide aboutit ───────────────
-  // Évite qu'un « Sauvegarder » ultérieur (valeurs absolues) écrase l'incrément
+  // Quick Add dans le meme onglet.
   useEffect(() => {
     const onQuickAdd = () => { charger(); };
     window.addEventListener('quickadd:done', onQuickAdd);
     return () => window.removeEventListener('quickadd:done', onQuickAdd);
   }, [charger]);
 
-  // ── S6 : Catégories alimentées par une récurrente ce mois (badge 🔄) ───────
+  // ── P51 : resynchronisation au retour d onglet ────────────────────────────
+  // Complete quickadd:done, qui ne couvre que l onglet courant. On ne recharge
+  // pas si des saisies sont en attente, pour ne pas les perdre.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (dirtyCats.current.size > 0 || dirtyBanque.current) return;
+      charger();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [charger]);
+
   useEffect(() => {
     const periode = `${annee}-${String(mois).padStart(2, '0')}`;
     fetch(`/api/recurrentes?periode=${periode}`)
@@ -250,319 +372,280 @@ export default function SuiviPage() {
       .catch(() => {});
   }, [mois, annee]);
 
+  // ── P52 : seule la STRUCTURE est persistee, jamais les montants ───────────
   useEffect(() => {
-    if (lignesBanque.length > 0) {
-      try { localStorage.setItem(`lignes-banque-${annee}-${mois}`, JSON.stringify(lignesBanque)); } catch {}
-    }
+    if (lignesBanque.length === 0) return;
+    try {
+      localStorage.setItem(
+        CLE_STRUCT_BANQUE(annee, mois),
+        JSON.stringify(lignesBanque.map(l => ({ id: l.id, banqueId: l.banqueId }))),
+      );
+    } catch {}
   }, [lignesBanque, annee, mois]);
 
   const scheduleSave = () => {
     if (isLocked) return;
+    if (estMoisVerrouille(annee, mois)) return;
     if (timerRef.current) clearTimeout(timerRef.current);
-    // Utiliser sauvegarderRef.current → toujours la dernière version avec les derniers lignes
     timerRef.current = setTimeout(() => { sauvegarderRef.current(); }, 30_000);
   };
 
   const handleChange = (catId: string, field: 'anticipe'|'reel', val: string) => {
     if (isLocked) return;
+    dirtyCats.current.add(catId);
     setLignes(prev => ({ ...prev, [catId]: { ...prev[catId], [field]: val } }));
     scheduleSave();
     setSaved(false);
   };
 
+  const cats           = data?.categories ?? [];
+  const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
+
+  // ── Sauvegarde ────────────────────────────────────────────────────────────
   const sauvegarder = async () => {
     if (isLocked) return;
-    // ── Annuler le timer auto-save pour éviter double-save ──────────────────
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
 
-    if (!data?.anneeId) {
-      toast.error('Aucune année sélectionnée — rechargez la page');
+    if (!data?.anneeId && !annee) {
+      toast.error('Aucune annee selectionnee — rechargez la page');
       return;
     }
-    setSaving(true);
-    (window as any).__setSaveStatus?.('saving');
 
-    // 1. Sauvegarder le budget
-    // S'assurer que TOUTES les catégories actives sont dans lignes
-    // (y compris epargne_investissement, depense_occasionnelle, etc.)
-    const allCats = data?.categories ?? [];
-    const lignesComplet = { ...lignes };
-    for (const cat of allCats) {
-      if (!lignesComplet[cat.id]) {
-        lignesComplet[cat.id] = { anticipe: '0', reel: '0' };
+    // ── P54 : un seul payload, une seule requete ────────────────────────────
+    // ── P51 : uniquement les categories reellement modifiees ────────────────
+    const payload: Record<string, { reel: string }> = {};
+    for (const catId of Array.from(dirtyCats.current)) {
+      payload[catId] = { reel: String(parseInt(lignes[catId]?.reel ?? '0') || 0) };
+    }
+
+    const valeursPrec = valeursPrecautionDepuisBanques(lignesBanque, catsPrecaution);
+    if (dirtyBanque.current) {
+      for (const [catId, valeur] of Object.entries(valeursPrec)) {
+        payload[catId] = { reel: valeur };
       }
     }
 
-    // Log pour debug (visible dans console navigateur)
-    const nonZeroEntries = Object.entries(lignesComplet)
-      .filter(([_, v]) => parseInt(v.reel) !== 0 || parseInt(v.anticipe) !== 0);
-    console.log(`💾 Save ${mois}/${data.anneeId}: ${nonZeroEntries.length} lignes non-nulles`);
+    if (Object.keys(payload).length === 0) {
+      toast.info('Aucune modification a enregistrer');
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      return;
+    }
+
+    setSaving(true);
+    (window as any).__setSaveStatus?.('saving');
 
     const res = await fetch('/api/budget', {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes: lignesComplet }),
+      body: JSON.stringify({
+        ...(data?.anneeId ? { anneeId: data.anneeId } : {}),
+        annee,
+        mois,
+        scope: 'suivi',      // Q43 — cet ecran n ecrit jamais montantAnticipe
+        lignes: payload,
+      }),
     });
 
-    const cats           = data?.categories ?? [];
-    const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
-
-    // 2. Répercuter banques → catégories epargne_precaution en DB
-    // ── Toujours mettre à jour TOUTES les catsPrecaution (source de vérité DB) ──
-    if (catsPrecaution.length > 0) {
-      const newLignesPrecaution = { ...lignesComplet };
-
-      // Calculer le réel par catégorie precaution depuis lignesBanque
-      catsPrecaution.forEach((cat: any, idx: number) => {
-        const lb = lignesBanque[idx]; // undefined si moins de banques que de catégories
-        newLignesPrecaution[cat.id] = {
-          anticipe: lignes[cat.id]?.anticipe ?? '0',
-          reel:     lb ? (lb.reel || '0') : '0', // 0 si pas de lignesBanque → efface les valeurs stale
-        };
-      });
-
-      // Si plus de lignesBanque que de catégories precaution : sommer le surplus dans la dernière
-      if (lignesBanque.length > catsPrecaution.length && catsPrecaution.length > 0) {
-        const lastCat  = catsPrecaution[catsPrecaution.length - 1];
-        const surplus  = lignesBanque
-          .slice(catsPrecaution.length)
-          .reduce((s: number, lb: any) => s + (parseInt(lb.reel) || 0), 0);
-        const current  = parseInt(newLignesPrecaution[lastCat.id]?.reel || '0');
-        newLignesPrecaution[lastCat.id] = {
-          ...newLignesPrecaution[lastCat.id],
-          reel: String(current + surplus),
-        };
-      }
-
-      await fetch('/api/budget', {
-        method:  'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes: newLignesPrecaution }),
-      });
-    }
-
-    // 3. ── Incrémenter banques (epargne_precaution) ────────────────────────
-    // Clé stable : banqueId (pas lb.id qui est volatile)
-    // Référence : localStorage avec clé basée sur banqueId
-    for (const lb of lignesBanque) {
-      const reelVal = parseInt(lb.reel) || 0;
-      if (!lb.banqueId) continue;
-
-      // Clé stable basée sur banqueId (non volatile entre rechargements)
-      const oldKey = `banque-saved-${annee}-${mois}-${lb.banqueId}`;
-      const oldVal = parseInt(localStorage.getItem(oldKey) ?? '0');
-      const diff   = reelVal - oldVal;
-
-      if (diff !== 0) {
-        await fetch(`/api/banques?id=${lb.banqueId}`, {
-          method:  'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ action: diff > 0 ? 'increment' : 'decrement', montant: Math.abs(diff) }),
-        });
-        localStorage.setItem(oldKey, String(reelVal));
-      }
-    }
-
-    // 4. ── Incrémenter CompteFonds (epargne_autre) — référence DB ──────────
-    // Référence = data.budget (chargé depuis DB au dernier charger())
-    // → pas de localStorage → pas de doublon si rechargement page
-    const catsAutre = cats.filter((c: any) => c.type === 'epargne_autre');
-    const budgetRef = data?.budget ?? [];
-
-    for (const cat of catsAutre) {
-      const newVal = parseInt(lignes[cat.id]?.reel) || 0;
-      // Valeur de référence = ce qui était en DB au dernier chargement
-      const oldVal = Number(budgetRef.find((b: any) => b.categorieId === cat.id)?.montantReel ?? 0);
-      const diff   = newVal - oldVal;
-
-      if (diff !== 0) {
-        const compte = trouverCompteParNom(cat.nom, comptes);
-        if (compte) {
-          await fetch(`/api/comptes?id=${compte.id}`, {
-            method:  'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ action: diff > 0 ? 'increment' : 'decrement', montant: Math.abs(diff) }),
-          });
-        }
-      }
-    }
-
-    setSaving(false);
-    if (res.ok) {
-      setSaved(true);
-      toast.success('Suivi mensuel sauvegardé ✓');
-      (window as any).__setSaveStatus?.('saved');
-
-      // ── Épargne Investissement → banque liée (delta) ───────────────────────────────
-      // Si une catégorie epargne_investissement a une banqueId liée,
-      // on met à jour le solde de la banque du delta (newReel - oldReel)
-      // Direction : épargne sauvée → banque += delta (l'épargne alimente la banque)
-      const catsInvest = (data?.categories ?? [])
-        .filter((c: any) => c.type === 'epargne_investissement' && c.banqueId);
-
-      for (const cat of catsInvest) {
-        const newReel  = parseInt(lignesComplet[cat.id]?.reel  || '0') || 0;
-        // data.budget contient les ANCIENNES valeurs (avant ce PUT)
-        const prevReel = Number(
-          (data?.budget ?? []).find((b: any) => b.categorieId === cat.id)?.montantReel ?? 0
-        );
-        const delta = newReel - prevReel;
-
-        if (delta !== 0 && cat.banqueId) {
-          await fetch(`/api/banques?id=${cat.banqueId}`, {
-            method:  'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action:  delta > 0 ? 'increment' : 'decrement',
-              montant: Math.abs(delta),
-            }),
-          });
-          console.log(
-            `💰 ${cat.nom} : delta ${delta > 0 ? '+' : ''}${delta} → banque ${cat.banqueId}`
-          );
-        }
-      }
-
-      // ── Recharger depuis DB pour garantir la cohérence (y compris les 0) ────────────
-      // Ne pas se fier au state local — la DB est la source de vérité
-      await charger();
-
-      // ── Mettre à jour data.budget pour TOUTES les catégories (y compris nouvelles) ──
-      // Important : les catégories jamais sauvegardées ne sont pas dans prev.budget
-      // → on les ajoute pour que charger() ne les écrase pas lors d'un rechargement
-      setData((prev: any) => {
-        if (!prev?.budget) return prev;
-        const existingIds = new Set(prev.budget.map((b: any) => b.categorieId));
-        // Mettre à jour les entrées existantes
-        const updatedBudget = prev.budget.map((b: any) => {
-          const newAnt  = lignes[b.categorieId]?.anticipe;
-          const newReel = lignes[b.categorieId]?.reel;
-          return {
-            ...b,
-            // Utiliser la nouvelle valeur MÊME si elle est 0 (parseInt('0') = 0, valide!)
-            montantAnticipe: newAnt  !== undefined ? (parseInt(newAnt)  || 0) : b.montantAnticipe,
-            montantReel:     newReel !== undefined ? (parseInt(newReel) || 0) : b.montantReel,
-          };
-        });
-        // Ajouter les nouvelles catégories qui n'avaient pas d'entrée DB
-        const cats = prev.categories ?? [];
-        for (const [catId, vals] of Object.entries(lignes as Record<string, { anticipe: string; reel: string }>)) {
-          if (!existingIds.has(catId)) {
-            const ant  = parseInt(vals.anticipe) || 0;
-            const reel = parseInt(vals.reel)     || 0;
-            if (ant > 0 || reel > 0) {
-              const cat = cats.find((c: any) => c.id === catId);
-              updatedBudget.push({
-                categorieId:     catId,
-                categorie:       cat ?? { id: catId, nom: '', type: '' },
-                montantAnticipe: ant,
-                montantReel:     reel,
-              });
-            }
-          }
-        }
-        return { ...prev, budget: updatedBudget };
-      });
-
-      setTimeout(() => { setSaved(false); (window as any).__setSaveStatus?.('idle'); }, 3000);
-    } else {
+    if (!res.ok) {
+      setSaving(false);
       try {
         const errBody = await res.clone().json();
-        console.error('❌ PUT /api/budget error:', errBody);
         toast.error(`Erreur sauvegarde : ${errBody.error ?? res.status}`);
       } catch {
         toast.error(`Erreur sauvegarde HTTP ${res.status}`);
       }
       (window as any).__setSaveStatus?.('error');
+      return;
     }
+
+    // ── Effets de bord sur les soldes ───────────────────────────────────────
+    // Tous les deltas sont calcules contre un ancrage BASE (refDB), jamais
+    // contre localStorage. Voir P52 et la limite connue P59 en en-tete.
+    const ancres = refDB.current;
+
+    // 1. epargne_precaution -> banques
+    if (dirtyBanque.current) {
+      const vus = new Set<string>();
+      for (let idx = 0; idx < lignesBanque.length; idx++) {
+        const lb = lignesBanque[idx];
+        if (!lb.banqueId) continue;
+        if (vus.has(lb.banqueId)) {
+          toast.error(`Banque en double sur deux lignes — solde non mis a jour pour l une d elles`);
+          continue;
+        }
+        vus.add(lb.banqueId);
+
+        const nouveau = parseInt(lb.reel) || 0;
+        const ancien  = ancres.banqueParLigne[idx] ?? 0;
+        const delta   = nouveau - ancien;
+        if (delta === 0) continue;
+
+        await fetch(`/api/banques?id=${lb.banqueId}`, {
+          method:  'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action:  delta > 0 ? 'increment' : 'decrement',
+            montant: Math.abs(delta),
+            motif:   `Suivi ${MOIS_LABELS[mois]} ${annee} — epargne de precaution`,
+          }),
+        });
+      }
+    }
+
+    // 2. epargne_autre -> CompteFonds
+    for (const cat of cats.filter((c: any) => c.type === 'epargne_autre')) {
+      if (!dirtyCats.current.has(cat.id)) continue;
+      const nouveau = parseInt(lignes[cat.id]?.reel ?? '0') || 0;
+      const ancien  = ancres.budgetParCat[cat.id] ?? 0;
+      const delta   = nouveau - ancien;
+      if (delta === 0) continue;
+
+      const compte = trouverCompteParNom(cat.nom, comptes);
+      if (!compte) continue;
+
+      await fetch(`/api/comptes?id=${compte.id}`, {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action:  delta > 0 ? 'increment' : 'decrement',
+          montant: Math.abs(delta),
+        }),
+      });
+    }
+
+    // 3. epargne_investissement liee a une banque -> banques
+    for (const cat of cats.filter((c: any) => c.type === 'epargne_investissement' && c.banqueId)) {
+      if (!dirtyCats.current.has(cat.id)) continue;
+      const nouveau = parseInt(lignes[cat.id]?.reel ?? '0') || 0;
+      const ancien  = ancres.budgetParCat[cat.id] ?? 0;
+      const delta   = nouveau - ancien;
+      if (delta === 0) continue;
+
+      await fetch(`/api/banques?id=${cat.banqueId}`, {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action:  delta > 0 ? 'increment' : 'decrement',
+          montant: Math.abs(delta),
+          motif:   `Suivi ${MOIS_LABELS[mois]} ${annee} — ${cat.nom}`,
+        }),
+      });
+    }
+
+    setSaving(false);
+    setSaved(true);
+    toast.success('Suivi mensuel sauvegarde');
+    (window as any).__setSaveStatus?.('saved');
+
+    // La base est la source de verite : on relit au lieu de rafistoler l etat
+    // local. charger() reinitialise aussi refDB et les marqueurs dirty.
+    await charger();
+
+    setTimeout(() => { setSaved(false); (window as any).__setSaveStatus?.('idle'); }, 3000);
   };
 
-  // ── Sync sauvegarderRef → toujours pointer vers la version courante ──────
-  // Sans ça, le timer scheduleSave garde une référence stale (anciens lignes)
-  // et peut écraser une valeur sauvegardée manuellement (ex: 18000 écrase 0)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { sauvegarderRef.current = sauvegarder; });
-
 
   const copierMoisPrecedent = async () => {
     if (isLocked) return;
     const pm = mois === 1 ? 12 : mois - 1;
     const pa = mois === 1 ? annee - 1 : annee;
-    if (!window.confirm(`Copier les prévisions de ${MOIS_LABELS[pm]} ${pa} vers ce mois ?\nCela remplacera les prévisions actuelles.`)) return;
+    if (!window.confirm(`Copier les previsions de ${MOIS_LABELS[pm]} ${pa} vers ce mois ?\nCela remplacera les previsions actuelles.`)) return;
     setCopying(true);
     const res = await fetch(`/api/budget?annee=${pa}&mois=${pm}`);
     if (res.ok) {
       const prev = await res.json();
-      const newL = { ...lignes };
-      for (const b of (prev.budget ?? [])) {
-        if (newL[b.categorieId] !== undefined) {
-          newL[b.categorieId] = { ...newL[b.categorieId], anticipe: String(b.montantAnticipe) };
+      // Q43 : cet ecran n ecrit pas le previsionnel. La copie ne fait
+      // qu alimenter l affichage ; elle est enregistree depuis l ecran Budget.
+      setLignes(prevL => {
+        const newL = { ...prevL };
+        for (const b of (prev.budget ?? [])) {
+          if (newL[b.categorieId] !== undefined) {
+            newL[b.categorieId] = { ...newL[b.categorieId], anticipe: String(b.montantAnticipe) };
+          }
         }
-      }
-      setLignes(newL);
-      scheduleSave();
-      toast.info(`Prévisions de ${MOIS_LABELS[pm]} ${pa} copiées`);
+        return newL;
+      });
+      toast.info(`Previsions de ${MOIS_LABELS[pm]} ${pa} affichees — enregistrez-les depuis l ecran Budget`);
     } else {
       toast.error('Erreur lors de la copie');
     }
     setCopying(false);
   };
 
+  // Q60 — la modale KPI saisit explicitement prevision ET reel. C est la seule
+  // ecriture 'les_deux' de cet ecran, et elle est assumee : le risque de Q43
+  // etait le renvoi silencieux d une valeur perimee, pas une saisie volontaire.
+  // A revoir quand ModalKPI sera passe en revue.
   const handleModalSave = async (vals: Record<string, { prevision: string; reel: string }>) => {
-    const newLignes = { ...lignes };
+    if (!data?.anneeId && !annee) return;
+    const payload: Record<string, { anticipe: string; reel: string }> = {};
     for (const [catId, val] of Object.entries(vals)) {
-      newLignes[catId] = { anticipe: val.prevision, reel: val.reel };
+      payload[catId] = { anticipe: val.prevision, reel: val.reel };
+      dirtyCats.current.delete(catId); // ecrit ici, plus besoin de le renvoyer
     }
-    setLignes(newLignes);
-    if (!data?.anneeId) return;
-    await fetch('/api/budget', {
+    setLignes(prev => {
+      const next = { ...prev };
+      for (const [catId, val] of Object.entries(vals)) {
+        next[catId] = { anticipe: val.prevision, reel: val.reel };
+      }
+      return next;
+    });
+    const res = await fetch('/api/budget', {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ anneeId: data.anneeId, mois, lignes: newLignes }),
+      body: JSON.stringify({
+        ...(data?.anneeId ? { anneeId: data.anneeId } : {}),
+        annee, mois, scope: 'les_deux', lignes: payload,
+      }),
     });
-    toast.success('Données mises à jour ✓');
-    charger();
+    if (res.ok) { toast.success('Donnees mises a jour'); charger(); }
+    else { toast.error('Erreur lors de la mise a jour'); }
   };
 
-  const ajouterLigneBanque   = () => setLignesBanque(prev => [...prev, { id: `lb-${Date.now()}`, banqueId: banques[0]?.id ?? '', anticipe: 0, reel: '' }]);
-  const supprimerLigneBanque = (id: string) => setLignesBanque(prev => prev.filter(l => l.id !== id));
+  // ── Lignes banque ─────────────────────────────────────────────────────────
+  const ajouterLigneBanque = () => {
+    if (isLocked) return;
+    if (lignesBanque.length >= catsPrecaution.length) {
+      toast.error(
+        `Chaque ligne banque doit correspondre a une categorie d epargne de precaution `
+        + `(${catsPrecaution.length} disponible(s)). Creez d abord la categorie.`,
+      );
+      return;
+    }
+    dirtyBanque.current = true;
+    setLignesBanque(prev => [
+      ...prev,
+      { id: `lb-${Date.now()}`, banqueId: banques[0]?.id ?? '', anticipe: 0, reel: '' },
+    ]);
+  };
 
-  // updateLigneBanque — version PROPRE sans anti-pattern React
-  // Appelle setLignes et setLignesBanque en top-level, jamais l'un dans l'autre
+  const supprimerLigneBanque = (id: string) => {
+    if (isLocked) return;
+    dirtyBanque.current = true;
+    setLignesBanque(prev => prev.filter(l => l.id !== id));
+  };
+
   const updateLigneBanque = (id: string, field: keyof LigneBanque, val: any) => {
     if (isLocked) return;
-    // 1. Mettre à jour lignesBanque
-    setLignesBanque(prev => prev.map(l => l.id === id ? { ...l, [field]: val } : l));
+    dirtyBanque.current = true;
 
-    // 2. Si champ 'reel' modifié → sync lignes[catPrec] en top-level
+    const updated = lignesBanque.map(l => (l.id === id ? { ...l, [field]: val } : l));
+    setLignesBanque(updated);
+
     if (field === 'reel') {
-      const cats = data?.categories ?? [];
-      const catsPrecaution = cats.filter((c: any) => c.type === 'epargne_precaution');
-      if (catsPrecaution.length === 0) return;
-
-      // Calculer la liste banque mise à jour (appliquer le changement explicitement)
-      const updatedBanque = lignesBanque.map(l => l.id === id ? { ...l, reel: String(val) } : l);
-
-      // Mettre à jour lignes[catPrec] en top-level (pas dans un autre callback)
+      const valeurs = valeursPrecautionDepuisBanques(updated, catsPrecaution);
       setLignes(prev => {
-        const synced = { ...prev }; // Inclut TOUTES les catégories (epargne_investissement etc.)
-        catsPrecaution.forEach((cat: any, idx: number) => {
-          const lb = updatedBanque[idx];
-          synced[cat.id] = {
-            anticipe: prev[cat.id]?.anticipe ?? '0',
-            reel:     lb ? (String(lb.reel) || '0') : '0',
-          };
-        });
-        // Surplus : sommer dans la dernière catégorie precaution
-        if (updatedBanque.length > catsPrecaution.length && catsPrecaution.length > 0) {
-          const lastCat = catsPrecaution[catsPrecaution.length - 1];
-          const surplus = updatedBanque.slice(catsPrecaution.length)
-            .reduce((s: number, lb: any) => s + (parseInt(lb.reel) || 0), 0);
-          const current = parseInt(synced[lastCat.id]?.reel || '0');
-          synced[lastCat.id] = { ...synced[lastCat.id], reel: String(current + surplus) };
+        const synced = { ...prev };
+        for (const [catId, valeur] of Object.entries(valeurs)) {
+          synced[catId] = { anticipe: prev[catId]?.anticipe ?? '', reel: valeur };
         }
-        return synced; // Toutes les autres catégories (epargne_investissement...) sont préservées
+        return synced;
       });
+      scheduleSave();
+      setSaved(false);
     }
   };
 
@@ -570,10 +653,7 @@ export default function SuiviPage() {
     <div className="flex items-center justify-center h-64"><div className="spinner scale-150" /></div>
   );
 
-  const cats = data?.categories ?? [];
-
   // ── Totaux ──────────────────────────────────────────────────────────────
-  const catsPrecaution          = cats.filter((c: any) => c.type === 'epargne_precaution');
   const totalAnticipePrecaution = catsPrecaution.reduce((s: number, c: any) => {
     const b = data?.budget?.find((b: any) => b.categorieId === c.id);
     return s + (b?.montantAnticipe ?? 0);
@@ -583,8 +663,6 @@ export default function SuiviPage() {
   const revAnt  = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
   const revReel = cats.filter((c: any) => c.type === 'revenu').reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
 
-  // Épargne = toute l'épargne depuis lignes (source unique, miroir DB)
-  // lignes[catPrec] est initialisé depuis DB dans charger()
   const epAnt  = cats.filter((c: any) => c.type?.startsWith('epargne')).reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.anticipe) || 0), 0);
   const epReel = cats.filter((c: any) => c.type?.startsWith('epargne')).reduce((s: number, c: any) => s + (parseInt(lignes[c.id]?.reel)     || 0), 0);
 
@@ -680,7 +758,7 @@ export default function SuiviPage() {
             <span className="text-primary text-lg">📊</span>
           </div>
           <div>
-            <p className="text-xs text-[var(--text-muted)]">Taux d'exécution</p>
+            <p className="text-xs text-[var(--text-muted)]">Taux d&apos;exécution</p>
             <p className="text-xl font-bold text-primary">{tauxExec.toFixed(1)} %</p>
           </div>
         </div>
@@ -689,7 +767,7 @@ export default function SuiviPage() {
             <span className="text-lg">🐷</span>
           </div>
           <div>
-            <p className="text-xs text-[var(--text-muted)]">Taux d'épargne</p>
+            <p className="text-xs text-[var(--text-muted)]">Taux d&apos;épargne</p>
             <p className={clsx('text-xl font-bold', tauxEp >= 30 ? 'text-green-600' : tauxEp >= 15 ? 'text-amber-500' : 'text-red-500')}>
               {tauxEp.toFixed(1)} %
             </p>
@@ -744,7 +822,6 @@ export default function SuiviPage() {
 
                   return (
                     <Fragment key={type}>
-                      {/* Ligne de groupe */}
                       <tr className="bg-slate-50 dark:bg-dark-card border-t border-[var(--border)] cursor-pointer hover:bg-slate-100 dark:hover:bg-dark-card/80 transition-colors"
                           onClick={() => toggleGroup(type)}>
                         <td className="px-4 py-2.5 text-xs font-bold text-[var(--text-muted)] uppercase tracking-wide">
@@ -767,27 +844,38 @@ export default function SuiviPage() {
                         <>
                           {isEpPrecaution ? (
                             <>
-                              {lignesBanque.map(lb => (
+                              {lignesBanque.map((lb, idx) => (
                                 <tr key={lb.id} className="border-t border-[var(--border)] hover:bg-slate-50/60 dark:hover:bg-dark-card/60 transition-colors">
                                   <td className="px-4 py-2.5 pl-10">
-                                    <select value={lb.banqueId} onChange={e => updateLigneBanque(lb.id, 'banqueId', e.target.value)}
-                                      className="border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none w-full max-w-[180px]">
-                                      <option value="">— Choisir banque —</option>
-                                      {banques.map((b: any) => <option key={b.id} value={b.id}>{b.nomBanque}</option>)}
-                                    </select>
+                                    <div className="flex items-center gap-2">
+                                      <select value={lb.banqueId} disabled={isLocked}
+                                        onChange={e => updateLigneBanque(lb.id, 'banqueId', e.target.value)}
+                                        className="border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none w-full max-w-[180px]">
+                                        <option value="">— Choisir banque —</option>
+                                        {banques.map((b: any) => <option key={b.id} value={b.id}>{b.nomBanque}</option>)}
+                                      </select>
+                                      {catsPrecaution[idx] && (
+                                        <span className="text-xs px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-dark-card text-[var(--text-muted)] flex-shrink-0 truncate max-w-[140px]"
+                                          title={`Rapprochee de : ${catsPrecaution[idx].nom}`}>
+                                          → {catsPrecaution[idx].nom}
+                                        </span>
+                                      )}
+                                    </div>
                                   </td>
                                   <td className="px-4 py-2.5 text-right text-sm text-[var(--text-muted)]">
                                     {lb.anticipe > 0 ? formatFCFA(lb.anticipe) : '—'}
                                   </td>
                                   <td className="px-3 py-2">
-                                    <input type="number" value={lb.reel} onChange={e => updateLigneBanque(lb.id, 'reel', e.target.value)}
+                                    <input type="number" value={lb.reel} disabled={isLocked}
+                                      onChange={e => updateLigneBanque(lb.id, 'reel', e.target.value)}
                                       onKeyDown={onlyNumbers}
                                       placeholder="0"
-                                      className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" />
+                                      className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none disabled:opacity-60" />
                                   </td>
                                   <td className="px-4 py-2.5 text-right text-sm text-[var(--text-muted)]">—</td>
                                   <td className="px-4 py-2.5 text-right">
-                                    <button onClick={() => supprimerLigneBanque(lb.id)} className="text-slate-300 hover:text-red-500 transition-colors">
+                                    <button onClick={() => supprimerLigneBanque(lb.id)} disabled={isLocked}
+                                      className="text-slate-300 hover:text-red-500 transition-colors disabled:opacity-40">
                                       <Trash2 size={13} />
                                     </button>
                                   </td>
@@ -795,10 +883,13 @@ export default function SuiviPage() {
                               ))}
                               <tr className="border-t border-[var(--border)]">
                                 <td colSpan={5} className="px-4 py-2 pl-10">
-                                  <button onClick={ajouterLigneBanque}
-                                    className="flex items-center gap-1.5 text-xs text-primary hover:text-primary-dark font-medium transition-colors">
+                                  <button onClick={ajouterLigneBanque} disabled={isLocked}
+                                    className="flex items-center gap-1.5 text-xs text-primary hover:text-primary-dark font-medium transition-colors disabled:opacity-40">
                                     <Plus size={13} />Ajouter une banque
                                   </button>
+                                  <span className="ml-3 text-[11px] text-[var(--text-muted)]">
+                                    {lignesBanque.length} / {catsPrecaution.length} categorie(s) d&apos;epargne de precaution
+                                  </span>
                                 </td>
                               </tr>
                               {showTotals && (
@@ -856,17 +947,15 @@ export default function SuiviPage() {
                                       </div>
                                     </td>
                                     <td className="px-3 py-2">
-                                      {/* Prévision = lecture seule — modifiable dans Paramètres > Budget de référence */}
+                                      {/* Prévision = lecture seule — modifiable dans Budget prévisionnel */}
                                       <div className="w-full text-right px-2 py-1.5 text-sm text-[var(--text-muted)] select-none">
-                                        {parseInt(lignes[cat.id]?.anticipe || '0') > 0
-                                          ? formatFCFA(parseInt(lignes[cat.id]?.anticipe))
-                                          : <span className="opacity-30">—</span>}
+                                        {ant > 0 ? formatFCFA(ant) : <span className="opacity-30">—</span>}
                                       </div>
                                     </td>
                                     <td className="px-3 py-2">
-                                      <input type="number" value={lignes[cat.id]?.reel ?? ''}
+                                      <input type="number" value={lignes[cat.id]?.reel ?? ''} disabled={isLocked}
                                         onChange={e => handleChange(cat.id, 'reel', e.target.value)} onKeyDown={onlyNumbers} placeholder="0"
-                                        className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" />
+                                        className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none disabled:opacity-60" />
                                     </td>
                                     <td className={clsx('px-4 py-2.5 text-right text-sm font-medium', ecarColor)}>
                                       {ecar !== 0 ? (ecar > 0 ? '+' : '') + formatFCFA(ecar) : '—'}
@@ -954,7 +1043,6 @@ export default function SuiviPage() {
                   <Tooltip formatter={(v: number) => formatFCFA(v)} />
                 </PieChart>
               </ResponsiveContainer>
-              {/* Légende triée par montant décroissant */}
               <div className="mt-2 space-y-1 max-h-32 overflow-y-auto pr-1">
                 {donutData
                   .map((item: any, origIdx: number) => ({ ...item, origIdx }))
