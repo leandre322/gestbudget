@@ -55,6 +55,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { serial } from '@/lib/serial';
+import { reponsePrisma } from '@/lib/prisma-errors';
 import { logAudit } from '@/lib/audit';
 import { csrfCheck, validateBody } from '@/lib/api-helpers';
 import { BudgetPutSchema, BudgetPostSchema } from '@/lib/validators';
@@ -210,8 +211,7 @@ export async function GET(req: NextRequest) {
       messageVerrou: verrouille ? messageVerrou(annee, mois) : null,
     }));
   } catch (e: any) {
-    console.error('GET /api/budget:', e?.message);
-    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
+    return reponsePrisma(e, 'GET /api/budget');   // I22 - voir lib/prisma-errors.ts
   }
 }
 
@@ -343,8 +343,7 @@ export async function PUT(req: NextRequest) {
       derogation: verrouille,
     });
   } catch (e: any) {
-    console.error('PUT /api/budget:', e?.message);
-    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
+    return reponsePrisma(e, 'PUT /api/budget');   // I22 - voir lib/prisma-errors.ts
   }
 }
 
@@ -452,7 +451,6 @@ export async function POST(req: NextRequest) {
       success: true, id: ligne.id, scope, derogation: verrouille,
     }));
   } catch (e: any) {
-    console.error('POST /api/budget:', e?.message);
-    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
+    return reponsePrisma(e, 'POST /api/budget');   // I22 - voir lib/prisma-errors.ts
   }
 }

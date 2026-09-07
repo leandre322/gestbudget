@@ -342,7 +342,7 @@ export async function DELETE(req: NextRequest) {
     const blocages: any = {};
 
     if (soldeNum !== 0 && !force)      blocages.solde      = soldeNum;
-    if (banque.compteFonds && !detach) blocages.fonds      = banque.compteFonds.nom;
+    if (banque.compteFonds.length && !detach) blocages.fonds = banque.compteFonds.map(c => c.nom).join(', ');
     if (banque.categories.length && !detach)
       blocages.categories = banque.categories.map(c => c.nom);
 
@@ -361,9 +361,9 @@ export async function DELETE(req: NextRequest) {
     }
 
     await prisma.$transaction(async (tx) => {
-      if (detach && banque.compteFonds) {
-        await tx.compteFonds.update({
-          where: { id: banque.compteFonds.id },
+      if (detach && banque.compteFonds.length > 0) {
+        await tx.compteFonds.updateMany({
+          where: { banqueId: id, userId: session.user.id },
           data:  { banqueId: null },
         });
       }
@@ -390,7 +390,7 @@ export async function DELETE(req: NextRequest) {
         soldeAuMomentDeLaDesactivation: soldeNum,
         force,
         detach,
-        fondsDetache:      detach && banque.compteFonds ? banque.compteFonds.nom : null,
+        fondsDetache:      detach ? banque.compteFonds.map(c => c.nom) : [],
         categoriesDetachees: detach ? banque.categories.map(c => c.nom) : [],
       },
       req,
