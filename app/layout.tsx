@@ -1,7 +1,19 @@
 import type { Metadata, Viewport } from 'next';
+import { Inter } from 'next/font/google';
 import * as Sentry from '@sentry/nextjs';
 import './globals.css';
 import { ThemeProvider } from '@/lib/theme';
+
+// I20 / P77 : Inter est desormais auto-hebergee par next/font/google.
+// Les <link> vers fonts.googleapis.com et fonts.gstatic.com violaient
+// style-src ET font-src de la CSP (lib/csrf.ts). Plus aucune requete
+// tierce au chargement : la police est servie depuis /_next/static.
+// Inter est une police VARIABLE : ne pas passer "weight" ici.
+const inter = Inter({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-inter',
+});
 
 export function generateMetadata(): Metadata {
   return {
@@ -11,6 +23,9 @@ export function generateMetadata(): Metadata {
     appleWebApp: { capable: true, statusBarStyle: 'default', title: 'GestBudget' },
     other: {
       ...Sentry.getTraceData(),
+      // P82 : appleWebApp.capable emet apple-mobile-web-app-capable, deprecie.
+      // On conserve l ancienne pour les iOS anciens et on ajoute la standard.
+      'mobile-web-app-capable': 'yes',
     },
   };
 }
@@ -19,9 +34,11 @@ export const viewport: Viewport = { themeColor: '#3B82F6' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="fr" suppressHydrationWarning>
+    <html lang="fr" className={inter.variable} suppressHydrationWarning>
       <head>
-        {/* Évite le flash de couleur au chargement */}
+        {/* Evite le flash de couleur au chargement.
+            Ce script inline impose 'unsafe-inline' dans script-src :
+            contrainte assumee tant que la CSP reste sans nonce. */}
         <script dangerouslySetInnerHTML={{ __html: `
           (function() {
             try {
@@ -32,13 +49,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             } catch(e) {}
           })();
         `}} />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
       </head>
       {/*
-        ⚠️ PAS de bg-[var(--bg)] ici — body est transparent pour
-        laisser l'aurora de <html> se voir à travers les surfaces glass.
+        PAS de bg-[var(--bg)] ici -- body est transparent pour laisser
+        l aurora de html se voir a travers les surfaces glass.
         La couleur de fond vient de globals.css (html background).
       */}
       <body className="font-sans antialiased text-[var(--text)]">

@@ -9,10 +9,6 @@ const withPWA = require("next-pwa")({
   // -> navigator.serviceWorker.ready ne resout jamais -> spinner infini sur le bouton push.
   buildExcludes: [/app-build-manifest\.json$/],
   runtimeCaching: [
-    { urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i, handler: "CacheFirst",
-      options: { cacheName: "google-fonts-cache", expiration: { maxEntries: 10, maxAgeSeconds: 31536000 } } },
-    { urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i, handler: "CacheFirst",
-      options: { cacheName: "gstatic-fonts-cache", expiration: { maxEntries: 10, maxAgeSeconds: 31536000 } } },
     { urlPattern: /\/_next\/static\/.*/i, handler: "CacheFirst",
       options: { cacheName: "next-static-cache", expiration: { maxEntries: 200, maxAgeSeconds: 2592000 } } },
     { urlPattern: /\/_next\/image\/.*/i, handler: "StaleWhileRevalidate",
