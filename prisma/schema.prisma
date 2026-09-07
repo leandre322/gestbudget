@@ -1,8 +1,3 @@
-// =============================================
-// GestBudget - Prisma Schema
-// Base : Neon PostgreSQL (gestbudget)
-// =============================================
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,45 +8,29 @@ datasource db {
   directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
-// --- ENUM -------------------------------------
-
-enum TypeCategorie {
-  revenu
-  epargne_precaution
-  epargne_investissement
-  epargne_autre
-  depense_fixe
-  depense_variable
-  depense_occasionnelle
-  remboursement_dette
-}
-
-// --- AUTHENTIFICATION -------------------------
-
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  password      String
-  nom           String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  annees        Annee[]
-  categories    Categorie[]
-  comptesFonds  CompteFonds[]
-  decaissements Decaissement[]
-  banques       Banque[]
-  parametres    Parametres?
-  resetTokens        PasswordResetToken[]
-  pushSubscriptions  PushSubscription[]
-  auditLogs          AuditLog[]
-  projets            Projet[]
-  recurrentes        Recurrente[]
-  budgetAlertes      BudgetAlerte[]
-  patrimoineSnapshots PatrimoineSnapshot[]
-  recurrentesPaiements RecurrentePaiement[]
+  id                   String               @id @default(cuid())
+  email                String               @unique
+  password             String
+  nom                  String?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  active_session       String?
+  annees               Annee[]
+  banques              Banque[]
+  budgetAlertes        BudgetAlerte[]
+  categories           Categorie[]
   categoriesProfil     CategorieProfil[]
+  comptesFonds         CompteFonds[]
+  decaissements        Decaissement[]
+  parametres           Parametres?
   parametresTypes      ParametresType[]
+  resetTokens          PasswordResetToken[]
+  patrimoineSnapshots  PatrimoineSnapshot[]
+  projets              Projet[]
+  pushSubscriptions    PushSubscription[]
+  recurrentes          Recurrente[]
+  recurrentesPaiements RecurrentePaiement[]
 
   @@map("users")
 }
@@ -63,375 +42,324 @@ model PasswordResetToken {
   expiresAt DateTime
   used      Boolean  @default(false)
   createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("password_reset_tokens")
 }
 
-// --- BUDGET -----------------------------------
-
 model Annee {
-  id                   String   @id @default(cuid())
+  id                   String          @id @default(cuid())
   userId               String
   annee                Int
-  // DEPRECIE (S11) : jamais lu par aucune route. L objectif du fonds
-  // d urgence a une source unique = parametres.revenuMensuelReference
-  // multiplie par parametres.nMoisUrgence. Colonne conservee pour ne pas
-  // casser l historique, a supprimer lors d une migration dediee.
-  fondsUrgenceObjectif BigInt   @default(3720000)
+  fondsUrgenceObjectif BigInt          @default(3720000)
   notes                String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
-
-  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  budgetMensuel BudgetMensuel[]
-  decaissements Decaissement[]
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  user                 User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  budgetMensuel        BudgetMensuel[]
+  decaissements        Decaissement[]
 
   @@unique([userId, annee])
   @@map("annees")
 }
 
 model Categorie {
-  id        String        @id @default(cuid())
-  userId    String
-  nom       String
-  type      TypeCategorie
-  sousType  String?
-  ordre     Int           @default(0)
-  isActive  Boolean       @default(true)
-  createdAt DateTime      @default(now())
-
-  tauxReference    Float   @default(0)
-  montantReference BigInt  @default(0)
-  enveloppeActive  Boolean @default(false) // D2 - enveloppes budgetaires
-
-  // -- Liaison vers CompteFonds (epargne_autre uniquement) --
-  compteFondsId String?       @map("compte_fonds_id")
-  compteFonds   CompteFonds?  @relation(fields: [compteFondsId], references: [id], onDelete: SetNull)
-
-  // -- Liaison vers Banque (epargne_investissement uniquement) --
-  // ATTENTION : ce lien est declaratif. Aucun code n ecrit banques.solde
-  // depuis budget_mensuel. Une saisie dans Suivi n incremente pas le compte.
-  banqueId      String?       @map("banque_id")
-  banque        Banque?       @relation("CategorieBanque", fields: [banqueId], references: [id], onDelete: SetNull)
-
-  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  budgetMensuel BudgetMensuel[]
-  projets       Projet[]
-  recurrentes   Recurrente[]
-  profil        CategorieProfil[]
+  id               String            @id @default(cuid())
+  userId           String
+  nom              String
+  type             TypeCategorie
+  sousType         String?
+  ordre            Int               @default(0)
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  montantReference BigInt            @default(0)
+  compteFondsId    String?           @map("compte_fonds_id")
+  banqueId         String?           @map("banque_id")
+  enveloppeActive  Boolean?          @default(false)
+  budgetMensuel    BudgetMensuel[]
+  banque           Banque?           @relation("CategorieBanque", fields: [banqueId], references: [id], onUpdate: NoAction)
+  compteFonds      CompteFonds?      @relation(fields: [compteFondsId], references: [id], onUpdate: NoAction)
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profil           CategorieProfil[]
+  projets          Projet[]
+  recurrentes      Recurrente[]
 
   @@map("categories")
 }
 
 model BudgetMensuel {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   userId          String
   anneeId         String
   categorieId     String
   mois            Int
-  montantAnticipe BigInt   @default(0)
-  montantReel     BigInt   @default(0)
+  montantAnticipe BigInt    @default(0)
+  montantReel     BigInt    @default(0)
   notes           String?
-  updatedAt       DateTime @updatedAt
-
-  annee     Annee     @relation(fields: [anneeId], references: [id], onDelete: Cascade)
-  categorie Categorie @relation(fields: [categorieId], references: [id], onDelete: Cascade)
+  updatedAt       DateTime  @updatedAt
+  annee           Annee     @relation(fields: [anneeId], references: [id], onDelete: Cascade)
+  categorie       Categorie @relation(fields: [categorieId], references: [id], onDelete: Cascade)
 
   @@unique([userId, anneeId, categorieId, mois])
+  @@index([userId, mois, anneeId], map: "idx_budget_user_mois")
   @@map("budget_mensuel")
 }
 
-// S11 : banqueId relie un fonds au compte bancaire qui HEBERGE son argent.
-// Cas d usage : les fonds Yvan et Naelle portent l objectif, les banques
-// BOA - Yvan et BOA - Naelle portent le solde reel.
-// Regle de non double comptage : quand banqueId est renseigne, le solde du
-// fonds ne doit PAS etre additionne au patrimoine, la banque fait foi.
-// Index unique partiel en base (comptes_fonds_banque_uidx) : une banque ne
-// peut heberger qu un seul fonds.
 model CompteFonds {
-  id          String   @id @default(cuid())
-  userId      String
-  nom         String
-  soldeActuel BigInt   @default(0)
-  isActive    Boolean  @default(true)
-  ordre       Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  objectif    BigInt   @default(0)
-  // seuilAlerte est la cible de reconstitution du coach (cran 1 de la
-  // cascade F12), pas seulement un seuil d affichage. objectif reste
-  // reserve a l epargne dediee (fonds non revolving).
-  seuilAlerte BigInt   @default(0)
-
-  banqueId    String?  @unique(map: "comptes_fonds_banque_uidx")
-  banque      Banque?  @relation("CompteFondsBanque", fields: [banqueId], references: [id], onDelete: SetNull, map: "comptes_fonds_banque_fk")
-
+  id           String               @id @default(cuid())
+  userId       String
+  nom          String
+  soldeActuel  BigInt               @default(0)
+  isActive     Boolean              @default(true)
+  ordre        Int                  @default(0)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  objectif     BigInt?              @default(0)
+  seuilAlerte  BigInt?              @default(0)
+  banqueId     String?
+  categories   Categorie[]
+  banque       Banque?              @relation("CompteFondsBanque", fields: [banqueId], references: [id], onUpdate: NoAction, map: "comptes_fonds_banque_fk")
   user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   repartitions DecaissementCompte[]
-  categories   Categorie[]
   projets      Projet[]
 
   @@map("comptes_fonds")
 }
 
 model Decaissement {
-  id            String   @id @default(cuid())
-  userId        String
-  anneeId       String?
-  description   String
-  dateOperation DateTime
-  montantTotal  BigInt   @default(0)
-  notes         String?
-  typeMouvement String   @default("retrait")
+  id               String               @id @default(cuid())
+  userId           String
+  anneeId          String?
+  description      String
+  dateOperation    DateTime
+  montantTotal     BigInt               @default(0)
+  notes            String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  typeMouvement    String               @default("retrait")
   banqueId         String?
-  montantFond      BigInt   @default(0)
-  montantBanque    BigInt   @default(0)
+  montantFond      BigInt               @default(0)
+  montantBanque    BigInt               @default(0)
   soldeAvantFond   BigInt?
   soldeApresFond   BigInt?
   soldeAvantBanque BigInt?
   soldeApresBanque BigInt?
-  sourceVocale     Boolean  @default(false) // D1 - dictee vocale
-  banque           Banque?  @relation("DecaissementBanque", fields: [banqueId], references: [id])
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  sourceVocale     Boolean?             @default(false)
+  repartitions     DecaissementCompte[]
+  annee            Annee?               @relation(fields: [anneeId], references: [id])
+  banque           Banque?              @relation("DecaissementBanque", fields: [banqueId], references: [id], onUpdate: NoAction)
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  annee        Annee?               @relation(fields: [anneeId], references: [id], onDelete: SetNull)
-  repartitions DecaissementCompte[]
-
+  @@index([banqueId], map: "dec_banque_id_idx")
+  @@index([userId, dateOperation], map: "idx_dec_user_date")
   @@map("decaissements")
 }
 
 model DecaissementCompte {
-  id             String @id @default(cuid())
+  id             String       @id @default(cuid())
   decaissementId String
   compteId       String
-  montant        BigInt @default(0)
-
-  decaissement Decaissement @relation(fields: [decaissementId], references: [id], onDelete: Cascade)
-  compte       CompteFonds  @relation(fields: [compteId], references: [id], onDelete: Cascade)
+  montant        BigInt       @default(0)
+  compte         CompteFonds  @relation(fields: [compteId], references: [id], onDelete: Cascade)
+  decaissement   Decaissement @relation(fields: [decaissementId], references: [id], onDelete: Cascade)
 
   @@map("decaissement_comptes")
 }
 
-// TROIS chemins ecrivent banques.solde :
-//   1. /api/decaissements (mode transfert) - n ecrit PAS mouvements_banque
-//   2. /api/banques/mouvements             - ecrit mouvements_banque
-//   3. PUT /api/banques (action set/increment/decrement) - n ecrit PAS
-// Toute reconciliation d historique doit unir les trois. Constat S11 sur
-// BOA-CmpteEpargneLeo : 435 000 de credits non journalises.
 model Banque {
-  id         String   @id @default(cuid())
-  userId     String
-  nomBanque  String
-  typeCompte String?
-  solde      BigInt   @default(0)
-  isActive   Boolean  @default(true)
-  ordre      Int      @default(0)
-  updatedAt  DateTime @updatedAt
-  seuilAlerte BigInt  @default(0)
-
-  // S11 : true = le solde compte dans le fonds d urgence.
-  // false = argent place, fleche ou non mobilisable en cas de coup dur.
-  // Le compte reste visible au patrimoine dans tous les cas.
-  compteUrgence Boolean @default(true)
-
-  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  categories Categorie[] @relation("CategorieBanque")
-  compteFonds CompteFonds? @relation("CompteFondsBanque")
-
-  decaissements Decaissement[]  @relation("DecaissementBanque")
+  id            String            @id @default(cuid())
+  userId        String
+  nomBanque     String
+  typeCompte    String?
+  solde         BigInt            @default(0)
+  updatedAt     DateTime          @updatedAt
+  isActive      Boolean           @default(true)
+  ordre         Int               @default(0)
+  seuilAlerte   BigInt?           @default(0)
+  compteUrgence Boolean           @default(true)
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categories    Categorie[]       @relation("CategorieBanque")
+  compteFonds   CompteFonds[]     @relation("CompteFondsBanque")
+  decaissements Decaissement[]    @relation("DecaissementBanque")
   mouvements    MouvementBanque[]
 
   @@map("banques")
 }
 
 model MouvementBanque {
-  id             String   @id @default(dbgenerated("gen_random_uuid()::text"))
-  userId         String
-  banqueId       String
-  typeMouvement  String
-  montant        BigInt   @default(0)
-  soldeAvant     BigInt   @default(0)
-  soldeApres     BigInt   @default(0)
-  motif          String?
-  dateOperation  DateTime @db.Date
-  createdAt      DateTime @default(now())
-  banque         Banque   @relation(fields: [banqueId], references: [id], onDelete: Cascade)
+  id            String    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  userId        String
+  banqueId      String
+  typeMouvement String
+  montant       BigInt    @default(0)
+  soldeAvant    BigInt    @default(0)
+  soldeApres    BigInt    @default(0)
+  motif         String?
+  dateOperation DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  createdAt     DateTime? @default(now()) @db.Timestamptz(6)
+  banque        Banque    @relation(fields: [banqueId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
+  @@index([banqueId], map: "mvt_banque_banque_idx")
+  @@index([dateOperation(sort: Desc)], map: "mvt_banque_date_idx")
+  @@index([userId], map: "mvt_banque_user_idx")
   @@map("mouvements_banque")
 }
 
 model CorrectifKpi {
-  id        String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  id        String    @id @default(dbgenerated("(gen_random_uuid())::text"))
   userId    String
   kpi       String
   montant   BigInt
   motif     String
-  createdAt DateTime @default(now())
+  createdAt DateTime? @default(now()) @db.Timestamptz(6)
 
+  @@index([kpi], map: "corr_kpi_kpi_idx")
+  @@index([userId], map: "corr_kpi_user_idx")
   @@map("correctifs_kpi")
 }
 
 model Parametres {
-  id            String   @id @default(cuid())
-  userId        String   @unique
-  devise        String   @default("FCFA")
-  themeCouleur  String   @default("blue")
-  anneeCourante Int      @default(2026)
-  moisCourant   Int      @default(1)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  revenuMensuelReference      BigInt @default(0)
-  objectifEpargneAnnuel       BigInt @default(0)
-  objectifRevenusAnnuel       BigInt @default(0)
-  objectifRemboursementAnnuel BigInt @default(0)
-  nMoisUrgence                Int    @default(6)
-  rapportEmailActif            Boolean @default(true)
-  rapportEmailJour             Int     @default(1)
-  rapportEmailHeure            Int     @default(8)
-  seuilAnomaliesPct            Int     @default(50)
-  langueVocale                 String  @default("fr-FR") // D1 - dictee vocale
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                            String   @id @default(cuid())
+  userId                        String   @unique
+  devise                        String   @default("FCFA")
+  themeCouleur                  String   @default("blue")
+  anneeCourante                 Int      @default(2026)
+  moisCourant                   Int      @default(1)
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+  revenuMensuelReference        BigInt   @default(0)
+  objectif_epargne_annuel       BigInt?  @default(0)
+  objectif_revenus_annuel       BigInt?  @default(0)
+  objectif_remboursement_annuel BigInt?  @default(0)
+  n_mois_urgence                Int?     @default(6)
+  objectifEpargneAnnuel         BigInt?  @default(0)
+  objectifRevenusAnnuel         BigInt?  @default(0)
+  objectifRemboursementAnnuel   BigInt?  @default(0)
+  nMoisUrgence                  Int?     @default(6)
+  rapportEmailActif             Boolean? @default(true)
+  rapportEmailJour              Int?     @default(1)
+  rapportEmailHeure             Int?     @default(8)
+  seuilAnomaliesPct             Int?     @default(50)
+  langueVocale                  String?  @default("fr-FR")
+  user                          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("parametres")
 }
 
 model Projet {
-  id             String    @id @default(dbgenerated("gen_random_uuid()::text"))
-  userId         String
-  nom            String
-  description    String?
-  montantCible   BigInt    @default(0)
-  montantActuel  BigInt    @default(0)
-  dateDebut      DateTime  @db.Date
-  dateCible      DateTime  @db.Date
-  statut         String    @default("actif")
-  categorieId    String?
-  compteFondsId  String?
-  notifSeuils    String    @default("50,75,100")
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id            String       @id @default(dbgenerated("(gen_random_uuid())::text"))
+  userId        String
+  nom           String
+  description   String?
+  montantCible  BigInt       @default(0)
+  montantActuel BigInt       @default(0)
+  dateDebut     DateTime     @default(dbgenerated("CURRENT_DATE")) @db.Date
+  dateCible     DateTime     @db.Date
+  statut        String       @default("actif")
+  categorieId   String?
+  compteFondsId String?
+  notifSeuils   String       @default("50,75,100")
+  createdAt     DateTime?    @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime?    @default(now()) @updatedAt @db.Timestamptz(6)
+  categorie     Categorie?   @relation(fields: [categorieId], references: [id], onUpdate: NoAction)
+  compteFonds   CompteFonds? @relation(fields: [compteFondsId], references: [id], onUpdate: NoAction)
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  categorie   Categorie?   @relation(fields: [categorieId], references: [id], onDelete: SetNull)
-  compteFonds CompteFonds? @relation(fields: [compteFondsId], references: [id], onDelete: SetNull)
-
-  @@index([userId])
+  @@index([userId, statut], map: "idx_projets_statut")
+  @@index([userId], map: "idx_projets_user")
   @@map("projets")
 }
 
 model PushSubscription {
-  id        String   @id @default(cuid())
+  id        String    @id @default(dbgenerated("(gen_random_uuid())::text"))
   userId    String
   endpoint  String
   p256dh    String
   auth      String
-  createdAt DateTime @default(now())
+  createdAt DateTime? @default(now()) @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_push_user")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, endpoint])
+  @@unique([userId, endpoint], map: "uq_push_user_endpoint")
+  @@index([userId], map: "idx_push_sub_user")
   @@map("push_subscriptions")
 }
 
 model AuditLog {
-  id         String   @id @default(dbgenerated("gen_random_uuid()::text"))
-  userId     String   @map("user_id")
+  id         String    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  userId     String    @map("user_id")
   action     String
-  entityType String?  @map("entity_type")
-  entityId   String?  @map("entity_id")
-  entityNom  String?  @map("entity_nom")
+  entityType String?   @map("entity_type")
+  entityId   String?   @map("entity_id")
+  entityNom  String?   @map("entity_nom")
   details    Json?
-  ipAddress  String?  @map("ip_address")
-  createdAt  DateTime @default(now()) @map("created_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ipAddress  String?   @map("ip_address")
+  createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([userId])
-  @@index([action])
-  @@index([createdAt])
+  @@index([createdAt(sort: Desc)])
+  @@index([action], map: "idx_audit_action")
+  @@index([createdAt], map: "idx_audit_created")
+  @@index([userId], map: "idx_audit_user")
   @@map("audit_logs")
 }
 
 model CronLog {
-  id         String   @id @default(cuid())
+  id         String   @id(map: "CronLog_pkey") @default(cuid())
   jobName    String
   status     String
   startedAt  DateTime @default(now())
   durationMs Int
   details    String?
 
-  @@index([jobName, startedAt])
+  @@index([jobName, startedAt], map: "CronLog_jobName_startedAt_idx")
   @@map("cron_logs")
 }
 
-// --- AUTOMATISATION (Session 6) ---------------
-
 model Recurrente {
-  id          String   @id @default(dbgenerated("gen_random_uuid()::text"))
-  userId      String
-  categorieId String
-  libelle     String
-  montant     BigInt   @default(0)
-  typeFlux    String   @default("decaissement")
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // S7 / F5 - Calendrier d echeances.
-  // jourEcheance ne pilote PAS la generation : le cron mensuel continue de
-  // s executer le 1er (idempotence (recurrenteId, periode) preservee).
-  // Contrainte CHECK en base : jourEcheance IS NULL OR BETWEEN 1 AND 31.
-  // Contrainte CHECK en base (S10) : rappelJoursAvant BETWEEN 0 AND 15.
-  // Toute evolution de ces bornes exige une migration Neon dans la meme session.
+  id               String                @id @default(dbgenerated("(gen_random_uuid())::text"))
+  userId           String
+  categorieId      String
+  libelle          String
+  montant          BigInt                @default(0)
+  typeFlux         String                @default("decaissement")
+  isActive         Boolean               @default(true)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @default(now()) @updatedAt
   jourEcheance     Int?
-  rappelActif      Boolean @default(false)
-  rappelJoursAvant Int     @default(3)
-
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  categorie  Categorie   @relation(fields: [categorieId], references: [id], onDelete: Cascade)
-  executions RecurrenteExecution[]
-  paiements  RecurrentePaiement[]
+  rappelActif      Boolean               @default(false)
+  rappelJoursAvant Int                   @default(3)
+  categorie        Categorie             @relation(fields: [categorieId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user             User                  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  executions       RecurrenteExecution[]
+  paiements        RecurrentePaiement[]
 
   @@index([userId])
   @@map("recurrentes")
 }
 
-// GARDE D IDEMPOTENCE DU CRON. Ne jamais ecrire dans cette table depuis le
-// front : un P2002 serait interprete comme "deja fait" et supprimerait
-// silencieusement les incrementations de budget des mois suivants.
 model RecurrenteExecution {
-  id           String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  id           String     @id @default(dbgenerated("(gen_random_uuid())::text"))
   recurrenteId String
   userId       String
   periode      String
-  montant      BigInt   @default(0)
-  createdAt    DateTime @default(now())
-
-  recurrente Recurrente @relation(fields: [recurrenteId], references: [id], onDelete: Cascade)
+  montant      BigInt     @default(0)
+  createdAt    DateTime   @default(now())
+  recurrente   Recurrente @relation(fields: [recurrenteId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([recurrenteId, periode], map: "recurrentes_executions_unique")
   @@index([userId, periode], map: "recurrentes_executions_user_periode_idx")
   @@map("recurrentes_executions")
 }
 
-// Pointage utilisateur, table separee de RecurrenteExecution (voir ci-dessus).
-// Depointer = DELETE de la ligne. L historique vit dans AuditLog.
 model RecurrentePaiement {
-  id           String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  id           String     @id @default(dbgenerated("(gen_random_uuid())::text"))
   recurrenteId String
   userId       String
   periode      String
-  payeAt       DateTime @default(now())
-  createdAt    DateTime @default(now())
-
-  recurrente Recurrente @relation(fields: [recurrenteId], references: [id], onDelete: Cascade)
-  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payeAt       DateTime   @default(now())
+  createdAt    DateTime   @default(now())
+  recurrente   Recurrente @relation(fields: [recurrenteId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([recurrenteId, periode], map: "recurrentes_paiements_unique")
   @@index([userId, periode], map: "recurrentes_paiements_user_periode_idx")
@@ -439,28 +367,21 @@ model RecurrentePaiement {
 }
 
 model BudgetAlerte {
-  id          String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  id          String   @id @default(dbgenerated("(gen_random_uuid())::text"))
   userId      String
   categorieId String
   anneeId     String
   mois        Int
   seuil       Int
   sentAt      DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([userId, categorieId, anneeId, mois, seuil], map: "budget_alertes_unique")
   @@map("budget_alertes")
 }
 
-// --- PATRIMOINE (Session 7 / F8) --------------
-
-// Une ligne par compte et par date, jamais un agregat pre-calcule.
-// typeSource : banque | fonds (contrainte CHECK en base)
-// sourceId   : pas de cle etrangere volontairement, un compte supprime ne
-//              doit pas effacer son historique de patrimoine.
 model PatrimoineSnapshot {
-  id           String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  id           String   @id @default(dbgenerated("(gen_random_uuid())::text"))
   userId       String
   dateSnapshot DateTime @db.Date
   typeSource   String
@@ -468,68 +389,71 @@ model PatrimoineSnapshot {
   sourceNom    String
   solde        BigInt   @default(0)
   createdAt    DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "patrimoine_snapshots_user_fk")
 
   @@unique([userId, dateSnapshot, typeSource, sourceId], map: "patrimoine_snapshots_unique")
-  @@index([userId, dateSnapshot(sort: Desc)],            map: "patrimoine_snapshots_user_date_idx")
+  @@index([userId, dateSnapshot(sort: Desc)], map: "patrimoine_snapshots_user_date_idx")
   @@map("patrimoine_snapshots")
 }
 
-// --- COACH BUDGETAIRE (Session 11 / F12) ------
-
-// Table separee de categories, jamais des colonnes dessus : F12 doit rester
-// retirable d un DROP TABLE sans toucher au coeur du modele.
-// Contraintes CHECK posees en base, non representables en Prisma :
-//   flexibilite IN (incompressible, negociable, arbitrable, superflu, inconnue)
-//   priorite BETWEEN 1 AND 5
-// Toute valeur ajoutee cote Zod exige une migration Neon dans la meme session.
 model CategorieProfil {
-  id              String    @id @default(dbgenerated("gen_random_uuid()::text"))
+  id              String    @id @default(dbgenerated("(gen_random_uuid())::text"))
   userId          String
   categorieId     String
   flexibilite     String    @default("inconnue")
   priorite        Int       @default(3)
   engagementFinAt DateTime? @db.Date
   moisSaison      String?
-  updatedAt       DateTime  @updatedAt
-
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade, map: "categories_profil_user_fk")
-  categorie Categorie @relation(fields: [categorieId], references: [id], onDelete: Cascade, map: "categories_profil_categorie_fk")
+  updatedAt       DateTime  @default(now()) @updatedAt
+  categorie       Categorie @relation(fields: [categorieId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "categories_profil_categorie_fk")
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "categories_profil_user_fk")
 
   @@unique([userId, categorieId], map: "categories_profil_user_categorie_uidx")
   @@map("categories_profil")
 }
 
-// --- ALLOCATION PAR TYPE (Session 12 / M9) ----
-
-// Q30 = C : l allocation budgetaire par grande categorie vit ICI, plus sur
-// categories.tauxReference. Motif (P2) : /api/parametres faisait un updateMany
-// sur categories.montantReference, ecrasant sans trace les glissements
-// d enveloppes ecrits par /api/enveloppes/glissement.
-// Regle : /api/parametres n ecrit PLUS JAMAIS sur categories.
-//
-// P29 : categories.tauxReference repetait le taux du type sur chaque ligne.
-// budget/page.tsx en faisait la SOMME (296,14 % au lieu de 22,78 % sur
-// depense_fixe), parametres/page.tsx le MAX. Une table dediee supprime
-// l ambiguite. La colonne categories.tauxReference sera supprimee en fin de
-// S13, apres deploiement du code qui cesse de la lire (expand/contract).
-//
-// Backfill M9 verifie en S13 : semantique MAX, somme des 8 taux = 100,00 %,
-// somme des montants = 790 000 = revenuMensuelReference. Donnees saines.
-//
-// Contrainte SUM(tauxReference) <= 100 par utilisateur : non representable en
-// base, portee par le superRefine Zod cote /api/parametres (P28).
 model ParametresType {
-  id               String        @id @default(dbgenerated("gen_random_uuid()::text"))
+  id               String        @id @default(dbgenerated("(gen_random_uuid())::text"))
   userId           String
   type             TypeCategorie
   tauxReference    Float         @default(0)
   montantReference BigInt        @default(0)
-  updatedAt        DateTime      @updatedAt @db.Timestamp(3)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade, map: "parametres_types_user_fk")
+  updatedAt        DateTime      @default(now()) @updatedAt
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "parametres_types_user_fk")
 
   @@unique([userId, type], map: "parametres_types_user_type_uidx")
   @@map("parametres_types")
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model backup_categories_taux_s13 {
+  id               String?
+  userId           String?
+  type             TypeCategorie?
+  tauxReference    Float?
+  montantReference BigInt?
+  backup_at        DateTime?      @db.Timestamptz(6)
+
+  @@map("_backup_categories_taux_s13")
+  @@ignore
+}
+
+model rate_limits {
+  key      String   @id
+  count    Int?     @default(1)
+  reset_at DateTime @db.Timestamptz(6)
+
+  @@index([reset_at], map: "idx_rate_limits_reset")
+  @@index([reset_at], map: "idx_rate_limits_reset_at")
+}
+
+enum TypeCategorie {
+  revenu
+  epargne_precaution
+  epargne_investissement
+  epargne_autre
+  depense_fixe
+  depense_variable
+  depense_occasionnelle
+  remboursement_dette
 }
