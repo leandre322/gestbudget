@@ -40,6 +40,17 @@ import { formatFCFA } from '@/types';
 // d'échéance, PLUS les inactives déjà pointées sur la période. Sans cette
 // seconde population, une récurrente résiliée après paiement disparaîtrait de
 // la liste en restant pointée, sans moyen de la dépointer.
+//
+// ── S21 / P124 : message de confirmation de suppression ──────────────────────
+// La suppression a deux issues distinctes côté serveur (P102) :
+//   • historique de générations présent  → soft delete, rien n'est perdu ;
+//   • aucune génération                  → suppression DURE, qui cascade en
+//     base sur `recurrentes_executions` ET sur `recurrentes_paiements`.
+// Le second cas est atteignable en pratique : une récurrente créée puis pointée
+// à la main, sans avoir jamais été générée par le cron, perd la totalité de ses
+// pointages — toutes périodes confondues, pas seulement celle affichée. Le
+// nombre exact n'est pas connu du client, qui ne charge que la période courante :
+// le message avertit sans avancer de chiffre.
 
 const MOIS_PAR_AN = 12;
 
@@ -383,23 +394,39 @@ export default function RecurrentesPage() {
   };
 
   // ── Supprimer ───────────────────────────────────────────────────────────
-  // La suppression cascade en base sur recurrentes_executions ET
-  // recurrentes_paiements : le message doit le dire.
+  // P124 — le message énonce les DEUX issues possibles et nomme ce qui est
+  // détruit dans chacune. La version précédente ne mentionnait que la garde
+  // d'idempotence du cron, en taisant la cascade sur `recurrentes_paiements` :
+  // l'utilisateur pouvait perdre des mois de pointages sans avoir été averti.
   const supprimer = async (r: Rec) => {
-    if (!window.confirm(
-      `Supprimer la récurrente "${r.libelle}" ?\nSi elle a déjà été générée par le cron, elle sera désactivée et non supprimée : la garde qui empêche une double génération est conservée.`
-    )) return;
+    const message =
+      `Supprimer la récurrente « ${r.libelle} » ?\n\n` +
+      `Deux cas possibles, tranchés par le serveur :\n\n` +
+      `1. Elle a déjà été générée par le cron\n` +
+      `   → elle est DÉSACTIVÉE, pas supprimée. Historique de générations et ` +
+      `pointages conservés. La garde qui empêche une double génération reste en place.\n\n` +
+      `2. Elle n'a jamais été générée\n` +
+      `   → SUPPRESSION DÉFINITIVE. Tous les pointages de paiement associés sont ` +
+      `supprimés avec elle, sur TOUTES les périodes, pas seulement le mois affiché.\n\n` +
+      `Dans les deux cas, les montants déjà écrits dans le budget ne sont pas touchés.`;
+
+    if (!window.confirm(message)) return;
+
     try {
       const res = await fetch(`/api/recurrentes?id=${r.id}`, { method: 'DELETE' });
       if (res.ok) {
-        // P102 : le serveur desactive au lieu de supprimer quand un historique
-        // de generations existe. L ecran doit dire lequel des deux a eu lieu.
+        // P102 : le serveur désactive au lieu de supprimer quand un historique
+        // de générations existe. L'écran doit dire lequel des deux a eu lieu.
         const d = await res.json().catch(() => null);
-        toast.success(d?.soft ? 'Désactivée ✓ — historique de générations conservé' : 'Supprimée ✓');
+        toast.success(
+          d?.soft
+            ? 'Désactivée ✓ — historique et pointages conservés'
+            : 'Supprimée ✓ — pointages associés supprimés'
+        );
         charger();
       } else {
         const err = await res.json().catch(() => null);
-        toast.error(err?.error ?? err?.message ?? 'Erreur');
+        toast.error(err?.error ?? err?.message ?? 'Erreur'); // P105
       }
     } catch {
       toast.error('Erreur réseau');

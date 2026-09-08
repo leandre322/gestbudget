@@ -1,8 +1,32 @@
 // =============================================================================
-// app/api/budget/route.ts  --  etape 10b, version 3 (S15)
+// app/api/budget/route.ts  --  etape 10b, version 4 (S21)
 // =============================================================================
 // Ferme : Q43 (scope), P41, P43, P45, P55  [v2, inchange]
-//       + P62 (verrou serveur), P66 (POST non garde), Q61 (coherence scope).
+//       + P62 (verrou serveur), P66 (POST non garde), Q61 (coherence scope)
+//       + P119 (annee creee avant le controle de verrou)
+//       + P120 / Q182 (bornes de montant, refus 422)
+//
+// P119 — resoudreAnnee() faisait un upsert AVANT l evaluation du verrou. Une
+//        requete refusee en 423 laissait donc une ligne `annees` derriere elle :
+//        une ecriture produite par une requete rejetee. Le millesime est
+//        desormais lu SANS ecrire (resoudreMillesime), le verrou est evalue sur
+//        ce millesime, et la ligne `annees` n est materialisee (materialiserAnnee)
+//        qu une fois TOUS les gardes franchis, juste avant la transaction.
+//        Nombre de requetes inchange dans le chemin nominal : l upsert est
+//        deplace, pas duplique. Dans le chemin refuse il disparait.
+//        Le GET conserve sa creation bornee (P55) : decision assumee, une
+//        navigation legitime a le droit de materialiser l annee affichee.
+//
+// P120 / Q182 — versEntier() clampait silencieusement a 0 et n avait aucune
+//        borne haute. Un montant negatif devenait 0 sans que l appelant le
+//        sache, et 9 223 372 036 854 775 807 passait jusqu au bigint. Trois
+//        refus explicites en 422 : valeur non numerique, montant negatif,
+//        montant superieur a MONTANT_MAX (1 000 000 000 FCFA).
+//        Consequence sur P69 : le clamp silencieux des negatifs disparait cote
+//        serveur. La normalisation client (I14) reste utile pour eviter
+//        l aller-retour, elle n est plus le seul garde-fou.
+//        Seuls les champs REELLEMENT ecrits sont valides : en scope 'suivi' la
+//        cle `anticipe` est absente (Q61) et ne doit pas produire de 422.
 //
 // P62 — la regle « verrouille apres le 5 du mois suivant » n existait que dans
 //       budget/page.tsx : evaluee sur l horloge du POSTE, annulable par un
@@ -22,11 +46,6 @@
 //       422. Le controle porte sur le body BRUT et non sur la sortie de Zod :
 //       un `.default()` sur `reel` dans BudgetPutSchema materialiserait la cle
 //       et ferait echouer tout envoi 'previsionnel' legitime.
-//       Etat des appelants au moment de la livraison :
-//         suivi/page.tsx  sauvegarder()     { reel }            + 'suivi'      OK
-//         suivi/page.tsx  handleModalSave() { anticipe, reel }  + 'les_deux'   OK
-//         budget/page.tsx                   { anticipe, reel }  + defaut       KO
-//       Seul ⑦ est non conforme, et il est reecrit dans la meme session.
 //
 // P41 — include: { categorie: true } chargeait la categorie entiere pour chaque
 //       ligne (motif P19). Remplace par un select restreint.
@@ -42,12 +61,31 @@
 //       une lecture, declenchable via ?annee=1999. Creation bornee a
 //       [anneeCourante-1, anneeCourante+1].
 //
+// ORDRE DES GARDES (PUT et POST), a preserver en cas de reprise :
+//   1. session         401
+//   2. csrf            403
+//   3. json            400
+//   4. zod             400/422
+//   5. Q61 scope       422
+//   6. millesime       404          <- LECTURE SEULE
+//   7. verrou P62/P66  423
+//   8. proprietes cat  404
+//   9. montants P120   422
+//  10. materialisation annee        <- PREMIERE ECRITURE
+//  11. transaction
+//
 // LIMITE CONNUE (Q67) : aucun jeton de concurrence sur le PUT. Deux onglets sur
 // le meme mois : le dernier ecrase. Atenue cote client par l envoi des seules
 // lignes modifiees (dirtyCats), pas ferme cote serveur.
 //
 // LIMITE CONNUE (Q68) : /api/quick-add ecrit montantReel par increment et n est
 // pas garde par le verrou. A traiter pour que la cloture soit reelle.
+//
+// LIMITE CONNUE (S21) : le millesime fourni dans le body n est borne par aucun
+// intervalle sur PUT/POST, contrairement au GET (FENETRE_CREATION_ANNEE). Un
+// PUT sur annee=1999 materialise donc une ligne `annees` hors de toute fenetre
+// utile. Non corrige ici : ce serait un changement de contrat d API, pas une
+// correction de P119. A arbitrer.
 // =============================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -64,35 +102,85 @@ import { estMoisVerrouille, messageVerrou, MOTIF_DEROGATION } from '@/lib/period
 
 export const dynamic = 'force-dynamic';
 
+// P88 -- le PUT en masse ouvre une transaction de N upserts. Le defaut Hobby
+// de 10 s est insuffisant sur un mois complet avec une base froide.
+export const maxDuration = 60;
+
 /** Fenetre dans laquelle un GET a le droit de creer la ligne Annee (P55). */
 const FENETRE_CREATION_ANNEE = 1;
+
+/** P120 / Q182 -- plafond d un montant unitaire, en FCFA. */
+const MONTANT_MAX = 1000000000;
 
 const CATEGORIE_SELECT = {
   select: { id: true, nom: true, type: true, ordre: true },
 } as const;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// P120 -- normalisation et bornes des montants
+// ─────────────────────────────────────────────────────────────────────────────
+
+type MotifMontant = 'non_numerique' | 'negatif' | 'hors_borne';
+
+interface VerdictMontant {
+  ok: boolean;
+  valeur: bigint;
+  motif: MotifMontant | null;
+}
+
+/** Champ absent ou vide : 0, sans erreur. Comportement historique conserve. */
+const MONTANT_ABSENT: VerdictMontant = { ok: true, valeur: BigInt(0), motif: null };
+
 /**
- * Normalisation defensive. Clampe a 0 : un montant negatif devient 0.
- * P69 : ce clamp est silencieux cote serveur. La saisie doit etre normalisee
- * ET signalee cote client (I14) ; ici on protege la base, pas l utilisateur.
+ * Convertit une valeur de body en bigint borne.
+ * - undefined / null / chaine vide  -> 0, accepte
+ * - non numerique                   -> refus 'non_numerique'
+ * - < 0                             -> refus 'negatif'      (P120, ex-clamp P69)
+ * - > MONTANT_MAX                   -> refus 'hors_borne'   (Q182)
+ * Les decimales sont tronquees sans erreur : 12.7 -> 12.
  */
-function versEntier(v: unknown): bigint {
-  const n = typeof v === 'number' ? v : parseInt(String(v ?? '0'), 10);
-  if (!Number.isFinite(n)) return BigInt(0);
-  return BigInt(Math.max(0, Math.trunc(n)));
+function versEntier(v: unknown): VerdictMontant {
+  if (v === undefined || v === null || v === '') return MONTANT_ABSENT;
+
+  const n = typeof v === 'number' ? v : Number(String(v).trim());
+  if (!Number.isFinite(n)) return { ok: false, valeur: BigInt(0), motif: 'non_numerique' };
+
+  const e = Math.trunc(n);
+  if (e < 0)           return { ok: false, valeur: BigInt(0), motif: 'negatif' };
+  if (e > MONTANT_MAX) return { ok: false, valeur: BigInt(0), motif: 'hors_borne' };
+
+  return { ok: true, valeur: BigInt(e), motif: null };
+}
+
+function messageMontant(motif: MotifMontant | null): string {
+  if (motif === 'negatif')    return 'montant negatif refuse';
+  if (motif === 'hors_borne') return 'montant superieur au plafond de ' + MONTANT_MAX + ' FCFA';
+  return 'valeur non numerique';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P119 -- resolution du millesime en deux temps
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface CibleAnnee {
+  /** null quand la ligne `annees` n existe pas encore : materialisation differee. */
+  id: string | null;
+  annee: number;
 }
 
 /**
- * Resout l anneeId a partir du body : soit un anneeId dont on verifie la
- * propriete, soit une annee que l on cree si besoin (P43).
- * Retourne AUSSI le millesime, indispensable au controle de verrou : sans lui
- * un appelant fournissant seulement anneeId contournerait le garde.
+ * LECTURE SEULE. Resout le millesime necessaire au controle de verrou sans
+ * jamais ecrire. Deux entrees possibles :
+ *   - anneeId : verifie la propriete (P43) et retourne le millesime en base.
+ *   - annee   : retenu tel quel, la ligne sera creee plus tard si les gardes
+ *               passent.
+ * Retourne null quand la cible est introuvable ou non fournie -> 404.
  */
-async function resoudreAnnee(
+async function resoudreMillesime(
   userId: string,
   anneeId: string | undefined,
   annee: number | undefined,
-): Promise<{ id: string; annee: number } | null> {
+): Promise<CibleAnnee | null> {
   if (anneeId) {
     const rec = await prisma.annee.findFirst({
       where: { id: anneeId, userId }, select: { id: true, annee: true },
@@ -100,14 +188,23 @@ async function resoudreAnnee(
     return rec ? { id: rec.id, annee: rec.annee } : null;
   }
   if (annee === undefined) return null;
+  return { id: null, annee };
+}
 
+/**
+ * PREMIERE ECRITURE de la requete. A n appeler qu apres le verrou (P62/P66),
+ * le controle de propriete des categories (P43) et la validation des montants
+ * (P120). L upsert n est pas duplique : il est simplement deplace ici.
+ */
+async function materialiserAnnee(userId: string, cible: CibleAnnee): Promise<string> {
+  if (cible.id) return cible.id;
   const rec = await prisma.annee.upsert({
-    where:  { userId_annee: { userId, annee } },
-    create: { userId, annee },
+    where:  { userId_annee: { userId, annee: cible.annee } },
+    create: { userId, annee: cible.annee },
     update: {},
-    select: { id: true, annee: true },
+    select: { id: true },
   });
-  return { id: rec.id, annee: rec.annee };
+  return rec.id;
 }
 
 /** Lit le drapeau de derogation sur le body brut (Zod ne le connait pas). */
@@ -172,7 +269,8 @@ export async function GET(req: NextRequest) {
       where: { userId_annee: { userId, annee } },
     });
 
-    // P55 -- creation bornee a la fenetre utile.
+    // P55 -- creation bornee a la fenetre utile. Conservee volontairement (S21) :
+    // une navigation legitime a le droit de materialiser l annee affichee.
     if (!anneeRec) {
       const courante = new Date().getFullYear();
       const dansFenetre =
@@ -209,6 +307,7 @@ export async function GET(req: NextRequest) {
       categories,
       verrouille,
       messageVerrou: verrouille ? messageVerrou(annee, mois) : null,
+      plafondMontant: MONTANT_MAX,   // P120 -- le client peut borner la saisie
     }));
   } catch (e: any) {
     return reponsePrisma(e, 'GET /api/budget');   // I22 - voir lib/prisma-errors.ts
@@ -241,7 +340,7 @@ export async function PUT(req: NextRequest) {
 
     const { mois, lignes, scope } = body!;
 
-    // Q61 -- coherence scope <-> cles, sur le body brut.
+    // ── 5. Q61 -- coherence scope <-> cles, sur le body brut.
     const fautives = incoherencesScope(raw, scope);
     if (fautives.length > 0) {
       const interdite = scope === 'previsionnel' ? 'reel' : 'anticipe';
@@ -255,13 +354,14 @@ export async function PUT(req: NextRequest) {
       );
     }
 
-    const cible = await resoudreAnnee(userId, body!.anneeId, body!.annee);
+    // ── 6. P119 -- millesime en LECTURE SEULE. Aucune ecriture avant le verrou.
+    const cible = await resoudreMillesime(userId, body!.anneeId, body!.annee);
     if (!cible) {
       return NextResponse.json({ error: 'Annee introuvable' }, { status: 404 });
     }
-    const anneeId = cible.id;
 
-    // P62 -- garde de verrou. Le millesime vient de la BASE, pas du body.
+    // ── 7. P62 -- garde de verrou. Le millesime vient de la BASE quand un
+    //      anneeId est fourni, jamais d une valeur libre du body.
     const verrouille = estMoisVerrouille(cible.annee, mois);
     if (verrouille && !derogation) {
       return NextResponse.json(
@@ -275,9 +375,10 @@ export async function PUT(req: NextRequest) {
       );
     }
 
-    // P43 -- toutes les categories citees doivent appartenir a l utilisateur.
+    // ── 8. P43 -- toutes les categories citees doivent appartenir a l utilisateur.
     const categorieIds = Object.keys(lignes);
     if (categorieIds.length === 0) {
+      // P119 : sortie avant toute ecriture, la ligne `annees` n est pas creee.
       return NextResponse.json({ success: true, lignesEcrites: 0 });
     }
 
@@ -297,24 +398,54 @@ export async function PUT(req: NextRequest) {
     const ecrireAnticipe = scope === 'previsionnel' || scope === 'les_deux';
     const ecrireReel     = scope === 'suivi'        || scope === 'les_deux';
 
-    // P45 -- une seule transaction, atomique.
-    const operations = categorieIds.map(categorieId => {
+    // ── 9. P120 -- validation des montants AVANT toute ecriture. Seules les
+    //      colonnes reellement ecrites sont validees : en scope 'suivi' la cle
+    //      `anticipe` est absente (Q61) et ne doit pas produire de refus.
+    const invalides: Array<{ categorieId: string; champ: string; motif: string }> = [];
+    const valides = new Map<string, { anticipe: bigint; reel: bigint }>();
+
+    for (const categorieId of categorieIds) {
       const vals = lignes[categorieId];
-      const anticipe = versEntier(vals.anticipe);
-      const reel     = versEntier(vals.reel);
+      const va = ecrireAnticipe ? versEntier(vals?.anticipe) : MONTANT_ABSENT;
+      const vr = ecrireReel     ? versEntier(vals?.reel)     : MONTANT_ABSENT;
+
+      if (!va.ok) invalides.push({ categorieId, champ: 'anticipe', motif: messageMontant(va.motif) });
+      if (!vr.ok) invalides.push({ categorieId, champ: 'reel',     motif: messageMontant(vr.motif) });
+
+      valides.set(categorieId, { anticipe: va.valeur, reel: vr.valeur });
+    }
+
+    if (invalides.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'Montant(s) refuse(s)',
+          plafond: MONTANT_MAX,
+          nbInvalides: invalides.length,
+          lignes: invalides.slice(0, 10),
+        },
+        { status: 422 },
+      );
+    }
+
+    // ── 10. P119 -- premiere ecriture, tous les gardes franchis.
+    const anneeId = await materialiserAnnee(userId, cible);
+
+    // ── 11. P45 -- une seule transaction, atomique.
+    const operations = categorieIds.map(categorieId => {
+      const v = valides.get(categorieId)!;
 
       return prisma.budgetMensuel.upsert({
         where: {
           userId_anneeId_categorieId_mois: { userId, anneeId, categorieId, mois },
         },
         update: {
-          ...(ecrireAnticipe ? { montantAnticipe: anticipe } : {}),
-          ...(ecrireReel     ? { montantReel:     reel     } : {}),
+          ...(ecrireAnticipe ? { montantAnticipe: v.anticipe } : {}),
+          ...(ecrireReel     ? { montantReel:     v.reel     } : {}),
         },
         create: {
           userId, anneeId, categorieId, mois,
-          montantAnticipe: ecrireAnticipe ? anticipe : BigInt(0),
-          montantReel:     ecrireReel     ? reel     : BigInt(0),
+          montantAnticipe: ecrireAnticipe ? v.anticipe : BigInt(0),
+          montantReel:     ecrireReel     ? v.reel     : BigInt(0),
         },
       });
     });
@@ -373,7 +504,7 @@ export async function POST(req: NextRequest) {
 
     const { categorieId, mois, montantAnticipe, montantReel, notes, scope } = body!;
 
-    // Q61 -- coherence scope <-> champs.
+    // ── 5. Q61 -- coherence scope <-> champs.
     const champFautif = incoherenceScopePost(raw, scope);
     if (champFautif) {
       return NextResponse.json(
@@ -382,14 +513,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const cible = await resoudreAnnee(userId, body!.anneeId, body!.annee);
+    // ── 6. P119 -- millesime en LECTURE SEULE.
+    const cible = await resoudreMillesime(userId, body!.anneeId, body!.annee);
     if (!cible) {
       return NextResponse.json({ error: 'Annee introuvable' }, { status: 404 });
     }
-    const anneeId = cible.id;
 
-    // P66 -- meme garde que le PUT. Sans lui, l edition ligne a ligne resterait
-    // ouverte sur un mois clos et le verrou serait purement cosmetique.
+    // ── 7. P66 -- meme garde que le PUT. Sans lui, l edition ligne a ligne
+    //      resterait ouverte sur un mois clos et le verrou serait cosmetique.
     const verrouille = estMoisVerrouille(cible.annee, mois);
     if (verrouille && !derogation) {
       return NextResponse.json(
@@ -403,6 +534,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // ── 8. P43 -- propriete de la categorie.
     const cat = await prisma.categorie.findFirst({
       where: { id: categorieId, userId }, select: { id: true, nom: true },
     });
@@ -413,21 +545,41 @@ export async function POST(req: NextRequest) {
     const ecrireAnticipe = scope === 'previsionnel' || scope === 'les_deux';
     const ecrireReel     = scope === 'suivi'        || scope === 'les_deux';
 
+    // ── 9. P120 -- bornes. `undefined` reste `undefined` : le POST doit pouvoir
+    //      ne toucher qu une seule colonne, l absence n est pas une valeur nulle.
+    const majAnticipe = ecrireAnticipe && montantAnticipe !== undefined;
+    const majReel     = ecrireReel     && montantReel     !== undefined;
+
+    const va = majAnticipe ? versEntier(montantAnticipe) : MONTANT_ABSENT;
+    const vr = majReel     ? versEntier(montantReel)     : MONTANT_ABSENT;
+
+    if (!va.ok || !vr.ok) {
+      const detail: Array<{ champ: string; motif: string }> = [];
+      if (!va.ok) detail.push({ champ: 'montantAnticipe', motif: messageMontant(va.motif) });
+      if (!vr.ok) detail.push({ champ: 'montantReel',     motif: messageMontant(vr.motif) });
+      return NextResponse.json(
+        { error: 'Montant(s) refuse(s)', plafond: MONTANT_MAX, champs: detail },
+        { status: 422 },
+      );
+    }
+
+    // ── 10. P119 -- premiere ecriture, tous les gardes franchis.
+    const anneeId = await materialiserAnnee(userId, cible);
+
+    // ── 11. ecriture.
     const ligne = await prisma.budgetMensuel.upsert({
       where: {
         userId_anneeId_categorieId_mois: { userId, anneeId, categorieId, mois },
       },
       update: {
-        ...(ecrireAnticipe && montantAnticipe !== undefined
-          ? { montantAnticipe: versEntier(montantAnticipe) } : {}),
-        ...(ecrireReel && montantReel !== undefined
-          ? { montantReel: versEntier(montantReel) } : {}),
+        ...(majAnticipe ? { montantAnticipe: va.valeur } : {}),
+        ...(majReel     ? { montantReel:     vr.valeur } : {}),
         ...(notes !== undefined ? { notes: notes ?? null } : {}),
       },
       create: {
         userId, anneeId, categorieId, mois,
-        montantAnticipe: ecrireAnticipe ? versEntier(montantAnticipe) : BigInt(0),
-        montantReel:     ecrireReel     ? versEntier(montantReel)     : BigInt(0),
+        montantAnticipe: ecrireAnticipe ? va.valeur : BigInt(0),
+        montantReel:     ecrireReel     ? vr.valeur : BigInt(0),
         notes: notes ?? null,
       },
     });
