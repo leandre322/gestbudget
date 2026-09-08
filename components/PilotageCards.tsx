@@ -164,7 +164,7 @@ export default function PilotageCards({
       {/* ── F6 : Autonomie reelle ── */}
       <div className={clsx('rounded-2xl border p-4 flex flex-col gap-1 transition-colors', bgAutonomie)}>
         <div className="flex items-center justify-between">
-          <p className="text-xs font-medium opacity-60">Autonomie</p>
+          <p className="text-xs font-medium opacity-60">Autonomie reelle</p>
           <Shield size={15} className="opacity-40"/>
         </div>
         {moyenneDep > 0 ? (
@@ -178,6 +178,16 @@ export default function PilotageCards({
             </p>
             <p className="text-[10px] text-[var(--text-muted)] mt-0.5">
               Moyenne sur {moisComplets.length} mois complet{moisComplets.length > 1 ? 's' : ''}
+            </p>
+            {/* P99 -- deux mesures de resilience coexistent sur cet ecran et ne
+                doivent pas etre lues comme une seule. Ici : TOUS les comptes
+                bancaires + les fonds non adosses, rapportes aux depenses
+                REELLEMENT observees. La carte « Fonds urgence » mesure autre
+                chose : les seuls comptes marques, rapportes au revenu de
+                reference. Numerateurs et denominateurs differents. */}
+            <p className="text-[10px] text-[var(--text-muted)] leading-tight mt-1 pt-1 border-t border-[var(--border)]">
+              Tous comptes bancaires + fonds non adosses, face aux depenses observees.
+              Perimetre plus large que la carte « Fonds urgence ».
             </p>
           </>
         ) : (

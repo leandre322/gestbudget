@@ -259,7 +259,7 @@ export default function RecurrentesPage() {
         }
       } else {
         const err = await res.json().catch(() => null);
-        toast.error(err?.message ?? 'Erreur de pointage');
+        toast.error(err?.error ?? err?.message ?? 'Erreur de pointage'); // P105
       }
     } catch {
       toast.error('Erreur réseau');
@@ -359,7 +359,7 @@ export default function RecurrentesPage() {
         charger();
       } else {
         const err = await res.json().catch(() => null);
-        toast.error(err?.message ?? 'Erreur');
+        toast.error(err?.error ?? err?.message ?? 'Erreur'); // P105
       }
     } catch {
       toast.error('Erreur réseau');
@@ -376,7 +376,7 @@ export default function RecurrentesPage() {
         body:    JSON.stringify({ id: r.id, isActive: !r.isActive }),
       });
       if (res.ok) charger();
-      else toast.error('Erreur');
+      else { const err = await res.json().catch(() => null); toast.error(err?.error ?? err?.message ?? 'Erreur'); } // P105
     } catch {
       toast.error('Erreur réseau');
     }
@@ -387,12 +387,20 @@ export default function RecurrentesPage() {
   // recurrentes_paiements : le message doit le dire.
   const supprimer = async (r: Rec) => {
     if (!window.confirm(
-      `Supprimer la récurrente "${r.libelle}" ?\nSon historique de générations et ses pointages de paiement seront aussi supprimés.`
+      `Supprimer la récurrente "${r.libelle}" ?\nSi elle a déjà été générée par le cron, elle sera désactivée et non supprimée : la garde qui empêche une double génération est conservée.`
     )) return;
     try {
       const res = await fetch(`/api/recurrentes?id=${r.id}`, { method: 'DELETE' });
-      if (res.ok) { toast.success('Supprimée ✓'); charger(); }
-      else toast.error('Erreur');
+      if (res.ok) {
+        // P102 : le serveur desactive au lieu de supprimer quand un historique
+        // de generations existe. L ecran doit dire lequel des deux a eu lieu.
+        const d = await res.json().catch(() => null);
+        toast.success(d?.soft ? 'Désactivée ✓ — historique de générations conservé' : 'Supprimée ✓');
+        charger();
+      } else {
+        const err = await res.json().catch(() => null);
+        toast.error(err?.error ?? err?.message ?? 'Erreur');
+      }
     } catch {
       toast.error('Erreur réseau');
     }

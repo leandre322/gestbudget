@@ -150,6 +150,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: 'Categorie introuvable' }, { status: 404 })
     }
 
+    // P106 -- une categorie desactivee est hors perimetre (R3-b) : le cron
+    // y ecrirait un montant que ni les KPI ni la repartition ne lisent.
+    if (!categorie.isActive) {
+      return NextResponse.json({ message: 'Categorie desactivee : choisissez une categorie active' }, { status: 422 })
+    }
+
     const erreur = verifierCoherence(data.typeFlux, categorie.type)
     if (erreur) return NextResponse.json({ message: erreur }, { status: 422 })
 
@@ -217,6 +223,13 @@ export async function PUT(req: NextRequest) {
     const categorie = await prisma.categorie.findUnique({ where: { id: categorieIdFinal } })
     if (!categorie || categorie.userId !== session.user.id) {
       return NextResponse.json({ message: 'Categorie introuvable' }, { status: 404 })
+    }
+
+    // P106 -- garde posee UNIQUEMENT quand la categorie est (re)designee.
+    // L appliquer inconditionnellement interdirait de desactiver une
+    // recurrente dont la categorie a ete desactivee entre-temps.
+    if (data.categorieId !== undefined && !categorie.isActive) {
+      return NextResponse.json({ message: 'Categorie desactivee : choisissez une categorie active' }, { status: 422 })
     }
 
     const erreur = verifierCoherence(typeFluxFinal, categorie.type)
@@ -287,7 +300,20 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    await prisma.recurrente.delete({ where: { id } })
+    // P102 -- la suppression dure cascade sur recurrentes_executions, garde
+    // d idempotence du cron mensuel. Supprimer puis recreer autoriserait une
+    // seconde generation sur une periode deja traitee. On ne supprime donc
+    // reellement que ce qui n a rien a perdre.
+    const nbExecutions = await prisma.recurrenteExecution.count({
+      where: { userId: session.user.id, recurrenteId: id },
+    })
+
+    const soft = nbExecutions > 0
+    if (soft) {
+      await prisma.recurrente.update({ where: { id }, data: { isActive: false } })
+    } else {
+      await prisma.recurrente.delete({ where: { id } })
+    }
 
     await logAudit({
       userId:     session.user.id,
@@ -295,10 +321,11 @@ export async function DELETE(req: NextRequest) {
       entityType: 'recurrente',
       entityId:   id,
       entityNom:  existing.libelle,
+      details:    { soft, nbExecutions },
       req,
     })
 
-    return NextResponse.json({ ok: true })
+    return NextResponse.json({ ok: true, soft, nbExecutions })
   } catch (e) {
     console.error('[DELETE /api/recurrentes]', e)
     return NextResponse.json({ message: 'Erreur serveur' }, { status: 500 })
