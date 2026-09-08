@@ -43,6 +43,7 @@ import {
 } from '@/lib/reference';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // P88
 
 const MODES = ['auto', 'egal', 'conserver_ratios'] as const;
 

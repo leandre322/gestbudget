@@ -525,7 +525,7 @@ export async function calculerRepartition(
   const avertissements: string[] = [];
   const bloquants: string[] = [];
 
-  const besoinHistorique = modeDemande !== 'egal';
+  const besoinHistorique = modeDemande === 'auto'; // I41
   const historique = besoinHistorique
     ? await chargerHistorique(db, userId, dansPerimetre.map(c => c.id), refAnnee, refMois, nbMois)
     : {};

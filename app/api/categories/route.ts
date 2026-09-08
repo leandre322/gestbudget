@@ -47,6 +47,7 @@ import {
 } from '@/lib/reference';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // P88
 
 /**
  * Reequilibre les categories apres une operation qui a rompu R3-a.

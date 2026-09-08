@@ -53,6 +53,7 @@ import {
 } from '@/lib/reference';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // P88
 
 // CHECK pose en base en S13 : nMoisUrgence BETWEEN 1 AND 24.
 // P58 : lib/validators.ts declare encore .max(60). Un envoi a 30 passe Zod et
