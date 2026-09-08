@@ -6,6 +6,37 @@ import { z } from 'zod'
 import { logAudit } from '@/lib/audit'
 import { serial } from '@/lib/serial'
 
+// ─────────────────────────────────────────────────────────────────────────────
+// S20 — trois corrections.
+//
+// P107 — le GET ne renvoyait JAMAIS `paiements`, alors que recurrentes/page.tsx
+//        fait `setPaiements(d.paiements ?? [])`. La vue « Echeances du mois »
+//        perdait donc tous les pointages a chaque rechargement : cases vides,
+//        compteur 0/n, statuts « Non pointe » sur des lignes reellement payees.
+//        La donnee existait pourtant (recurrentes_paiements, route dediee).
+//        Le GET la renvoie desormais quand ?periode est fourni — meme condition
+//        que executionsCategorieIds, un pointage n'ayant de sens que relatif a
+//        un mois. serial() est OBLIGATOIRE sur payeAt (Date), regle 22.
+//
+// P102 — DELETE etait une suppression DURE. La cascade emporte
+//        recurrentes_executions, qui est la garde d'idempotence du cron
+//        mensuel : supprimer puis recreer une recurrente autorise une SECONDE
+//        generation sur une periode deja traitee, donc un double credit au
+//        budget. Q156 ayant ecarte un `deletedAt`, on applique le motif de
+//        DELETE /api/banques : on ne supprime reellement que ce qui n'a aucun
+//        historique ; sinon on desactive, et la reponse dit lequel des deux a
+//        eu lieu (`soft`, `nbExecutions`).
+//
+// P106 — POST et PUT verifiaient la PROPRIETE de la categorie, jamais son
+//        activite. Une recurrente pointant sur une categorie desactivee fait
+//        ecrire le cron dans une ligne hors perimetre (R3-b) : le montant
+//        n'est lu ni par les KPI, ni par la repartition. Garde posee au POST,
+//        et au PUT UNIQUEMENT quand la categorie est (re)designee — sinon on
+//        interdirait de desactiver une recurrente dont la categorie a ete
+//        desactivee entre-temps, precisement le cas qu'on veut pouvoir
+//        traiter.
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── Schemas Zod (synchronisés avec les colonnes — règle Zod+DB) ──────────────
 //
 // S7 / F5 — Échéances :
@@ -52,6 +83,10 @@ const RecurrenteUpdateSchema = z.object({
   rappelJoursAvant: z.number().int().min(0).max(15).optional(),
 })
 
+// Message unique, pour que les deux gardes P106 ne divergent pas.
+const MSG_CAT_INACTIVE =
+  'Categorie desactivee : choisissez une categorie active'
+
 // ── Sérialisation BigInt ─────────────────────────────────────────────────────
 function serializeRecurrente(r: any) {
   return {
@@ -73,7 +108,7 @@ function verifierCoherence(typeFlux: string, typeCategorie: string): string | nu
   return null
 }
 
-// ── GET — Liste des récurrentes (+ exécutions d'une période via ?periode) ────
+// ── GET — Liste des récurrentes (+ exécutions et pointages d'une période) ────
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -103,21 +138,34 @@ export async function GET(req: NextRequest) {
       .reduce((acc, r) => acc + Number(r.montant), 0)
 
     // S6 : catégories effectivement alimentées par le cron pour cette période
+    // P107 : pointages de la période, attendus par la vue « Échéances ».
     let executionsCategorieIds: string[] = []
-    if (periode && /^\d{4}-\d{2}$/.test(periode)) {
-      const execs = await prisma.recurrenteExecution.findMany({
-        where: { userId: session.user.id, periode },
-        select: { recurrente: { select: { categorieId: true } } },
-      })
+    let paiements: Array<{ recurrenteId: string; payeAt: any }> = []
+
+    if (periode && /^\d{4}-(0[1-9]|1[0-2])$/.test(periode)) {
+      const [execs, pmts] = await Promise.all([
+        prisma.recurrenteExecution.findMany({
+          where: { userId: session.user.id, periode },
+          select: { recurrente: { select: { categorieId: true } } },
+        }),
+        prisma.recurrentePaiement.findMany({
+          where: { userId: session.user.id, periode },
+          select: { recurrenteId: true, payeAt: true },
+        }),
+      ])
+
       executionsCategorieIds = Array.from(
         new Set(execs.map((e) => e.recurrente.categorieId))
       )
+      // Règle 22 : payeAt est une Date, elle passe par serial().
+      paiements = serial(pmts) as Array<{ recurrenteId: string; payeAt: any }>
     }
 
     return NextResponse.json({
       recurrentes: recurrentes.map(serializeRecurrente),
       totalMensuel,
       executionsCategorieIds,
+      paiements,
     })
   } catch (e) {
     console.error('[GET /api/recurrentes]', e)
@@ -150,10 +198,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: 'Categorie introuvable' }, { status: 404 })
     }
 
-    // P106 -- une categorie desactivee est hors perimetre (R3-b) : le cron
-    // y ecrirait un montant que ni les KPI ni la repartition ne lisent.
+    // P106 — une catégorie désactivée est hors périmètre (R3-b) : le cron y
+    // écrirait un montant que ni les KPI ni la répartition ne lisent.
     if (!categorie.isActive) {
-      return NextResponse.json({ message: 'Categorie desactivee : choisissez une categorie active' }, { status: 422 })
+      return NextResponse.json({ message: MSG_CAT_INACTIVE }, { status: 422 })
     }
 
     const erreur = verifierCoherence(data.typeFlux, categorie.type)
@@ -225,11 +273,11 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ message: 'Categorie introuvable' }, { status: 404 })
     }
 
-    // P106 -- garde posee UNIQUEMENT quand la categorie est (re)designee.
-    // L appliquer inconditionnellement interdirait de desactiver une
-    // recurrente dont la categorie a ete desactivee entre-temps.
+    // P106 — garde posée UNIQUEMENT quand la catégorie est (re)désignée.
+    // L'appliquer inconditionnellement interdirait de désactiver une
+    // récurrente dont la catégorie a été désactivée entre-temps.
     if (data.categorieId !== undefined && !categorie.isActive) {
-      return NextResponse.json({ message: 'Categorie desactivee : choisissez une categorie active' }, { status: 422 })
+      return NextResponse.json({ message: MSG_CAT_INACTIVE }, { status: 422 })
     }
 
     const erreur = verifierCoherence(typeFluxFinal, categorie.type)
@@ -281,7 +329,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-// ── DELETE — Supprimer une récurrente ────────────────────────────────────────
+// ── DELETE — Supprimer ou désactiver une récurrente (P102) ───────────────────
 export async function DELETE(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -300,17 +348,21 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    // P102 -- la suppression dure cascade sur recurrentes_executions, garde
-    // d idempotence du cron mensuel. Supprimer puis recreer autoriserait une
-    // seconde generation sur une periode deja traitee. On ne supprime donc
-    // reellement que ce qui n a rien a perdre.
+    // P102 — la suppression dure cascade sur recurrentes_executions, garde
+    // d'idempotence du cron mensuel. Supprimer puis recréer autoriserait une
+    // seconde génération sur une période déjà traitée. On ne supprime donc
+    // réellement que ce qui n'a aucun historique.
     const nbExecutions = await prisma.recurrenteExecution.count({
       where: { userId: session.user.id, recurrenteId: id },
     })
 
     const soft = nbExecutions > 0
+
     if (soft) {
-      await prisma.recurrente.update({ where: { id }, data: { isActive: false } })
+      await prisma.recurrente.update({
+        where: { id },
+        data:  { isActive: false },
+      })
     } else {
       await prisma.recurrente.delete({ where: { id } })
     }

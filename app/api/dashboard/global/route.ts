@@ -5,6 +5,28 @@ import prisma from '@/lib/prisma';
 import { calculerScore, estSortie, estEpargne } from '@/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// S20 — P110 / Q168 : le score global etait recalcule ICI, a la main, avec une
+// formule qui DIVERGEAIT de calculerScore() sur deux criteres :
+//
+//   Critere              calculerScore                  formule inline
+//   Respect du budget    1 - depassement/prevu          prevu/reel
+//   Sans prevision       5/5                            3/5
+//   Solde negatif        facteur x10                    facteur x5
+//
+// Le meme mois obtenait donc deux notes selon la carte qui l'affichait : la
+// jauge du Dashboard mensuel et le « Score global » cumule. Q168 a tranche :
+// source unique = calculerScore(), dans types/index.ts.
+//
+// Consequence attendue : le score global va bouger. prevu/reel etait genereux
+// des que le reel passait sous la prevision ; calculerScore ne recompense que
+// l'absence de depassement. La nouvelle valeur est la moyenne exacte des
+// scores mensuels affiches par la jauge.
+//
+// I36 — estDepense/estEpargne locaux supprimes : la classification vit dans
+// types/index.ts (Record exhaustif sur TypeCategorie).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
 // S12 — refonte. Defauts corriges :
 //
 //  P7  fondsUrgenceObjectif retombait sur || 3720000 quand revenuReference
@@ -31,7 +53,6 @@ import { calculerScore, estSortie, estEpargne } from '@/types';
 // M5/M6/M7 — perimetre du fonds d'urgence
 //   Le denominateur du 4e critere de score etait la somme de TOUTES les
 //   banques. Il est desormais borne aux comptes compteUrgence = true.
-//   Consequence attendue et validee : 80 059 au lieu de 980 059.
 //
 // Q25 — non double comptage (regle posee dans schema.prisma / M8)
 //   Un fonds adosse a une banque (banqueId non nul) voit son argent compte
@@ -39,9 +60,10 @@ import { calculerScore, estSortie, estEpargne } from '@/types';
 //   existant sans arbitrage ; totalFondsAutonome expose la valeur correcte.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function n(v: any) { return typeof v === 'bigint' ? Number(v) : (Number(v) || 0); }
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // P88 — agregat multi-annees sur Neon
 
-// I36 -- la classification vit dans types/index.ts, plus de copie locale.
+function n(v: any) { return typeof v === 'bigint' ? Number(v) : (Number(v) || 0); }
 
 export async function GET(req: NextRequest) {
   try {
@@ -121,8 +143,6 @@ export async function GET(req: NextRequest) {
     }
 
     // ── P20 : une seule passe pour tous les agregats ─────────────────────
-    // Avant : 3 filter().reduce() pour les totaux, 3 de plus par annee, puis
-    // 4 de plus par (annee, mois). Ici chaque ligne est visitee une fois.
     let totalRevenus = 0, totalDepenses = 0, totalEpargne = 0;
 
     const parAnnee = new Map<string, { revenus: number; depenses: number; epargne: number }>();
@@ -141,6 +161,7 @@ export async function GET(req: NextRequest) {
       const reel = n(b.montantReel);
       const ant  = n(b.montantAnticipe);
 
+      // I36 — meme classification que tous les autres ecrans.
       const estDep = estSortie(type);
       const estEp  = estEpargne(type);
       const estRev = type === 'revenu';
@@ -207,7 +228,7 @@ export async function GET(req: NextRequest) {
         nom:           c.nom,
         soldeActuel:   n(c.soldeActuel),
         objectif:      n(c.objectif),
-        seuilAlerte:   n(c.seuilAlerte),   // cible de reconstitution du coach (cran 1)
+        seuilAlerte:   n(c.seuilAlerte),
         banqueId:      c.banqueId,         // non nul = fonds adosse a une banque
         totalBudgete:  budgeteParFonds.get(c.id) ?? 0,
         totalAjout:    mvt.ajouts,
@@ -232,8 +253,7 @@ export async function GET(req: NextRequest) {
     }));
 
     const totalBanques = banquesOut.reduce((s, b) => s + b.solde, 0);
-    // M7 : perimetre resserre. Les comptes adosses a un placement en sont
-    // exclus (BOA-CmpteEpargneLeo et consorts, compteUrgence = false).
+    // M7 : perimetre resserre aux seuls comptes marques.
     const fondsUrgence = banquesOut
       .filter(b => b.compteUrgence)
       .reduce((s, b) => s + b.solde, 0);
@@ -248,8 +268,7 @@ export async function GET(req: NextRequest) {
 
     // ── Score global ─────────────────────────────────────────────────────
     // Q19 : sans objectif d'urgence, le 4e critere n'a pas de denominateur.
-    // Noter un mois sur 15 points en pretendant qu'il en vaut 20 serait
-    // trompeur : on renvoie null et le front affiche "non configure".
+    // P110 : le calcul est delegue a calculerScore(), unique implementation.
     let scoreGlobal: number | null = null;
     let nbMoisScore = 0;
     let totalScore  = 0;
@@ -261,9 +280,6 @@ export async function GET(req: NextRequest) {
         nbMoisScore++;
         if (!urgenceConfigure) continue;
 
-        // P110 / Q168 -- source unique. La formule inline divergeait sur deux
-        // criteres (respect du budget, solde negatif) et notait donc le meme
-        // mois autrement que la jauge du Dashboard mensuel.
         totalScore += calculerScore({
           totalDepenses: agg.dep,
           totalDepAnt:   agg.depAnt,
