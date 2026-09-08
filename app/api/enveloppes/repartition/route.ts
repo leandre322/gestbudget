@@ -239,6 +239,7 @@ export async function POST(req: NextRequest) {
       invariant: resultat.invariant,
     });
   } catch (e: any) {
+    if (typeof e?.message === 'string' && e.message.startsWith('Invariant R3-a rompu')) { return NextResponse.json({ error: e.message, invariantRompu: true }, { status: 422 }); } // P86
     console.error('POST /api/enveloppes/repartition:', e?.message);
     return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
   }

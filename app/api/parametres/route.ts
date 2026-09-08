@@ -273,6 +273,11 @@ export async function PUT(req: NextRequest) {
       // repartition egale produit le MEME resultat que l homothetie.
       const plan = await calculerRepartition(userId, { db: tx, mode: 'conserver_ratios' });
 
+      // Q186 -- alignement sur POST /api/enveloppes/repartition : un plan
+      // non applicable (type alloue sans categorie active, revenu a 0) est
+      // refuse au lieu d etre applique en laissant une alerte cosmetique.
+      if (!plan.applicable) { return { bloque: true as const, bloquants: plan.bloquants }; }
+
       const nbCategories = await appliquerPlan(tx, plan);
       const nbRemisAZero = await remettreAZeroHorsPerimetre(tx, plan); // R3-b, Q57
 
@@ -293,6 +298,13 @@ export async function PUT(req: NextRequest) {
 
       return { ok: true as const, plan, invariant, avant, nbCategories, nbRemisAZero };
     }, { maxWait: 15_000, timeout: 30_000 });
+
+    if ('bloque' in resultat) {
+      return NextResponse.json(
+        { error: 'Repartition impossible avec ces taux', bloquants: resultat.bloquants },
+        { status: 422 },
+      );
+    }
 
     if ('conflit' in resultat) {
       return NextResponse.json(
@@ -368,6 +380,7 @@ export async function PUT(req: NextRequest) {
       alertes,
     });
   } catch (e: any) {
+    if (typeof e?.message === 'string' && e.message.startsWith('Invariant R3-a rompu')) { return NextResponse.json({ error: e.message, invariantRompu: true }, { status: 422 }); } // P86
     console.error('PUT /api/parametres:', e?.message);
     return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
   }

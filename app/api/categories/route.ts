@@ -266,6 +266,7 @@ export async function PUT(req: NextRequest) {
       repartition: resultat.reeq,
     }));
   } catch (e: any) {
+    if (typeof e?.message === 'string' && e.message.startsWith('Invariant R3-a rompu')) { return NextResponse.json({ error: e.message, invariantRompu: true }, { status: 422 }); } // P86
     console.error('PUT /api/categories:', e?.message);
     return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
   }
@@ -325,6 +326,7 @@ export async function DELETE(req: NextRequest) {
 
     return NextResponse.json({ success: true, repartition: resultat });
   } catch (e: any) {
+    if (typeof e?.message === 'string' && e.message.startsWith('Invariant R3-a rompu')) { return NextResponse.json({ error: e.message, invariantRompu: true }, { status: 422 }); } // P86
     console.error('DELETE /api/categories:', e?.message);
     return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
   }
