@@ -60,7 +60,14 @@ async function checkRL(key: string, limit: number, windowMs: number): Promise<bo
 
 // ── Regles IP-based (routes publiques sensibles) ─────────────────────────────
 const RATE_RULES = [
-  { path: '/api/auth',            limit: 10, window:  60_000 },
+  { path: '/api/auth/signin',   limit: 10, window: 60_000 },
+  // P116 (S19) : matchPath est un match de prefixe, donc '/api/auth' couvrait
+  // AUSSI session, csrf, providers et signout — que le client NextAuth appelle
+  // en permanence. Dix requetes suffisaient a verrouiller un utilisateur
+  // legitime, et chaque tentative de reconnexion rechargeait le compteur au
+  // lieu de le vider. Seuls signin et callback (verification du mot de passe)
+  // restent limites : la protection anti credential stuffing est intacte.
+  { path: '/api/auth/callback',            limit: 10, window:  60_000 },
   { path: '/api/register',        limit:  3, window: 300_000 },
   { path: '/api/forgot-password', limit:  3, window: 300_000 },
   { path: '/api/reset-password',  limit:  5, window:  60_000 },
