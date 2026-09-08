@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { calculerScore, estSortie, estEpargne } from '@/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // S12 — refonte. Defauts corriges :
@@ -40,8 +41,7 @@ import prisma from '@/lib/prisma';
 
 function n(v: any) { return typeof v === 'bigint' ? Number(v) : (Number(v) || 0); }
 
-const estDepense = (t: string) => t.startsWith('depense') || t === 'remboursement_dette';
-const estEpargne = (t: string) => t.startsWith('epargne');
+// I36 -- la classification vit dans types/index.ts, plus de copie locale.
 
 export async function GET(req: NextRequest) {
   try {
@@ -141,7 +141,7 @@ export async function GET(req: NextRequest) {
       const reel = n(b.montantReel);
       const ant  = n(b.montantAnticipe);
 
-      const estDep = estDepense(type);
+      const estDep = estSortie(type);
       const estEp  = estEpargne(type);
       const estRev = type === 'revenu';
 
@@ -261,13 +261,18 @@ export async function GET(req: NextRequest) {
         nbMoisScore++;
         if (!urgenceConfigure) continue;
 
-        const soldeMois = agg.rev - agg.dep - agg.ep;
-        let sc = 0;
-        sc += agg.depAnt > 0 ? Math.min(5, (agg.depAnt / Math.max(agg.dep, 1)) * 5) : 3;
-        sc += Math.min(5, ((agg.ep / agg.rev) / 0.30) * 5);
-        sc += soldeMois >= 0 ? 5 : Math.max(0, 5 + (soldeMois / agg.rev) * 5);
-        sc += Math.min(5, ((fondsUrgence / fondsUrgenceObjectif) / 0.5) * 5);
-        totalScore += Math.round(sc);
+        // P110 / Q168 -- source unique. La formule inline divergeait sur deux
+        // criteres (respect du budget, solde negatif) et notait donc le meme
+        // mois autrement que la jauge du Dashboard mensuel.
+        totalScore += calculerScore({
+          totalDepenses: agg.dep,
+          totalDepAnt:   agg.depAnt,
+          totalEpargne:  agg.ep,
+          totalRevenus:  agg.rev,
+          solde:         agg.rev - agg.dep - agg.ep,
+          fondsUrgence,
+          fondsObjectif: fondsUrgenceObjectif,
+        }).score;
       }
     }
     if (urgenceConfigure && nbMoisScore > 0) {
