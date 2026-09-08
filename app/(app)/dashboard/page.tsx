@@ -7,13 +7,35 @@ import { TrendingUp, TrendingDown, PiggyBank, Wallet, AlertTriangle,
          Shield, ShieldOff, Building2, Pencil, X, Save,
          ArrowDownCircle, ArrowUpCircle, Bell, Loader2, Check, Plus, Minus } from 'lucide-react';
 import { useMois, useLock } from '../contexts';
-import { formatFCFA, MOIS_COURTS, calculerScore, couleurScore, LABEL_PREVISION } from '@/types';
+import { formatFCFA, MOIS_COURTS, calculerScore, couleurScore, LABEL_PREVISION,
+         estSortie, estEpargne } from '@/types';
 import { useToast } from '@/components/Toast';
 import { usePushNotifications } from '@/lib/hooks/usePushNotifications';
 import { useDashboardGlobal, useBanques, useComptes, useCategories, useDashboardCumul, useRecapAnnuel, useAnomalies } from '@/lib/hooks/useDashboard';
 import useSWR from 'swr';
 import { clsx } from 'clsx';
 import PilotageCards from '@/components/PilotageCards';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S20 — P95 / I36. Trois filtres de cet ecran excluaient remboursement_dette
+// via startsWith('depense') alors que le KPI « Depenses » juste au-dessus
+// l'inclut. Ils affichaient donc une depense inferieure au chiffre annonce,
+// sur les memes donnees et dans le meme rendu :
+//
+//   - `alertes`            depassements du mois : une dette depassee ne
+//                          declenchait aucune alerte.
+//   - OngletRecap `hist`   repli manuel du graphe 6 mois (le chemin SWR passe
+//                          par /api/dashboard/recap, corrige separement).
+//   - OngletRecap `donut`  repartition des depenses de l'annee.
+//
+// Les autres occurrences citaient deja `|| type==='remboursement_dette'` : la
+// regle etait juste, elle etait simplement recopiee a la main sept fois. Toutes
+// passent desormais par estSortie() / estEpargne() de types/index.ts, dont le
+// Record est exhaustif sur TypeCategorie : ajouter un type sans le classer fait
+// echouer `npx tsc --noEmit`.
+//
+// Rien d'autre ne change dans ce fichier : ni rendu, ni requetes, ni etat.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // S12 — PASSE A. Ce fichier consomme desormais la nouvelle forme de
@@ -260,8 +282,9 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
       if (!d) { result.revenus.push(0);result.depenses.push(0);result.epargne.push(0);result.solde.push(0); continue; }
       const b = d.budget ?? [];
       const rev=b.filter((x:any)=>x.categorie?.type==='revenu').reduce((s:number,x:any)=>s+x.montantReel,0);
-      const dep=b.filter((x:any)=>x.categorie?.type?.startsWith('depense')||x.categorie?.type==='remboursement_dette').reduce((s:number,x:any)=>s+x.montantReel,0);
-      const ep=b.filter((x:any)=>x.categorie?.type?.startsWith('epargne')).reduce((s:number,x:any)=>s+x.montantReel,0);
+      // I36 — meme regle que le KPI Depenses : depense_* + remboursement_dette.
+      const dep=b.filter((x:any)=>estSortie(x.categorie?.type)).reduce((s:number,x:any)=>s+x.montantReel,0);
+      const ep=b.filter((x:any)=>estEpargne(x.categorie?.type)).reduce((s:number,x:any)=>s+x.montantReel,0);
       result.revenus.push(rev);result.depenses.push(dep);result.epargne.push(ep);result.solde.push(rev-dep-ep);
     }
     setSparklines(result);
@@ -502,10 +525,12 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
   // P24 : budgetMois est la source unique. Avant, budgetSource pointait sur un
   // second useSWR local et budgetMois n'alimentait plus que les alertes, qui
   // pouvaient donc contredire les KPI affiches juste au-dessus.
+  // I36 : la regle « depense » n'est plus recopiee a la main, elle vient de
+  // types/index.ts et vaut pour tous les filtres de cet ecran.
   const tot = (type:string, f:'montantAnticipe'|'montantReel') =>
     budgetMois.filter((b:any) => b.categorie?.isActive!==false &&
-      (type==='epargne'?b.categorie?.type?.startsWith('epargne'):
-       type==='depense'?(b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette'):
+      (type==='epargne'?estEpargne(b.categorie?.type):
+       type==='depense'?estSortie(b.categorie?.type):
        b.categorie?.type===type)
     ).reduce((s:number,b:any)=>s+b[f],0);
 
@@ -534,14 +559,18 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
     const prev = calcS(n-2), curr = calcS(n-1);
     return { hausse: curr >= prev, pts: Math.abs(curr - prev) };
   })();
-  const alertes = budgetMois.filter((b:any)=>b.categorie?.type?.startsWith('depense')&&b.montantAnticipe>0&&b.montantReel>b.montantAnticipe).map((b:any)=>b.categorie?.nom);
+
+  // P95 — ce filtre excluait remboursement_dette : un remboursement de dette
+  // au-dessus de sa prevision ne declenchait aucune alerte, alors qu'il pesait
+  // bien dans le KPI Depenses affiche juste au-dessus.
+  const alertes = budgetMois.filter((b:any)=>estSortie(b.categorie?.type)&&b.montantAnticipe>0&&b.montantReel>b.montantAnticipe).map((b:any)=>b.categorie?.nom);
 
   const ouvrirModal = (type:string) => {
     if (isLocked) { openUnlockModal(); return; }
     const init:Record<string,string>={};
     if(type==='urgence'){init['revenu']=String(revenuRef);init['nMois']=String(nMoisUrgence);}
     else if(type==='banques'){banques.forEach((b:any)=>{init[b.id]=String(b.solde??0);});}
-    else{budgetMois.filter((b:any)=>{if(type==='revenus')return b.categorie?.type==='revenu';if(type==='depenses')return b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette';return false;}).forEach((b:any)=>{init[b.categorieId]=String(b.montantReel??0);});}
+    else{budgetMois.filter((b:any)=>{if(type==='revenus')return b.categorie?.type==='revenu';if(type==='depenses')return estSortie(b.categorie?.type);return false;}).forEach((b:any)=>{init[b.categorieId]=String(b.montantReel??0);});}
     setModalVals(init);setModalType(type);
   };
 
@@ -666,7 +695,7 @@ function OngletGlobal({moisCourant,anneeCourante,budgetMois,loadingMois}:{moisCo
         <div className="space-y-3">
           {modalType==='urgence'&&(<div className="space-y-3"><div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Revenu mensuel de reference (FCFA)</label><input type="number" value={modalVals['revenu']??''} placeholder="Ex: 690 000" className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,revenu:e.target.value}))}/></div><div><label className="text-xs font-medium text-[var(--text-muted)] mb-1.5 block">Nombre de mois de precaution</label><input type="number" value={modalVals['nMois']??String(nMoisUrgence)} min="1" max="24" className="w-full text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,nMois:e.target.value}))}/></div><div className="bg-primary/5 rounded-xl p-3"><p className="text-xs text-[var(--text-muted)]">Objectif calcule :</p><p className="text-lg font-bold text-primary mt-1">{formatFCFA((parseInt(modalVals['revenu']||'0')||0)*(parseInt(modalVals['nMois']||'6')||6))}</p></div></div>)}
           {modalType==='banques'&&(<div className="space-y-2"><p className="text-xs text-[var(--text-muted)] bg-slate-50 dark:bg-dark-card rounded-lg px-3 py-2">Chaque correction ecrit une ligne dans l&apos;historique du compte.</p>{banques.map((b:any)=>(<div key={b.id} className="flex items-center gap-3"><span className="flex-1 text-sm text-[var(--text)] font-medium">{b.nomBanque}{!b.compteUrgence&&<span className="ml-1.5 text-[10px] text-[var(--text-muted)]">(hors urgence)</span>}</span><input type="number" value={modalVals[b.id]??''} placeholder="0" className="w-36 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,[b.id]:e.target.value}))}/></div>))}</div>)}
-          {(modalType==='revenus'||modalType==='depenses')&&(<div className="space-y-2"><div className="grid grid-cols-2 gap-2 text-xs font-semibold text-[var(--text-muted)] uppercase pb-2 border-b border-[var(--border)]"><span>Categorie</span><span className="text-right">{LABEL_PREVISION} - Reel</span></div>{budgetMois.filter((b:any)=>{if(modalType==='revenus')return b.categorie?.type==='revenu';if(modalType==='depenses')return b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette';return false;}).map((b:any)=>(<div key={b.categorieId} className="flex items-center gap-3"><span className="flex-1 text-sm text-[var(--text)] truncate">{b.categorie?.nom}</span><div className="flex items-center gap-1.5 flex-shrink-0"><span className="text-xs text-[var(--text-muted)] w-24 text-right">{b.montantAnticipe>0?formatFCFA(b.montantAnticipe):'—'}</span><input type="number" value={modalVals[b.categorieId]??''} placeholder="0" className="w-32 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,[b.categorieId]:e.target.value}))}/></div></div>))}</div>)}
+          {(modalType==='revenus'||modalType==='depenses')&&(<div className="space-y-2"><div className="grid grid-cols-2 gap-2 text-xs font-semibold text-[var(--text-muted)] uppercase pb-2 border-b border-[var(--border)]"><span>Categorie</span><span className="text-right">{LABEL_PREVISION} - Reel</span></div>{budgetMois.filter((b:any)=>{if(modalType==='revenus')return b.categorie?.type==='revenu';if(modalType==='depenses')return estSortie(b.categorie?.type);return false;}).map((b:any)=>(<div key={b.categorieId} className="flex items-center gap-3"><span className="flex-1 text-sm text-[var(--text)] truncate">{b.categorie?.nom}</span><div className="flex items-center gap-1.5 flex-shrink-0"><span className="text-xs text-[var(--text-muted)] w-24 text-right">{b.montantAnticipe>0?formatFCFA(b.montantAnticipe):'—'}</span><input type="number" value={modalVals[b.categorieId]??''} placeholder="0" className="w-32 text-right border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm bg-[var(--card)] text-[var(--text)] focus:border-primary outline-none" onChange={e=>setModalVals(p=>({...p,[b.categorieId]:e.target.value}))}/></div></div>))}</div>)}
           <div className="flex justify-end gap-2 pt-3 border-t border-[var(--border)] mt-4"><button onClick={()=>setModalType(null)} className="px-4 py-2 rounded-xl text-sm border border-[var(--border)] text-[var(--text-muted)]">Annuler</button><button onClick={sauvegarderModal} disabled={savingModal} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium bg-primary text-white disabled:opacity-60"><Save size={14}/>{savingModal?'Sauvegarde...':'Sauvegarder'}</button></div>
         </div>
       </DashboardModal>
@@ -1025,8 +1054,12 @@ function OngletRecap({moisCourant}:{moisCourant:number}) {
       setLoading(false);
       return;
     }
-    // Fallback manuel quand SWR pas encore charge
-    setLoading(true);try{const promises=Array.from({length:12},(_,i)=>fetch(`/api/budget?annee=${anneeSelect}&mois=${i+1}`).then(r=>r.ok?r.json():null));const results=await Promise.all(promises);const cats:any[]=results.find(r=>r?.categories?.length)?.categories??[];const budgetCumul:any[]=[];results.forEach(r=>{if(!r?.budget)return;r.budget.forEach((b:any)=>{const ex=budgetCumul.find(ab=>ab.categorieId===b.categorieId);if(ex){ex.montantAnticipe+=b.montantAnticipe??0;ex.montantReel+=b.montantReel??0;}else budgetCumul.push({...b,montantAnticipe:b.montantAnticipe??0,montantReel:b.montantReel??0});});});const histData=[];for(let i=5;i>=0;i--){let m=moisCourant-i,a=anneeSelect;if(m<=0){m+=12;a--;}const hr=results[m-1];histData.push({mois:MOIS_COURTS[m],ant:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantAnticipe,0)??0,reel:hr?.budget?.filter((b:any)=>b.categorie?.type?.startsWith('depense')).reduce((s:number,b:any)=>s+b.montantReel,0)??0});}const [resDec,resMvt]=await Promise.all([fetch(`/api/decaissements?annee=${anneeSelect}&limit=5000`),fetch('/api/banques/mouvements?limit=5000')]);let fondAjouts=0,fondRetraits=0,banqueAjouts=0,banqueRetraits=0;if(resDec.ok){const dd=await resDec.json();const decs=dd.decaissements??[];fondAjouts=decs.filter((d:any)=>d.typeMouvement==='ajout').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);fondRetraits=decs.filter((d:any)=>d.typeMouvement==='retrait').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);}if(resMvt.ok){const dm=await resMvt.json();const mvts=(dm.mouvements??[]).filter((m:any)=>new Date(m.dateOperation).getFullYear()===anneeSelect);banqueAjouts=mvts.filter((m:any)=>m.typeMouvement==='ajout').reduce((s:number,m:any)=>s+(m.montant||0),0);banqueRetraits=mvts.filter((m:any)=>m.typeMouvement==='retrait').reduce((s:number,m:any)=>s+(m.montant||0),0);}setDecStats({fondAjouts,fondRetraits,banqueAjouts,banqueRetraits});setData({budget:budgetCumul,categories:cats});setHist(histData);}catch(e){console.error(e);}setLoading(false);
+    // Fallback manuel quand SWR pas encore charge.
+    // P95 : les deux filtres de histData excluaient remboursement_dette. Le
+    // graphe « Depenses — 6 derniers mois » affichait donc, en repli, une
+    // courbe systematiquement inferieure a celle servie par
+    // /api/dashboard/recap une fois SWR resolu.
+    setLoading(true);try{const promises=Array.from({length:12},(_,i)=>fetch(`/api/budget?annee=${anneeSelect}&mois=${i+1}`).then(r=>r.ok?r.json():null));const results=await Promise.all(promises);const cats:any[]=results.find(r=>r?.categories?.length)?.categories??[];const budgetCumul:any[]=[];results.forEach(r=>{if(!r?.budget)return;r.budget.forEach((b:any)=>{const ex=budgetCumul.find(ab=>ab.categorieId===b.categorieId);if(ex){ex.montantAnticipe+=b.montantAnticipe??0;ex.montantReel+=b.montantReel??0;}else budgetCumul.push({...b,montantAnticipe:b.montantAnticipe??0,montantReel:b.montantReel??0});});});const histData=[];for(let i=5;i>=0;i--){let m=moisCourant-i,a=anneeSelect;if(m<=0){m+=12;a--;}const hr=results[m-1];histData.push({mois:MOIS_COURTS[m],ant:hr?.budget?.filter((b:any)=>estSortie(b.categorie?.type)).reduce((s:number,b:any)=>s+b.montantAnticipe,0)??0,reel:hr?.budget?.filter((b:any)=>estSortie(b.categorie?.type)).reduce((s:number,b:any)=>s+b.montantReel,0)??0});}const [resDec,resMvt]=await Promise.all([fetch(`/api/decaissements?annee=${anneeSelect}&limit=5000`),fetch('/api/banques/mouvements?limit=5000')]);let fondAjouts=0,fondRetraits=0,banqueAjouts=0,banqueRetraits=0;if(resDec.ok){const dd=await resDec.json();const decs=dd.decaissements??[];fondAjouts=decs.filter((d:any)=>d.typeMouvement==='ajout').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);fondRetraits=decs.filter((d:any)=>d.typeMouvement==='retrait').reduce((s:number,d:any)=>s+(d.montantFond||d.montantTotal||0),0);}if(resMvt.ok){const dm=await resMvt.json();const mvts=(dm.mouvements??[]).filter((m:any)=>new Date(m.dateOperation).getFullYear()===anneeSelect);banqueAjouts=mvts.filter((m:any)=>m.typeMouvement==='ajout').reduce((s:number,m:any)=>s+(m.montant||0),0);banqueRetraits=mvts.filter((m:any)=>m.typeMouvement==='retrait').reduce((s:number,m:any)=>s+(m.montant||0),0);}setDecStats({fondAjouts,fondRetraits,banqueAjouts,banqueRetraits});setData({budget:budgetCumul,categories:cats});setHist(histData);}catch(e){console.error(e);}setLoading(false);
   // SUJET 2 fix B — recapData dans les deps (re-run quand SWR resout)
   },[anneeSelect,moisCourant,recapData]);
 
@@ -1046,11 +1079,13 @@ function OngletRecap({moisCourant}:{moisCourant:number}) {
 
   if(loading)return<div className="flex items-center justify-center h-64"><div className="spinner scale-150"/></div>;
   const budget=data?.budget??[],cats=data?.categories??[];
-  const totType=(type:string,field:'montantAnticipe'|'montantReel')=>budget.filter((b:any)=>type==='depense'?(b.categorie?.type?.startsWith('depense')||b.categorie?.type==='remboursement_dette'):b.categorie?.type===type).reduce((s:number,b:any)=>s+b[field],0);
-  const revReel=totType('revenu','montantReel'),depReel=totType('depense','montantReel'),epReel=budget.filter((b:any)=>b.categorie?.type?.startsWith('epargne')).reduce((s:number,b:any)=>s+b.montantReel,0),solde=revReel-depReel-epReel;
+  const totType=(type:string,field:'montantAnticipe'|'montantReel')=>budget.filter((b:any)=>type==='depense'?estSortie(b.categorie?.type):b.categorie?.type===type).reduce((s:number,b:any)=>s+b[field],0);
+  const revReel=totType('revenu','montantReel'),depReel=totType('depense','montantReel'),epReel=budget.filter((b:any)=>estEpargne(b.categorie?.type)).reduce((s:number,b:any)=>s+b.montantReel,0),solde=revReel-depReel-epReel;
   const fondsCategories=cats.filter((c:any)=>c.type==='epargne_autre');
   const totalFondsRecap=fondsCategories.reduce((s:number,cat:any)=>{const b=budget.find((b:any)=>b.categorieId===cat.id);return s+(b?.montantReel??0);},0);
-  const donut=Object.entries(budget.filter((b:any)=>b.categorie?.type?.startsWith('depense')&&b.montantReel>0).reduce((acc:any,b:any)=>{const k=b.categorie?.sousType??'Autre';acc[k]=(acc[k]??0)+b.montantReel;return acc;},{})).map(([name,value])=>({name,value}));
+  // P95 — la repartition annuelle omettait les remboursements de dette, alors
+  // que la carte « Depenses {annee} » juste au-dessus les compte.
+  const donut=Object.entries(budget.filter((b:any)=>estSortie(b.categorie?.type)&&b.montantReel>0).reduce((acc:any,b:any)=>{const k=b.categorie?.sousType??'Autre';acc[k]=(acc[k]??0)+b.montantReel;return acc;},{})).map(([name,value])=>({name,value}));
 
   return (
     <div className="space-y-5">

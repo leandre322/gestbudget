@@ -3,8 +3,10 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { serial } from '@/lib/serial';
+import { estSortie } from '@/types';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // P88
 
 export async function GET(req: NextRequest) {
   try {
@@ -101,8 +103,8 @@ export async function GET(req: NextRequest) {
       const rows = budgetRows.filter(b => b.mois === m);
       hist.push({
         mois: MOIS_COURTS[m],
-        ant:  rows.filter(b => b.categorie?.type?.startsWith('depense')).reduce((s, b) => s + Number(b.montantAnticipe ?? 0), 0),
-        reel: rows.filter(b => b.categorie?.type?.startsWith('depense')).reduce((s, b) => s + Number(b.montantReel     ?? 0), 0),
+        ant:  rows.filter(b => estSortie(b.categorie?.type)).reduce((s, b) => s + Number(b.montantAnticipe ?? 0), 0),
+        reel: rows.filter(b => estSortie(b.categorie?.type)).reduce((s, b) => s + Number(b.montantReel     ?? 0), 0),
       });
     }
 
@@ -119,6 +121,7 @@ export async function GET(req: NextRequest) {
       decStats:   { fondAjouts, fondRetraits, banqueAjouts, banqueRetraits },
     }));
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    console.error('GET /api/dashboard/recap:', e?.message);
+    return NextResponse.json({ error: 'Erreur interne' }, { status: 500 }); // P113
   }
 }

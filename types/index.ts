@@ -119,3 +119,43 @@ export function couleurScore(score: number): string {
   if (score >= 8)  return 'text-amber-500';
   return 'text-red-500';
 }
+
+// =============================================================================
+// I36 / P95 -- classification unique des types de categorie
+// =============================================================================
+// Six filtres divergeaient de leur propre KPI : ils excluaient
+// remboursement_dette via startsWith('depense') alors que le total des
+// depenses l inclut. Graphiques, historiques et alertes affichaient donc une
+// depense inferieure au chiffre annonce juste au-dessus.
+//
+// Le Record est EXHAUSTIF : ajouter un membre a TypeCategorie sans le classer
+// ici fait echouer `npx tsc --noEmit`. C est la garantie qu un futur type ne
+// pourra plus etre oublie par un filtre.
+// =============================================================================
+
+export type ClasseType = 'revenu' | 'epargne' | 'sortie';
+
+export const CLASSE_TYPE: Record<TypeCategorie, ClasseType> = {
+  revenu:                 'revenu',
+  epargne_precaution:     'epargne',
+  epargne_investissement: 'epargne',
+  epargne_autre:          'epargne',
+  depense_fixe:           'sortie',
+  depense_variable:       'sortie',
+  depense_occasionnelle:  'sortie',
+  remboursement_dette:    'sortie',
+};
+
+/** Depenses au sens large : depense_* ET remboursement_dette. */
+export function estSortie(type?: string | null): boolean {
+  return !!type && CLASSE_TYPE[type as TypeCategorie] === 'sortie';
+}
+
+/** Les trois types d epargne. */
+export function estEpargne(type?: string | null): boolean {
+  return !!type && CLASSE_TYPE[type as TypeCategorie] === 'epargne';
+}
+
+export function estRevenu(type?: string | null): boolean {
+  return type === 'revenu';
+}

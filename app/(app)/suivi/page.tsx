@@ -83,7 +83,7 @@ import ModalKPI from '@/components/ModalKPI';
 import { useToast } from '@/components/Toast';
 import { useMois, useLock } from '../contexts';
 import { formatFCFA, MOIS_LABELS, ORDRE_TYPES, TYPE_LABELS,
-         LABEL_PREVISION, LABEL_REEL, LABEL_ECART, LABEL_EXEC } from '@/types';
+         LABEL_PREVISION, LABEL_REEL, LABEL_ECART, LABEL_EXEC, estSortie } from '@/types';
 import { clsx } from 'clsx';
 import EnveloppesSection from '@/components/EnveloppesSection';
 import { estMoisVerrouille } from '@/lib/periode';
@@ -443,7 +443,7 @@ export default function SuiviPage() {
           const hr = await fetch(`/api/budget?annee=${a}&mois=${m}`, { signal: sig });
           if (!hr.ok) return { mois: MOIS_COURTS[m], prev: 0, reel: 0 };
           const hd = await hr.json();
-          const dep = (hd.budget ?? []).filter((b: any) => b.categorie?.type?.startsWith('depense'));
+          const dep = (hd.budget ?? []).filter((b: any) => estSortie(b.categorie?.type)); // P95
           return {
             mois: MOIS_COURTS[m],
             prev: dep.reduce((s: number, b: any) => s + (b.montantAnticipe ?? 0), 0),
@@ -928,8 +928,8 @@ export default function SuiviPage() {
   const epAnt  = cats.filter((c: any) => c.type?.startsWith('epargne')).reduce((s: number, c: any) => s + versEntier(lignes[c.id]?.anticipe), 0);
   const epReel = cats.filter((c: any) => c.type?.startsWith('epargne')).reduce((s: number, c: any) => s + versEntier(lignes[c.id]?.reel),     0);
 
-  const depAnt  = cats.filter((c: any) => c.type?.startsWith('depense') || c.type === 'remboursement_dette').reduce((s: number, c: any) => s + versEntier(lignes[c.id]?.anticipe), 0);
-  const depReel = cats.filter((c: any) => c.type?.startsWith('depense') || c.type === 'remboursement_dette').reduce((s: number, c: any) => s + versEntier(lignes[c.id]?.reel),     0);
+  const depAnt  = cats.filter((c: any) => estSortie(c.type)).reduce((s: number, c: any) => s + versEntier(lignes[c.id]?.anticipe), 0);
+  const depReel = cats.filter((c: any) => estSortie(c.type)).reduce((s: number, c: any) => s + versEntier(lignes[c.id]?.reel),     0);
 
   const soldeAnt  = revAnt  - epAnt  - depAnt;
   const soldeReel = revReel - epReel - depReel;
@@ -943,7 +943,7 @@ export default function SuiviPage() {
   const modalCats = cats.filter((c: any) => c.type === modalType);
 
   const donutData = Object.entries(
-    cats.filter((c: any) => c.type?.startsWith('depense') && versEntier(lignes[c.id]?.reel) > 0)
+    cats.filter((c: any) => estSortie(c.type) && versEntier(lignes[c.id]?.reel) > 0)
         .reduce((acc: any, c: any) => { acc[c.nom] = (acc[c.nom] ?? 0) + versEntier(lignes[c.id]?.reel); return acc; }, {})
   ).map(([name, value]) => ({ name, value }));
 
