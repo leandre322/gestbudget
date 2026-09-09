@@ -73,6 +73,7 @@ export default function ParametresPage() {
   const [suppAnnee,        setSuppAnnee]        = useState<number|null>(null);
   const [suppMois,         setSuppMois]         = useState<number|null>(null);
   const [confirmText,      setConfirmText]      = useState('');
+  const [suppOk,           setSuppOk]           = useState(true);
   const [suppLoading,      setSuppLoading]      = useState(false);
   const [suppResult,       setSuppResult]       = useState<string>('');
   const [activeTab,        setActiveTab]        = useState<'categories'|'comptes'|'banques'|'import'|'donnees'|'alertes'>('categories');
@@ -884,11 +885,11 @@ export default function ParametresPage() {
                 <p className="text-sm text-[var(--text)]">{suppMois?`Supprimer mois ${suppMois} / ${suppAnnee}.`:`Supprimer TOUTES les donnees de ${suppAnnee}.`}</p>
                 <p className="text-sm font-semibold text-[var(--text)]">Tapez <span className="text-red-500 font-bold">{suppMois?`${suppAnnee}/${suppMois}`:String(suppAnnee)}</span> :</p>
                 <input type="text" value={confirmText} onChange={e=>setConfirmText(e.target.value)} placeholder={suppMois?`${suppAnnee}/${suppMois}`:String(suppAnnee)} className="w-full border border-[var(--border)] rounded-xl px-3 py-2 text-sm bg-[var(--card)] text-[var(--text)] focus:border-red-400 outline-none"/>
-                {suppResult&&<p className="text-sm text-green-600 font-medium">{suppResult}</p>}
+                {suppResult&&<p className={clsx("text-sm font-medium",suppOk?"text-green-600":"text-red-600")}>{suppResult}</p>}
                 <div className="flex gap-2 justify-end">
                   <button onClick={()=>{setSuppAnnee(null);setConfirmText('');}} className="px-4 py-2 rounded-xl text-sm border border-[var(--border)] text-[var(--text-muted)] hover:bg-slate-50 dark:hover:bg-dark-card transition-all">Annuler</button>
                   <button disabled={suppLoading||(suppMois?confirmText!==`${suppAnnee}/${suppMois}`:confirmText!==String(suppAnnee))}
-                    onClick={async()=>{setSuppLoading(true);const url=suppMois?`/api/donnees?annee=${suppAnnee}&mois=${suppMois}`:`/api/donnees?annee=${suppAnnee}`;const res=await fetch(url,{method:'DELETE'});const d=await res.json();setSuppResult(d.message??'Supprime');setSuppLoading(false);setConfirmText('');chargerOnglet('donnees');setTimeout(()=>{setSuppAnnee(null);setSuppResult('');},2000);}}
+                    onClick={async()=>{setSuppLoading(true);const url=suppMois!==null?`/api/donnees?annee=${suppAnnee}&portee=mois&mois=${suppMois}`:`/api/donnees?annee=${suppAnnee}&portee=annee`;const res=await fetch(url,{method:'DELETE'});const d=await res.json().catch(()=>({}));setSuppLoading(false);if(!res.ok){setSuppOk(false);setSuppResult(d.error??('Echec HTTP '+res.status));return;}setSuppOk(true);setSuppResult(d.message??'Supprime');setConfirmText('');chargerOnglet('donnees');setTimeout(()=>{setSuppAnnee(null);setSuppResult('');},2000);}}
                     className="px-4 py-2 rounded-xl text-sm bg-red-500 hover:bg-red-600 text-white font-semibold transition-all disabled:opacity-40">
                     {suppLoading?'Suppression...':'Confirmer'}
                   </button>
