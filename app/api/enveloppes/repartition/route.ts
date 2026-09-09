@@ -1,5 +1,5 @@
 // =============================================================================
-// app/api/enveloppes/repartition/route.ts  --  I9 (etape 5), version 2
+// app/api/enveloppes/repartition/route.ts  --  I9 (etape 5), version 3 (S21)
 // =============================================================================
 // Remplace la migration SQL brute decidee en S13. Motifs :
 //   - rejouable et testable d abord sur le compte de test ;
@@ -21,6 +21,23 @@
 //     TOCTOU lecture-puis-ecriture) ;
 //   - logAudit portant le diff complet compacte, qui sert de sauvegarde.
 //
+// P122 (S21) — le filtre `anormaux` etait recopie a l identique ici, dans
+//   app/api/parametres/route.ts et dans app/api/categories/route.ts. Il ne
+//   testait que R3-a AVEC categories. Deux cas restaient donc muets :
+//     1. type orphelin (nbCategories === 0, allocation > 0) : okR3a faux, exclu
+//        du filtre a dessein car c est une situation metier ;
+//     2. R3-b : jamais regarde. Sur CETTE route c est atteignable, puisque la
+//        remise a zero est conditionnee au drapeau remiseAZeroHorsPerimetre —
+//        a false, okR3b reste legitimement faux.
+//   Dans les deux cas l appelant recevait `invariant.ok: false` avec un HTTP
+//   200 et aucune explication. Le classement vit desormais dans
+//   lib/reference.ts (R8) : `verdict.bloquants` declenche le rollback,
+//   `verdict.alertes` explique le 200. Le comportement de rollback est
+//   INCHANGE : classerInvariant reproduit exactement l ancien predicat
+//   (nbCategories > 0 && ecart !== 0) dans sa branche bloquante.
+//   `verdict` est expose par le GET : il sert aussi de marqueur de version en
+//   lecture seule pour la Regle 31.
+//
 // Le schema Zod est defini ici plutot que dans lib/validators.ts (precedent :
 // GlissementSchema). Il y sera deplace lors de la reecriture de validators.ts,
 // qui doit de toute facon aligner nMoisUrgence sur le CHECK 1-24 (P58).
@@ -38,6 +55,8 @@ import {
   appliquerPlan,
   remettreAZeroHorsPerimetre,
   verifierInvariant,
+  classerInvariant,
+  messageRollbackInvariant,
   NB_MOIS_HISTORIQUE,
   PLANCHER_PART_EGALE,
 } from '@/lib/reference';
@@ -100,7 +119,13 @@ export async function GET(req: NextRequest) {
 
     const invariant = await verifierInvariant(session.user.id);
 
-    return NextResponse.json({ plan, invariant });
+    // P122 -- le GET expose le verdict : c est la lecture qui permet de savoir
+    // POURQUOI invariant.ok vaut false sans avoir a interpreter les ecarts.
+    // Sert aussi de sonde de deploiement (Regle 31) : ce champ n existe pas
+    // dans la version precedente de la route.
+    const verdict = classerInvariant(invariant);
+
+    return NextResponse.json({ plan, invariant, verdict });
   } catch (e: any) {
     console.error('GET /api/enveloppes/repartition:', e?.message);
     return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
@@ -160,17 +185,16 @@ export async function POST(req: NextRequest) {
 
       const invariant = await verifierInvariant(userId, tx);
 
-      // R3-a doit etre exact apres application : un ecart signale un bug de
-      // calcul, pas une situation metier. Rollback.
-      const anormaux = invariant.ecarts.filter(e => e.nbCategories > 0 && e.ecart !== 0);
-      if (anormaux.length > 0) {
-        throw new Error(
-          'Invariant R3-a rompu apres repartition sur : ' +
-          anormaux.map(e => e.type + ' (ecart ' + e.ecart + ')').join(', '),
-        );
+      // P122 -- classement unique (R8). `bloquants` = ecart R3-a sur un type
+      // POURVU de categories actives : bug de calcul, rollback. `alertes` =
+      // type orphelin ou residu R3-b : situations metier, remontees au client
+      // avec un 200 au lieu d un `ok: false` inexplique.
+      const verdict = classerInvariant(invariant);
+      if (verdict.bloquants.length > 0) {
+        throw new Error(messageRollbackInvariant(verdict, 'repartition'));
       }
 
-      return { ok: true as const, plan, nbCategories, nbRemisAZero, invariant };
+      return { ok: true as const, plan, nbCategories, nbRemisAZero, invariant, verdict };
     }, { maxWait: 15_000, timeout: 30_000 });
 
     if ('conflit' in resultat) {
@@ -222,6 +246,9 @@ export async function POST(req: NextRequest) {
         nbRemisAZero: resultat.nbRemisAZero,
         montantRemisAZero: resultat.plan.montantRemisAZero,
         invariantOk: resultat.invariant.ok,
+        // P122 -- un `invariantOk: false` archive sans motif est illisible six
+        // mois plus tard. Les alertes sont tracees avec lui.
+        invariantAlertes: resultat.verdict.alertes,
         diff,
         diffZero,
       },
@@ -237,6 +264,7 @@ export async function POST(req: NextRequest) {
       totalApres: resultat.plan.totalApres,
       avertissements: resultat.plan.avertissements,
       invariant: resultat.invariant,
+      verdict: resultat.verdict,
     });
   } catch (e: any) {
     if (typeof e?.message === 'string' && e.message.startsWith('Invariant R3-a rompu')) { return NextResponse.json({ error: e.message, invariantRompu: true }, { status: 422 }); } // P86
