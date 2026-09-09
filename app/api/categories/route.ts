@@ -1,7 +1,9 @@
 // =============================================================================
-// app/api/categories/route.ts  --  etape 9 (S14)
+// app/api/categories/route.ts  --  etape 9 (S14), version 2 (S22)
 // =============================================================================
 // Ferme : P40, P56, P57.
+//       + P122-B3 (classement de l invariant delegue a lib/reference)
+//       + Q188    (erreur typee au lieu d un test sur le texte du message)
 //
 // P40 — la route n avait ni CSRF, ni Zod, et renvoyait e.message brut au
 //       client en 500 (fuite de details Prisma).
@@ -26,6 +28,27 @@
 //       creee demarre donc a 0 jusqu a la prochaine repartition, ce qui est le
 //       comportement correct : pas de budget tant qu on n en alloue pas.
 //
+// P122-B3 (S22) -- reequilibrer() portait la troisieme copie du filtre
+//
+//     invariant.ecarts.filter(e => e.nbCategories > 0 && e.ecart !== 0)
+//
+// deja present dans app/api/parametres/route.ts et dans
+// app/api/enveloppes/repartition/route.ts. Trois copies d une regle
+// d interpretation = trois occasions de diverger. Le classement vit desormais
+// dans lib/reference.ts (R8). LE PREDICAT DE ROLLBACK EST INCHANGE :
+// classerInvariant() reproduit exactement le meme test dans sa branche
+// `bloquants`.
+//
+// Changement de contenu volontaire sur le champ `alertes` retourne par
+// reequilibrer() : il valait `plan.bloquants`, il vaut desormais
+// `verdict.alertes`. L ancienne valeur ne couvrait que les types orphelins ;
+// la nouvelle y ajoute le residu R3-b, jusqu ici totalement muet. Le champ
+// reste un tableau de chaines : aucun appelant n a besoin d etre adapte.
+//
+// Q188 (S22) -- les deux catch testaient
+// `e.message.startsWith('Invariant R3-a rompu')`. Remplaces par
+// estInvariantRompu(), qui reconnait la classe et non le texte.
+//
 // Le mode 'conserver_ratios' est utilise partout : il preserve les rapports
 // entre categories d un meme type, donc les glissements D2 (R4).
 // =============================================================================
@@ -43,6 +66,9 @@ import {
   appliquerPlan,
   remettreAZeroHorsPerimetre,
   verifierInvariant,
+  classerInvariant,
+  InvariantRompuError,
+  estInvariantRompu,
   type DbClient,
 } from '@/lib/reference';
 
@@ -53,6 +79,10 @@ export const maxDuration = 60; // P88
  * Reequilibre les categories apres une operation qui a rompu R3-a.
  * A appeler DANS une transaction. Leve si l invariant n est pas retabli :
  * mieux vaut annuler l operation que laisser la base incoherente.
+ *
+ * P122-B3 : la decision de lever appartient a classerInvariant(), pas a cette
+ * fonction. Une allocation orpheline ou un residu R3-b ne sont pas des bugs de
+ * calcul et ne doivent pas annuler un simple renommage de categorie.
  */
 async function reequilibrer(tx: DbClient, userId: string) {
   const plan = await calculerRepartition(userId, { db: tx, mode: 'conserver_ratios' });
@@ -60,21 +90,25 @@ async function reequilibrer(tx: DbClient, userId: string) {
   const nbRemisAZero = await remettreAZeroHorsPerimetre(tx, plan);
   const invariant = await verifierInvariant(userId, tx);
 
-  const anormaux = invariant.ecarts.filter(e => e.nbCategories > 0 && e.ecart !== 0);
-  if (anormaux.length > 0) {
-    throw new Error(
-      'Invariant R3-a rompu apres reequilibrage : ' +
-      anormaux.map(e => e.type + ' (ecart ' + e.ecart + ')').join(', '),
-    );
+  const verdict = classerInvariant(invariant);
+  if (verdict.bloquants.length > 0) {
+    throw new InvariantRompuError(verdict, 'reequilibrage');
   }
 
   return {
     nbCategories,
     nbRemisAZero,
     invariantOk: invariant.ok,
+    // P122 -- expose le verdict complet : un `invariantOk: false` renvoye avec
+    // un HTTP 200 n est acceptable que si le client recoit aussi le motif.
+    verdict,
     // Un type ayant perdu sa derniere categorie active garde une allocation
-    // non distribuable : alerte, pas erreur.
-    alertes: plan.bloquants,
+    // non distribuable, et une categorie desactivee peut porter un residu
+    // R3-b : alertes, pas erreurs.
+    alertes: verdict.alertes,
+    // Q187 -- part du revenu non allouee au moment du reequilibrage.
+    sousAllocationTaux: plan.sousAllocationTaux,
+    sousAllocationMontant: plan.sousAllocationMontant,
   };
 }
 
@@ -256,6 +290,8 @@ export async function PUT(req: NextRequest) {
         motifRepartition: changeType ? 'changement_type' : desactivee ? 'desactivation' : null,
         nbCategoriesReequilibrees: resultat.reeq?.nbCategories ?? 0,
         invariantOk: resultat.reeq?.invariantOk ?? null,
+        // P122 -- le motif est archive avec le booleen qu il explique.
+        invariantAlertes: resultat.reeq?.verdict.alertes ?? [],
       },
       req,
     });
@@ -266,7 +302,13 @@ export async function PUT(req: NextRequest) {
       repartition: resultat.reeq,
     }));
   } catch (e: any) {
-    if (typeof e?.message === 'string' && e.message.startsWith('Invariant R3-a rompu')) { return NextResponse.json({ error: e.message, invariantRompu: true }, { status: 422 }); } // P86
+    // Q188 -- reconnaissance par le TYPE de l erreur, plus par son texte.
+    if (estInvariantRompu(e)) {
+      return NextResponse.json(
+        { error: e.message, invariantRompu: true, bloquants: e.verdict.bloquants },
+        { status: 422 },
+      );
+    }
     console.error('PUT /api/categories:', e?.message);
     return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
   }
@@ -320,13 +362,21 @@ export async function DELETE(req: NextRequest) {
         nbCategoriesReequilibrees: resultat.nbCategories,
         nbRemisAZero: resultat.nbRemisAZero,
         invariantOk: resultat.invariantOk,
+        // P122 -- le motif est archive avec le booleen qu il explique.
+        invariantAlertes: resultat.verdict.alertes,
       },
       req,
     });
 
     return NextResponse.json({ success: true, repartition: resultat });
   } catch (e: any) {
-    if (typeof e?.message === 'string' && e.message.startsWith('Invariant R3-a rompu')) { return NextResponse.json({ error: e.message, invariantRompu: true }, { status: 422 }); } // P86
+    // Q188 -- reconnaissance par le TYPE de l erreur, plus par son texte.
+    if (estInvariantRompu(e)) {
+      return NextResponse.json(
+        { error: e.message, invariantRompu: true, bloquants: e.verdict.bloquants },
+        { status: 422 },
+      );
+    }
     console.error('DELETE /api/categories:', e?.message);
     return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
   }

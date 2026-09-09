@@ -1,6 +1,6 @@
 // =============================================================================
 // lib/reference.ts  --  I1 : source unique de l allocation budgetaire
-// Version 4 (S21). Integre Q52, Q53, Q56, Q57, Q58, puis P121 et P122.
+// Version 5 (S22). Integre Q52, Q53, Q56, Q57, Q58, P121, P122, puis Q187 et Q188.
 // =============================================================================
 // Motif (P46). Le montant de reference d une categorie etait recalcule a trois
 // endroits avec trois semantiques divergentes :
@@ -50,6 +50,9 @@
 //   R8  (S21, P122) L interpretation d un RapportInvariant vit ici et nulle
 //       part ailleurs. Une route ne classe pas elle-meme un ecart : elle
 //       appelle classerInvariant() et suit le verdict.
+//   R9  (S22, Q188) Le rollback d invariant se signale par InvariantRompuError
+//       et se reconnait par estInvariantRompu(). Aucune route ne teste le
+//       TEXTE d un message d erreur pour decider d un code HTTP.
 //
 // Ce module ne fait AUCUN appel a getServerSession. Le userId lui est toujours
 // fourni par l appelant, qui a deja authentifie. Toutes les ecritures brutes
@@ -175,6 +178,11 @@ export interface ResultatValidation {
  * representable en base : elle est portee ici et nulle part ailleurs.
  * Rejette aussi toute cle hors TYPES_ALLOUABLES (P28 : z.record acceptait
  * n importe quelle chaine, y compris `revenu`).
+ *
+ * Q187 (S22) -- cette fonction ne signale PAS la sous-allocation. Elle est
+ * pure et n a pas connaissance du revenu : elle ne pourrait exprimer qu un
+ * pourcentage manquant, pas un montant. L avertissement est produit par
+ * calculerRepartition(), qui dispose de l allocation ET du revenu.
  */
 export function validerSomme(taux: Record<string, number>): ResultatValidation {
   let total = 0;
@@ -397,6 +405,14 @@ export interface PlanRepartition {
   nbRemiseAZero: number;
   montantRemisAZero: number;
   avertissements: string[];
+  /**
+   * Q187 (S22) -- pourcentage du revenu non alloue, arrondi a 2 decimales.
+   * 0 quand la somme des taux atteint 100 %. Expose separement des
+   * avertissements pour qu un ecran puisse l afficher sans parser du texte.
+   */
+  sousAllocationTaux: number;
+  /** Q187 -- montant mensuel correspondant, en FCFA. 0 si revenu a 0. */
+  sousAllocationMontant: number;
   /** Motifs de refus d application. Non vide => applicable = false. */
   bloquants: string[];
   applicable: boolean;
@@ -695,6 +711,36 @@ export async function calculerRepartition(
     }
   }
 
+  // ── Q187 (S22) : sous-allocation ────────────────────────────────────────
+  // validerSomme() refuse un total SUPERIEUR a 100 % mais accepte 97 % sans
+  // rien dire. Les 3 % restants ne sont alloues a aucun type, donc a aucune
+  // categorie : sur un revenu de 790 000 cela represente 23 700 FCFA par mois
+  // qui n apparaissent nulle part, ni en allocation ni en ecart d invariant.
+  // R3-a reste vrai -- chaque type somme juste -- et l anomalie est donc
+  // structurellement invisible pour verifierInvariant().
+  //
+  // Ce n est PAS une erreur : ne pas tout allouer est une decision legitime.
+  // D ou un avertissement, jamais un bloquant (decision S22).
+  //
+  // L avertissement est produit ICI et non dans validerSomme() pour deux
+  // raisons : validerSomme est pure et ignore le revenu, donc ne peut chiffrer
+  // le manque en FCFA ; et calculerRepartition est traversee par les DEUX
+  // chemins d ecriture (PUT /api/parametres et POST /api/enveloppes/
+  // repartition), qui remontent tous deux `avertissements` a l appelant.
+  // Un seul point d ecriture, deux routes couvertes.
+  const sousAllocationTaux = Math.max(0, Math.round((100 - allocation.totalTaux) * 100) / 100);
+  const sousAllocationMontant = sousAllocationTaux > TOLERANCE_TAUX
+    ? montantDepuisTaux(sousAllocationTaux, allocation.revenuMensuelReference)
+    : 0;
+
+  if (sousAllocationTaux > TOLERANCE_TAUX && allocation.revenuMensuelReference > 0) {
+    avertissements.push(
+      'Sous-allocation : ' + allocation.totalTaux.toFixed(2) + ' % du revenu repartis sur 100 %. '
+      + sousAllocationTaux.toFixed(2) + ' %, soit ' + sousAllocationMontant + ' FCFA par mois, '
+      + 'ne sont alloues a aucun type.',
+    );
+  }
+
   const montantRemisAZero = remiseAZero.reduce((s, l) => s + l.ancienMontant, 0);
 
   return {
@@ -712,6 +758,8 @@ export async function calculerRepartition(
     nbRemiseAZero: remiseAZero.length,
     montantRemisAZero,
     avertissements,
+    sousAllocationTaux,
+    sousAllocationMontant,
     bloquants,
     applicable: bloquants.length === 0,
   };
@@ -940,7 +988,69 @@ export function classerInvariant(rapport: RapportInvariant): VerdictInvariant {
  * Message de rollback normalise, pour remplacer les trois chaines divergentes
  * construites dans les routes. `contexte` situe l operation : 'reequilibrage',
  * 'repartition', 'mise a jour des taux'.
+ *
+ * Le prefixe 'Invariant R3-a rompu apres ' est CONTRACTUEL : les routes non
+ * encore migrees vers estInvariantRompu() le testent par startsWith (P86).
+ * Ne pas le modifier sans avoir aligne app/api/enveloppes/repartition/route.ts.
  */
 export function messageRollbackInvariant(verdict: VerdictInvariant, contexte: string): string {
   return 'Invariant R3-a rompu apres ' + contexte + ' : ' + verdict.bloquants.join(', ');
+}
+
+// --- Q188 (S22) : erreur typee de rollback d invariant (R9) -------------------
+
+/**
+ * Q188 -- avant S22, les trois routes decidaient du code HTTP en testant le
+ * TEXTE du message :
+ *
+ *     if (typeof e?.message === 'string'
+ *         && e.message.startsWith('Invariant R3-a rompu')) { ... 422 }
+ *
+ * Trois chaines litterales, aucun garde a la compilation. Reformuler le message
+ * dans messageRollbackInvariant() aurait fait retomber les trois routes en 500
+ * silencieusement -- une erreur metier deliberee requalifiee en panne serveur,
+ * sans qu aucun test de type ne bronche.
+ *
+ * Cette classe porte l information au lieu de la coder dans du texte : le
+ * verdict complet est disponible cote route, donc `bloquants` peut etre remonte
+ * au client au lieu d etre reconstruit depuis le message.
+ *
+ * `motif` est un champ litteral, PAS un champ `code` : `code` est deja utilise
+ * par les exceptions Prisma (P2002, P2022...) et lib/prisma-errors.ts s appuie
+ * dessus. Deux semantiques sur un meme nom de champ produiraient exactement le
+ * genre de collision que ce correctif elimine.
+ *
+ * Object.setPrototypeOf est requis pour que `instanceof` fonctionne lorsque la
+ * cible de compilation degrade les classes (TS/ES5). Sans lui, la chaine de
+ * prototypes est rompue et instanceof renvoie false a l execution.
+ */
+export class InvariantRompuError extends Error {
+  readonly motif = 'INVARIANT_ROMPU' as const;
+  readonly verdict: VerdictInvariant;
+  readonly contexte: string;
+
+  constructor(verdict: VerdictInvariant, contexte: string) {
+    super(messageRollbackInvariant(verdict, contexte));
+    this.name = 'InvariantRompuError';
+    this.verdict = verdict;
+    this.contexte = contexte;
+    Object.setPrototypeOf(this, InvariantRompuError.prototype);
+  }
+}
+
+/**
+ * Reconnait un rollback d invariant dans un `catch`.
+ *
+ * Le test `instanceof` seul ne suffit pas : le bundling de Next.js peut
+ * dupliquer un module entre chunks serveur, auquel cas deux constructeurs
+ * distincts coexistent et `instanceof` echoue sur une instance pourtant
+ * legitime. Le repli sur le champ litteral `motif` est immune a ce cas.
+ * La verification de `verdict.bloquants` garantit que le predicat de type
+ * n est pas affirme sur un objet incomplet.
+ */
+export function estInvariantRompu(e: unknown): e is InvariantRompuError {
+  if (e instanceof InvariantRompuError) return true;
+  if (typeof e !== 'object' || e === null) return false;
+  const candidat = e as Partial<InvariantRompuError>;
+  return candidat.motif === 'INVARIANT_ROMPU' && Array.isArray(candidat.verdict?.bloquants);
 }

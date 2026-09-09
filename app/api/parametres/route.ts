@@ -1,7 +1,10 @@
 // =============================================================================
-// app/api/parametres/route.ts  --  etape 4 (S14), version 2
+// app/api/parametres/route.ts  --  etape 4 (S14), version 3 (S22)
 // =============================================================================
 // Ferme : P2, P28, P37, P58 (garde), Q40, Q45, Q50, I2, I3, I4, I5, I6.
+//       + P122-B2 (classement de l invariant delegue a lib/reference)
+//       + Q188    (erreur typee au lieu d un test sur le texte du message)
+//       + Q187    (alerte de sous-allocation remontee au client)
 //
 // Ce qui disparait par rapport a la version d origine :
 //   - le updateMany sur categories.montantReference (P2). Il ecrivait le
@@ -13,13 +16,35 @@
 //   - themeCouleur / anneeCourante / moisCourant du GET (Q45). Colonnes mortes,
 //     conservees en base, retirees de la reponse.
 //
+// P122-B2 (S22) -- le filtre suivant etait recopie ici a l identique :
+//
+//     const anormaux = invariant.ecarts.filter(
+//       e => e.nbCategories > 0 && e.ecart !== 0);
+//
+// Deux autres exemplaires existaient dans app/api/categories/route.ts et dans
+// app/api/enveloppes/repartition/route.ts : trois copies d une regle
+// d interpretation, donc trois occasions de diverger. Le classement vit
+// desormais dans lib/reference.ts (R8). Le PREDICAT DE ROLLBACK EST INCHANGE :
+// classerInvariant() reproduit exactement `nbCategories > 0 && ecart !== 0`
+// dans sa branche `bloquants`. Ce qui change est ce que le client recoit quand
+// il n y a PAS de rollback : les alertes expliquent desormais un
+// `invariant.ok: false` qui arrivait jusqu ici en HTTP 200 et sans motif.
+//
+// Q188 (S22) -- le catch testait `e.message.startsWith('Invariant R3-a rompu')`.
+// Remplace par estInvariantRompu(), qui reconnait la classe et non le texte.
+// La reponse 422 porte en plus `bloquants`, disponible sans reparser le message.
+//
+// Q187 (S22) -- une somme de taux a 97 % etait acceptee en silence : 3 % du
+// revenu n etaient alloues a aucun type. L avertissement est produit par
+// calculerRepartition() (source unique) et remonte ici dans `alertes`, avec
+// les deux champs chiffres `sousAllocationTaux` / `sousAllocationMontant`
+// pour qu un ecran puisse l afficher sans parser de texte. Non bloquant :
+// ne pas tout allouer reste une decision legitime.
+//
 // COMPATIBILITE VOULUE : la reponse GET expose toujours un `tauxReference` par
 // categorie, mais DERIVE de parametres_types (taux du type recopie sur chaque
 // categorie du type), plus lu depuis categories. Le MAX que fait
-// parametres/page.tsx continue de renvoyer la bonne valeur, donc ④ peut etre
-// deploye sans attendre ⑥. Le SUM que fait budget/page.tsx:136 reste faux
-// (P29) exactement comme aujourd hui : pas de regression, correction en ⑦ via
-// le nouveau champ `parType`.
+// parametres/page.tsx continue de renvoyer la bonne valeur.
 //
 // Option B (Q54). La regle P2 devient : cette route n ecrit jamais de valeur
 // ABSOLUE sur categories, mais applique une homothetie via lib/reference dans
@@ -49,7 +74,11 @@ import {
   appliquerPlan,
   remettreAZeroHorsPerimetre,
   verifierInvariant,
+  classerInvariant,
+  InvariantRompuError,
+  estInvariantRompu,
   type TypeAllouable,
+  type VerdictInvariant,
 } from '@/lib/reference';
 
 export const dynamic = 'force-dynamic';
@@ -58,8 +87,7 @@ export const maxDuration = 60; // P88
 // CHECK pose en base en S13 : nMoisUrgence BETWEEN 1 AND 24.
 // P58 : lib/validators.ts declare encore .max(60). Un envoi a 30 passe Zod et
 // casse sur la contrainte Postgres en 500 avec un message Prisma brut. Ce
-// garde le rattrape en 400 lisible ; l alignement de validators.ts est du
-// ressort de ⑥.
+// garde le rattrape en 400 lisible.
 const N_MOIS_URGENCE_MIN = 1;
 const N_MOIS_URGENCE_MAX = 24;
 
@@ -112,6 +140,10 @@ export async function GET(req: NextRequest) {
       parType,
       totalTaux: allocation.totalTaux,
       totalMontant: allocation.totalMontant,
+
+      // Q187 -- part du revenu non allouee, lisible sans calcul cote client.
+      // 0 quand la somme des taux atteint 100 %.
+      sousAllocationTaux: Math.max(0, Math.round((100 - allocation.totalTaux) * 100) / 100),
 
       // Jeton de concurrence optimiste, a renvoyer dans le PUT (I3).
       version: allocation.version,
@@ -168,8 +200,7 @@ export async function PUT(req: NextRequest) {
     }
 
     // `version` n est pas dans ParametresSchema : on le lit avant Zod, qui
-    // l ignorera. Optionnel pour ne pas casser le front actuel ; a rendre
-    // obligatoire en ⑥ une fois parametres/page.tsx mis a jour.
+    // l ignorera. Optionnel pour ne pas casser le front actuel.
     const versionClient: string | undefined =
       typeof raw?.version === 'string' ? raw.version : undefined;
 
@@ -198,6 +229,8 @@ export async function PUT(req: NextRequest) {
 
     // I5 / P28 -- plafond 100 % et cles autorisees, cote serveur.
     // z.record(z.string()) accepte n importe quelle cle, y compris `revenu`.
+    // Q187 : un total INFERIEUR a 100 % passe ce controle. C est voulu ; il
+    // produira une alerte, pas un refus.
     if (tauxReference !== undefined) {
       const v = validerSomme(tauxReference as Record<string, number>);
       if (!v.ok) {
@@ -248,7 +281,15 @@ export async function PUT(req: NextRequest) {
       // Un PUT « alertes » seul (le cas de sauvegarderAlertes) ne touche pas
       // a l allocation : on s arrete la, aucune ecriture sur categories.
       if (!toucheAllocation) {
-        return { ok: true as const, plan: null, invariant: null, avant, nbCategories: 0, nbRemisAZero: 0 };
+        return {
+          ok: true as const,
+          plan: null,
+          invariant: null,
+          verdict: null as VerdictInvariant | null,
+          avant,
+          nbCategories: 0,
+          nbRemisAZero: 0,
+        };
       }
 
       // ── Q50 : taux = source de verite, montants recalcules ────────────
@@ -283,20 +324,19 @@ export async function PUT(req: NextRequest) {
 
       const invariant = await verifierInvariant(userId, tx);
 
-      // Un type SANS categorie active mais avec une allocation > 0 est une
-      // alerte, pas une erreur : on ne bloque pas l ecran Parametres, qui est
-      // precisement l endroit ou l on regle les taux. En revanche un type AVEC
-      // categories dont la somme ne tombe pas juste signale un bug de calcul :
-      // rollback.
-      const anormaux = invariant.ecarts.filter(e => e.nbCategories > 0 && e.ecart !== 0);
-      if (anormaux.length > 0) {
-        throw new Error(
-          'Invariant R3-a rompu apres repartition sur : ' +
-          anormaux.map(e => e.type + ' (ecart ' + e.ecart + ')').join(', '),
-        );
+      // ── P122-B2 : classement unique (R8) ──────────────────────────────
+      // `bloquants` = ecart R3-a sur un type POURVU de categories actives :
+      // c est un bug de calcul ou une ecriture ayant contourne lib/reference,
+      // donc rollback. `alertes` = type orphelin (allocation sans categorie)
+      // ou residu R3-b : situations metier, remontees avec un HTTP 200.
+      // On ne bloque pas l ecran Parametres sur une alerte : c est
+      // precisement l endroit ou l on corrige les taux fautifs.
+      const verdict = classerInvariant(invariant);
+      if (verdict.bloquants.length > 0) {
+        throw new InvariantRompuError(verdict, 'mise a jour des taux');
       }
 
-      return { ok: true as const, plan, invariant, avant, nbCategories, nbRemisAZero };
+      return { ok: true as const, plan, invariant, verdict, avant, nbCategories, nbRemisAZero };
     }, { maxWait: 15_000, timeout: 30_000 });
 
     if ('bloque' in resultat) {
@@ -338,6 +378,14 @@ export async function PUT(req: NextRequest) {
       details.nbCategoriesModifiees = resultat.nbCategories;
       details.nbRemisAZero = resultat.nbRemisAZero;
       details.invariantOk = resultat.invariant?.ok ?? null;
+      // P122 -- un `invariantOk: false` archive sans motif est illisible six
+      // mois plus tard. Les alertes sont tracees avec lui.
+      details.invariantAlertes = resultat.verdict?.alertes ?? [];
+      // Q187 -- la sous-allocation au moment de l ecriture est archivee : elle
+      // explique un ecart entre revenu et somme des allocations dans un audit
+      // relu longtemps apres.
+      details.sousAllocationTaux = resultat.plan.sousAllocationTaux;
+      details.sousAllocationMontant = resultat.plan.sousAllocationMontant;
       details.diff = diff;
     }
 
@@ -349,9 +397,17 @@ export async function PUT(req: NextRequest) {
       req,
     });
 
+    // Les alertes remontees au client agregent trois sources de semantiques
+    // distinctes, toutes non bloquantes a ce stade :
+    //   - plan.bloquants        : vide ici, sinon le plan aurait ete refuse
+    //   - plan.avertissements   : modes de repli, desynchronisation, Q187
+    //   - verdict.alertes       : type orphelin, residu R3-b (P122)
     const alertes: string[] = [];
     if (resultat.plan) {
       alertes.push(...resultat.plan.bloquants, ...resultat.plan.avertissements);
+    }
+    if (resultat.verdict) {
+      alertes.push(...resultat.verdict.alertes);
     }
 
     const apres = await getAllocationParType(userId);
@@ -375,12 +431,24 @@ export async function PUT(req: NextRequest) {
             nbCategoriesModifiees: resultat.nbCategories,
             nbRemisAZero: resultat.nbRemisAZero,
             invariant: resultat.invariant,
+            // P122 -- `invariant.ok: false` accompagne d un 200 n est
+            // acceptable que si le verdict l explique. Il est donc expose.
+            verdict: resultat.verdict,
+            // Q187 -- chiffres, pour affichage sans parsing de texte.
+            sousAllocationTaux: resultat.plan.sousAllocationTaux,
+            sousAllocationMontant: resultat.plan.sousAllocationMontant,
           }
         : null,
       alertes,
     });
   } catch (e: any) {
-    if (typeof e?.message === 'string' && e.message.startsWith('Invariant R3-a rompu')) { return NextResponse.json({ error: e.message, invariantRompu: true }, { status: 422 }); } // P86
+    // Q188 -- reconnaissance par le TYPE de l erreur, plus par son texte.
+    if (estInvariantRompu(e)) {
+      return NextResponse.json(
+        { error: e.message, invariantRompu: true, bloquants: e.verdict.bloquants },
+        { status: 422 },
+      );
+    }
     console.error('PUT /api/parametres:', e?.message);
     return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
   }
