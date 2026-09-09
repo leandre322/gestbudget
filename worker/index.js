@@ -4,90 +4,39 @@
  * Ce fichier est injecte dans le SW genere par next-pwa (customWorkerDir: "worker").
  * Il coexiste avec les handlers de cache de next-pwa.
  *
- * Handlers existants : push, notificationclick
- * Nouveaux (P4)      : message (reception activite), fetch (gardien de session)
+ * Handlers : push, notificationclick
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * S23 / P130 — LE GARDIEN DE SESSION EST RETIRE.
+ *
+ * Les handlers `message` (reception ACTIVITY) et `fetch` (401 sur /api/ si
+ * inactivite) ont ete supprimes. Ils etaient la cause des deconnexions
+ * intempestives, par le mecanisme suivant :
+ *
+ *   1. Un service worker est UNIQUE pour toute l origine. `lastActivityTs`
+ *      etait une variable globale unique, ecrasee par le dernier message
+ *      recu, quel que soit le contexte emetteur (onglet, PWA installee).
+ *
+ *   2. Le thread principal n emettait ACTIVITY qu une fois par minute
+ *      (SW_NOTIFY_MS), et abandonnait l envoi EN SILENCE si
+ *      navigator.serviceWorker.controller valait null — cas systematique
+ *      dans un contexte charge avant l activation du SW courant, donc apres
+ *      chaque deploiement (skipWaiting: true).
+ *
+ *   3. Le worker conservait alors un `lastActivityTs` perime. A 30 minutes,
+ *      il diffusait SESSION_EXPIRED sur BroadcastChannel ET refusait la salve
+ *      d appels en cours par un 401 fabrique — pendant l usage actif.
+ *
+ * Ce gardien dupliquait un controle deja assure par le thread principal
+ * (polling 15 s + Page Visibility), avec un etat plus fragile et une portee
+ * plus large. Il n apportait aucune securite : le serveur maintient la
+ * session 24 h et un cookie vole ignore integralement ce mecanisme. C etait
+ * de l ergonomie appliquee avec un outil de securite, au prix d une panne
+ * de disponibilite.
+ *
+ * Le controle d inactivite reste entierement dans lib/inactivity.tsx.
+ * ───────────────────────────────────────────────────────────────────────────
  */
-
-// ─── P4 — Etat session ───────────────────────────────────────────────────────
-
-const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // Doit correspondre a lib/inactivity.tsx
-
-// null = SW vient de demarrer, pas encore recu de message du thread principal.
-// Dans ce cas, le fetch interceptor ne bloque pas (evite les faux positifs au
-// demarrage ou apres un redemarrage du SW).
-let lastActivityTs = null;
-
-// Routes publiques exclues du gardien de session
-const PUBLIC_API_ROUTES = [
-  '/api/auth',
-  '/api/register',
-  '/api/push/subscribe', // FIX : abonnement push ne doit jamais etre bloque par le gardien
-  '/api/push/test',      // FIX : test push ne doit jamais etre bloque par le gardien
-];
-
-// ─── P4 — Reception des mises a jour d'activite du thread principal ───────────
-//
-// InactivityGuard envoie { type: 'ACTIVITY', ts: Date.now() } via
-// navigator.serviceWorker.controller.postMessage() a chaque resetTimer,
-// une fois par minute maximum (debounce dans inactivity.tsx).
-
-self.addEventListener('message', function (event) {
-  if (event.data?.type === 'ACTIVITY') {
-    lastActivityTs = event.data.ts ?? Date.now();
-  }
-});
-
-// ─── P4 — Gardien de session sur les appels API ──────────────────────────────
-//
-// Intercepte les requetes vers /api/ et retourne 401 si la session est expiree.
-// Si lastActivityTs est null (SW vient de demarrer), laisse passer la requete.
-// Les handlers next-pwa prennent le relai si event.respondWith() n'est pas appele.
-
-self.addEventListener('fetch', function (event) {
-  const url = new URL(event.request.url);
-
-  // 1. Ignorer les assets statiques — laisser next-pwa gerer le cache
-  if (!url.pathname.startsWith('/api/')) return;
-
-  // 2. Ignorer les routes publiques
-  if (PUBLIC_API_ROUTES.some(function (r) { return url.pathname.startsWith(r); })) return;
-
-  // 3. SW vient de demarrer : pas encore de timestamp du thread principal
-  //    -> Ne pas bloquer, le thread principal (P1+P2) gere le timeout
-  if (lastActivityTs === null) return;
-
-  // 4. Verifier l'inactivite
-  const elapsed = Date.now() - lastActivityTs;
-
-  if (elapsed >= SESSION_TIMEOUT_MS) {
-    // Notifier le thread principal via BroadcastChannel
-    // (InactivityGuard ecoute ce canal et appelle signOut())
-    try {
-      var channel = new BroadcastChannel('gb_session');
-      channel.postMessage({ type: 'SESSION_EXPIRED' });
-      channel.close();
-    } catch (_) {
-      // BroadcastChannel non disponible : le thread principal gerera via polling
-    }
-
-    // Bloquer la requete avec une reponse 401
-    event.respondWith(
-      new Response(
-        JSON.stringify({
-          error: 'Session expiree',
-          code:  'SESSION_EXPIRED',
-        }),
-        {
-          status:  401,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      )
-    );
-  }
-
-  // Session active : ne pas appeler event.respondWith()
-  // -> next-pwa gere normalement (reseau + cache selon runtimeCaching)
-});
 
 // ─── Push notifications ──────────────────────────────────────────────────────
 

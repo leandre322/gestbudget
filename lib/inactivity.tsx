@@ -3,13 +3,47 @@
 /**
  * InactivityGuard — LAW-GestBudget
  *
- * Corrections appliquees :
- *   P1 — Polling Date + sessionStorage (setTimeout seul est gele sur mobile)
- *   P2 — Page Visibility API : verification immediate au retour d'arriere-plan
- *   P3 — isLoggingOutRef : empeche resetTimer d'annuler un logout en cours
- *   P4 — BroadcastChannel : ecoute SESSION_EXPIRED du service worker
- *        + notifie le SW de l'activite via postMessage (1 fois/min max)
- *   P5 — Evenements touch (touchstart/move/end) + passive:true pour performance mobile
+ * Historique
+ *   P1 — Polling Date + stockage (setTimeout seul est gele sur mobile)
+ *   P2 — Page Visibility API : verification immediate au retour d arriere-plan
+ *   P3 — isLoggingOutRef : empeche resetTimer d annuler un logout en cours
+ *   P4 — BroadcastChannel + notification du service worker   <- RETIRE en S23
+ *   P5 — Evenements touch (touchstart/move/end) + passive:true
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * S23 / P130 — notifyServiceWorker() et le gardien SW sont supprimes.
+ *   Le controle d inactivite est desormais assure ICI et nulle part ailleurs.
+ *   Une seule horloge, un seul decideur. Voir worker/index.js pour le detail
+ *   du mecanisme de deconnexion qui est retire.
+ *
+ * S23 / P149 — sessionStorage -> localStorage.
+ *   sessionStorage est CLOISONNE PAR CONTEXTE. Chaque onglet, et la PWA
+ *   installee, possedait son propre compteur. Un contexte laisse ouvert et
+ *   oublie ne recevait aucun evenement d activite : son setInterval
+ *   continuait de tourner en arriere-plan et appelait signOut() au bout de
+ *   30 minutes. Or signOut() detruit le cookie pour TOUTE l origine — donc
+ *   aussi pour le contexte dans lequel l utilisateur travaillait.
+ *   localStorage est partage par tous les contextes de l origine : le
+ *   dernier contexte ACTIF fait desormais foi, au lieu du plus oublie.
+ *
+ * S23 / P150 — le retour anticipe silencieux sur `controller === null`
+ *   disparait avec notifyServiceWorker().
+ *
+ * S23 / P151 — `keypress` remplace par `keydown`.
+ *   `keypress` est deprecie et ne se declenche PAS pour Tab, les fleches,
+ *   Retour arriere, Suppr et Entree. Un utilisateur remplissant la grille
+ *   budgetaire au clavier ne produisait aucun evenement d activite hormis
+ *   un mousemove fortuit. `keydown` est un sur-ensemble strict.
+ *
+ * S23 / I48 — ecriture throttlee a 5 s.
+ *   `mousemove` et `pointermove` declenchaient chacun un setItem synchrone
+ *   sur le fil principal, plusieurs centaines de fois par seconde. Contre un
+ *   delai de 30 minutes, un retard de 5 s sur l horodatage est sans effet.
+ *
+ * NOTE DE PERIMETRE : ce delai de 30 minutes est purement CLIENT. Le serveur
+ * maintient la session 24 h (session.maxAge). Ce mecanisme protege un poste
+ * laisse sans surveillance ; il n oppose rien a un cookie vole.
+ * ───────────────────────────────────────────────────────────────────────────
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
@@ -19,62 +53,76 @@ import { signOut } from 'next-auth/react';
 
 const TIMEOUT_MS   = 30 * 60 * 1000; // 30 min -> deconnexion
 const WARNING_MS   = 25 * 60 * 1000; // 25 min -> avertissement (5 min avant)
-const POLL_MS      = 15_000;          // Verification toutes les 15s (fiable mobile)
-const SW_NOTIFY_MS = 60_000;          // Notifier le SW au plus 1 fois par minute
+const POLL_MS      = 15_000;         // Verification toutes les 15 s (fiable mobile)
+const ECRITURE_MS  = 5_000;          // I48 — throttle des ecritures localStorage
 const STORAGE_KEY  = 'gb_last_activity';
+const CANAL        = 'gb_session';
 
-// P5 — Touch events inclus, passive:true pour ne pas bloquer le scroll
+// P151 — keydown au lieu de keypress (deprecie, ignore les touches de navigation)
 const ACTIVITY_EVENTS: string[] = [
   'mousemove',
   'mousedown',
-  'keypress',
-  'touchstart',  // Mobile — debut contact
-  'touchmove',   // Mobile — glissement
-  'touchend',    // Mobile — fin contact
+  'keydown',
+  'touchstart',
+  'touchmove',
+  'touchend',
   'scroll',
   'wheel',
-  'pointerdown', // Unifie desktop + stylet + touch
+  'pointerdown',
   'pointermove',
 ];
+
+// ─── Acces stockage, tolerants (Safari navigation privee, quota) ─────────────
+
+function lireActivite(): number | null {
+  try {
+    const brut = localStorage.getItem(STORAGE_KEY);
+    if (!brut) return null;
+    const n = Number(brut);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function ecrireActivite(ts: number): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, String(ts));
+  } catch {
+    // Stockage indisponible : le composant reste inoffensif (voir checkInactivite).
+  }
+}
 
 // ─── Composant ───────────────────────────────────────────────────────────────
 
 export function InactivityWarning() {
   const [showWarning, setShowWarning] = useState(false);
 
-  // Refs pour eviter des re-renders inutiles sur chaque interaction
-  const warningShownRef = useRef(false);
-
-  // P3 — Empeche resetTimer d'annuler la deconnexion si l'utilisateur
-  // interagit avec le bouton "Se deconnecter" (race condition)
-  const isLoggingOutRef = useRef(false);
-
-  // P4 — Timestamp du dernier message envoye au service worker (debounce)
-  const lastSwNotifyRef = useRef<number>(0);
+  const warningShownRef     = useRef(false);
+  const isLoggingOutRef     = useRef(false);
+  const derniereEcritureRef = useRef(0);
 
   // ─── Deconnexion ───────────────────────────────────────────────────────────
-  const doLogout = useCallback(() => {
+  // `diffuser` distingue la deconnexion DECIDEE ici (a propager aux autres
+  // contextes) de celle RECUE d un autre contexte (a ne pas renvoyer, sinon
+  // les contextes se relancent le message en boucle).
+  const terminer = useCallback((diffuser: boolean) => {
+    if (isLoggingOutRef.current) return;
     isLoggingOutRef.current = true;
-    sessionStorage.removeItem(STORAGE_KEY);
-    signOut({ callbackUrl: '/login' });
-  }, []);
 
-  // ─── Notification au service worker (P4) ───────────────────────────────────
-  // Debounce : envoie le timestamp d'activite au SW au plus 1 fois par minute
-  // pour eviter de flooder le SW sur chaque evenement touchmove/mousemove.
-  const notifyServiceWorker = useCallback((ts: number) => {
-    if (ts - lastSwNotifyRef.current < SW_NOTIFY_MS) return;
-    if (!('serviceWorker' in navigator)) return;
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
 
-    const controller = navigator.serviceWorker.controller;
-    if (!controller) return;
-
-    try {
-      controller.postMessage({ type: 'ACTIVITY', ts });
-      lastSwNotifyRef.current = ts;
-    } catch (_) {
-      // SW non disponible — P1+P2 prennent le relai
+    if (diffuser && typeof BroadcastChannel !== 'undefined') {
+      try {
+        const canal = new BroadcastChannel(CANAL);
+        canal.postMessage({ type: 'SESSION_EXPIRED' });
+        canal.close();
+      } catch {
+        // Canal indisponible : les autres contextes verront le 401 serveur.
+      }
     }
+
+    signOut({ callbackUrl: '/login' });
   }, []);
 
   // ─── Reset du timer (toute activite utilisateur detectee) ─────────────────
@@ -82,68 +130,105 @@ export function InactivityWarning() {
     if (isLoggingOutRef.current) return;
 
     const now = Date.now();
-    sessionStorage.setItem(STORAGE_KEY, String(now));
 
-    // P4 — Tenir le service worker informe (debounce 1/min)
-    notifyServiceWorker(now);
+    // Reprise d activite alors que l avertissement est affiche : on ecrit
+    // immediatement, sans attendre le throttle, et on masque la modale.
+    if (warningShownRef.current) {
+      warningShownRef.current = false;
+      setShowWarning(false);
+      derniereEcritureRef.current = now;
+      ecrireActivite(now);
+      return;
+    }
 
-    // Masquer l'avertissement si l'utilisateur reprend de l'activite
+    // I48 — au plus une ecriture toutes les ECRITURE_MS.
+    if (now - derniereEcritureRef.current < ECRITURE_MS) return;
+    derniereEcritureRef.current = now;
+    ecrireActivite(now);
+  }, []);
+
+  // ─── Verification de l inactivite ─────────────────────────────────────────
+  const checkInactivite = useCallback(() => {
+    if (isLoggingOutRef.current) return;
+
+    const derniere = lireActivite();
+
+    // Aucune valeur exploitable (premiere visite, stockage indisponible,
+    // contenu corrompu) : on reamorce au lieu de deconnecter. Une absence
+    // d information n est pas une preuve d inactivite.
+    if (derniere === null) {
+      const now = Date.now();
+      derniereEcritureRef.current = now;
+      ecrireActivite(now);
+      return;
+    }
+
+    const ecoule = Date.now() - derniere;
+
+    if (ecoule >= TIMEOUT_MS) {
+      terminer(true);
+      return;
+    }
+
+    if (ecoule >= WARNING_MS) {
+      if (!warningShownRef.current) {
+        warningShownRef.current = true;
+        setShowWarning(true);
+      }
+      return;
+    }
+
+    // P149 — l avertissement doit pouvoir etre RETIRE par l activite d un
+    // AUTRE contexte. L ancienne version ne le masquait que depuis
+    // resetTimer, donc jamais dans un onglet inactif : la modale y restait
+    // affichee indefiniment alors que la session etait maintenue ailleurs.
     if (warningShownRef.current) {
       warningShownRef.current = false;
       setShowWarning(false);
     }
-  }, [notifyServiceWorker]);
+  }, [terminer]);
 
-  // ─── Verification de l'inactivite ─────────────────────────────────────────
-  const checkInactivity = useCallback(() => {
-    if (isLoggingOutRef.current) return;
-
-    const stored       = sessionStorage.getItem(STORAGE_KEY);
-    const lastActivity = stored ? Number(stored) : Date.now();
-    const elapsed      = Date.now() - lastActivity;
-
-    if (elapsed >= TIMEOUT_MS) {
-      doLogout();
-    } else if (elapsed >= WARNING_MS && !warningShownRef.current) {
-      warningShownRef.current = true;
-      setShowWarning(true);
-    }
-  }, [doLogout]);
-
-  // ─── Init ──────────────────────────────────────────────────────────────────
+  // ─── Init : un montage est une activite ────────────────────────────────────
+  // Ecriture INCONDITIONNELLE, contrairement a la version sessionStorage qui
+  // n ecrivait qu en l absence de valeur. localStorage survit a la fermeture
+  // du navigateur : sans ce reamorcage, la premiere verification apres une
+  // reouverture le lendemain deconnecterait aussitot. Un montage suppose une
+  // navigation, donc une action de l utilisateur.
   useEffect(() => {
-    if (!sessionStorage.getItem(STORAGE_KEY)) {
-      sessionStorage.setItem(STORAGE_KEY, String(Date.now()));
-    }
+    const now = Date.now();
+    derniereEcritureRef.current = now;
+    ecrireActivite(now);
   }, []);
 
-  // ─── P1 — Polling toutes les 15s ───────────────────────────────────────────
+  // ─── P1 — Polling toutes les 15 s ──────────────────────────────────────────
   useEffect(() => {
-    const id = setInterval(checkInactivity, POLL_MS);
+    const id = setInterval(checkInactivite, POLL_MS);
     return () => clearInterval(id);
-  }, [checkInactivity]);
+  }, [checkInactivite]);
 
   // ─── P2 — Page Visibility API ──────────────────────────────────────────────
   useEffect(() => {
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') checkInactivity();
+      if (document.visibilityState === 'visible') checkInactivite();
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => document.removeEventListener('visibilitychange', onVisibilityChange);
-  }, [checkInactivity]);
+  }, [checkInactivite]);
 
-  // ─── P4 — BroadcastChannel : ecoute SESSION_EXPIRED du service worker ──────
+  // ─── BroadcastChannel — propagation d une deconnexion entre contextes ──────
+  // Le canal ne transporte plus que les deconnexions DECIDEES par un contexte
+  // client. Le service worker n y publie plus rien (P130).
   useEffect(() => {
     if (!('BroadcastChannel' in window)) return;
 
-    const channel = new BroadcastChannel('gb_session');
-    channel.onmessage = (event: MessageEvent) => {
-      if (event.data?.type === 'SESSION_EXPIRED') doLogout();
+    const canal = new BroadcastChannel(CANAL);
+    canal.onmessage = (event: MessageEvent) => {
+      if (event.data?.type === 'SESSION_EXPIRED') terminer(false);
     };
-    return () => channel.close();
-  }, [doLogout]);
+    return () => canal.close();
+  }, [terminer]);
 
-  // ─── P5 — Evenements d'activite (touch inclus) ────────────────────────────
+  // ─── P5 — Evenements d activite (touch inclus) ────────────────────────────
   useEffect(() => {
     ACTIVITY_EVENTS.forEach((evt) =>
       window.addEventListener(evt, resetTimer, { passive: true })
@@ -155,7 +240,7 @@ export function InactivityWarning() {
     };
   }, [resetTimer]);
 
-  // ─── Modal d'avertissement ─────────────────────────────────────────────────
+  // ─── Modal d avertissement ─────────────────────────────────────────────────
   if (!showWarning) return null;
 
   return (
@@ -206,7 +291,7 @@ export function InactivityWarning() {
 
         <div className="flex gap-3">
           <button
-            onClick={doLogout}
+            onClick={() => terminer(true)}
             className="flex-1 px-4 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
           >
             Se deconnecter
