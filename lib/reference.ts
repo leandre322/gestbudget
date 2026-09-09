@@ -1,6 +1,6 @@
 // =============================================================================
 // lib/reference.ts  --  I1 : source unique de l allocation budgetaire
-// Version 3 (S14). Integre Q52, Q53, Q56, Q57, Q58.
+// Version 4 (S21). Integre Q52, Q53, Q56, Q57, Q58, puis P121 et P122.
 // =============================================================================
 // Motif (P46). Le montant de reference d une categorie etait recalcule a trois
 // endroits avec trois semantiques divergentes :
@@ -47,6 +47,9 @@
 //   R7  Un glissement D2 est INTRA-TYPE (Q53). Autoriser le cross-type
 //       deplacerait de l allocation entre types sans passer par les taux et
 //       romprait R3-a silencieusement.
+//   R8  (S21, P122) L interpretation d un RapportInvariant vit ici et nulle
+//       part ailleurs. Une route ne classe pas elle-meme un ecart : elle
+//       appelle classerInvariant() et suit le verdict.
 //
 // Ce module ne fait AUCUN appel a getServerSession. Le userId lui est toujours
 // fourni par l appelant, qui a deja authentifie. Toutes les ecritures brutes
@@ -474,6 +477,16 @@ async function chargerHistorique(
  *                      si tous les poids sont egaux, l homothetie EST la
  *                      repartition egale. Il n existe que pour eviter une
  *                      division par zero.
+ *
+ * P121 (S21) -- le repli etait implicite : la branche 'egal' etait conditionnee
+ * a `modeDemande === 'egal' || sommeHist <= 0`. En 'conserver_ratios' avec des
+ * rapports degeneres ET un historique non nul, le flux tombait dans le `else`
+ * final, donc en PRORATA -- exactement le mode que 'conserver_ratios' exclut.
+ * Le bug etait masque par I41 : depuis S20 l historique n est charge qu en mode
+ * 'auto', donc sommeHist vaut 0 en 'conserver_ratios' et la branche 'egal' est
+ * prise par accident. Anomalie ARMEE, pas corrigee : elle reapparait au premier
+ * appelant qui recharge l historique dans ce mode. Le repli est desormais
+ * explicite et independant de sommeHist.
  */
 export async function calculerRepartition(
   userId: string,
@@ -565,27 +578,36 @@ export async function calculerRepartition(
     const ratiosDegeneres =
       sommeAnciens <= 0 || (Math.min.apply(null, anciens) === Math.max.apply(null, anciens));
 
+    // P121 -- les trois modes effectifs sont decides ici, explicitement, sans
+    // qu aucun d eux ne depende d un effet de bord d un autre.
+    const homothetie = modeDemande === 'conserver_ratios' && !ratiosDegeneres;
+    const repliEgal =
+      modeDemande === 'egal'
+      || (modeDemande === 'conserver_ratios' && ratiosDegeneres)
+      || (modeDemande === 'auto' && sommeHist <= 0);
+
     let mode: BlocRepartition['mode'];
     let poids: number[];
     const marqueurPlancher = new Array<boolean>(cats.length).fill(false);
 
-    if (modeDemande === 'conserver_ratios' && !ratiosDegeneres) {
+    if (homothetie) {
       mode = 'homothetie';
       poids = anciens.slice();
-    } else if (modeDemande === 'egal' || sommeHist <= 0) {
+    } else if (repliEgal) {
       mode = 'egal';
       poids = new Array<number>(cats.length).fill(1);
-      if (modeDemande === 'conserver_ratios' && ratiosDegeneres) {
+      if (modeDemande === 'conserver_ratios') {
         avertissements.push(
           'Type ' + type + ' : rapports actuels uniformes (min == max). '
           + 'Repartition egale, identique a l homothetie dans ce cas.',
         );
-      } else if (modeDemande === 'auto' && sommeHist <= 0) {
+      } else if (modeDemande === 'auto') {
         avertissements.push(
           'Type ' + type + ' : aucun historique sur ' + nbMois + ' mois. Repli sur repartition egale (Q41).',
         );
       }
     } else {
+      // Reste uniquement 'auto' avec sommeHist > 0.
       mode = 'prorata';
       poids = hist.slice();
     }
@@ -833,4 +855,92 @@ export async function verifierInvariant(
     totalAllocation,
     totalCategories,
   };
+}
+
+// --- P122 : interpretation de l invariant (R8) --------------------------------
+
+export interface VerdictInvariant {
+  /** Ecarts imputables a un bug de calcul. Non vide => rollback obligatoire. */
+  bloquants: string[];
+  /** Situations metier legitimes qui rendent `ok` faux sans etre des erreurs. */
+  alertes: string[];
+  /** Recopie de rapport.ok, sans reinterpretation. */
+  ok: boolean;
+  /**
+   * true quand `ok === false` est ENTIEREMENT justifie par les alertes.
+   * Un HTTP 200 accompagne de `ok: false` n est acceptable que dans ce cas,
+   * et seulement si les alertes sont remontees a l appelant.
+   */
+  explique: boolean;
+}
+
+/**
+ * P122 -- ce filtre etait recopie a l identique dans trois routes :
+ *   app/api/categories/route.ts:63
+ *   app/api/enveloppes/repartition/route.ts:165
+ *   app/api/parametres/route.ts:291
+ * Chacune ne testait que R3-a AVEC categories. Deux cas restaient donc muets :
+ *
+ *   1. Type ORPHELIN (nbCategories === 0, allocation > 0). ecart = -allocation,
+ *      donc okR3a = false. Exclu du filtre a dessein : c est une situation
+ *      metier, pas un bug. Rendre ce cas bloquant fermerait l ecran Parametres
+ *      a l endroit precis ou l on corrige les taux.
+ *   2. R3-b. Aucun des trois filtres ne le regardait. Sur la route repartition
+ *      la remise a zero est conditionnee au drapeau remiseAZeroHorsPerimetre :
+ *      a false, okR3b reste legitimement faux.
+ *
+ * Dans les deux cas l appelant recevait `invariantOk: false` avec un HTTP 200
+ * et aucune explication. Le correctif n est donc pas d elargir le filtre mais
+ * de cesser d exposer un booleen qui agrege trois conditions de semantiques
+ * differentes : `bloquants` declenche le rollback, `alertes` explique le 200.
+ *
+ * Ne fait AUCUN acces base : pure fonction du rapport. Testable seule.
+ */
+export function classerInvariant(rapport: RapportInvariant): VerdictInvariant {
+  const bloquants: string[] = [];
+  const alertes: string[] = [];
+
+  for (const e of rapport.ecarts) {
+    if (e.ecart === 0) continue;
+
+    if (e.nbCategories > 0) {
+      // Bug de calcul : une ecriture a contourne ce module, ou la repartition
+      // n a pas somme juste. Comportement identique aux trois filtres remplaces.
+      bloquants.push(e.type + ' (ecart ' + e.ecart + ')');
+    } else {
+      // nbCategories === 0 => sommeCategories === 0 => ecart === -allocation.
+      alertes.push(
+        'Type ' + e.type + ' : ' + e.allocation + ' FCFA alloues, aucune categorie active. '
+        + 'Creez une categorie sur ce type, ou ramenez son taux a 0.',
+      );
+    }
+  }
+
+  if (rapport.horsPerimetreNonNuls > 0) {
+    alertes.push(
+      rapport.horsPerimetreNonNuls + ' categorie(s) hors perimetre portent '
+      + rapport.montantHorsPerimetre + ' FCFA (R3-b). '
+      + 'Relancez une repartition avec remiseAZeroHorsPerimetre pour les remettre a zero.',
+    );
+  }
+
+  // Demonstration de l exhaustivite : okR3a faux implique un ecart non nul,
+  // classe soit en bloquant soit en alerte ; okR3b faux implique
+  // horsPerimetreNonNuls > 0, donc une alerte. Sans bloquant, `ok: false` est
+  // donc toujours entierement couvert par `alertes`.
+  return {
+    bloquants,
+    alertes,
+    ok: rapport.ok,
+    explique: bloquants.length === 0,
+  };
+}
+
+/**
+ * Message de rollback normalise, pour remplacer les trois chaines divergentes
+ * construites dans les routes. `contexte` situe l operation : 'reequilibrage',
+ * 'repartition', 'mise a jour des taux'.
+ */
+export function messageRollbackInvariant(verdict: VerdictInvariant, contexte: string): string {
+  return 'Invariant R3-a rompu apres ' + contexte + ' : ' + verdict.bloquants.join(', ');
 }
