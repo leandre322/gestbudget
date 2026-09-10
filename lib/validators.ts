@@ -19,13 +19,13 @@ import type { TypeCategorie } from '@prisma/client';
 //
 // S24 — modifications de ce fichier
 //   P120-bis  MONTANT_MAX devient une constante EXPORTEE ici (valeur inchangee,
-//        deja 1e9 dans app/api/budget/route.ts:113 — S24-Q9-a, aucune derive).
-//        Consommee par BudgetPostSchema (deja borne, plafond aligne de
-//        9_999_999_999 a MONTANT_MAX) et par BudgetPutSchema (nouvellement
-//        borne : MontantSaisi ne portait aucune limite, ni min ni max).
-//        app/api/budget/route.ts importera cette constante au lieu de la
-//        redeclarer localement (edit distinct, en attente de lecture de son
-//        bloc d import). app/api/quick-add/route.ts l importe egalement.
+//        1 000 000 000 — S24-Q9-a, aucune derive avec la const locale de
+//        app/api/budget/route.ts, qui l importe desormais d ici). SEUL
+//        app/api/quick-add/route.ts en avait reellement besoin cote Zod :
+//        sa route n a pas d equivalent de versEntier() en aval. Ce fichier ne
+//        borne PAS BudgetPutSchema/BudgetPostSchema avec cette constante —
+//        une premiere version de ce tour le faisait, revert explique dans le
+//        bloc de commentaire au-dessus de ces deux schemas plus bas.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Doit rester identique a TYPES_ALLOUABLES de lib/reference.ts.
@@ -258,7 +258,7 @@ export const ParametresSchema = z.object({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Budget — S14 / Q43, complete par S24 / P120-bis
+// Budget — S14 / Q43
 // `scope` decide quelles colonnes la route ecrit :
 //   'previsionnel' -> montantAnticipe seul  (ecran Budget)
 //   'suivi'        -> montantReel seul      (ecran Suivi, Quick Add, modale)
@@ -267,14 +267,29 @@ export const ParametresSchema = z.object({
 // creer la ligne Annee au moment de l ECRITURE, et donc au GET de cesser
 // d ecrire sur une lecture (P55).
 //
-// MONTANT_MAX — S24 / P120-bis / decision Q4+Q8 de S23. Source unique du
-// plafond sur budget_mensuel, montantAnticipe ET montantReel, inclusif.
-// Reprend la valeur deja en place dans app/api/budget/route.ts:113 (S24-Q9-a :
-// aucune derive a corriger, ce fichier en devient seulement la source
-// exportee). Consommee aussi par app/api/quick-add/route.ts. Cette borne Zod
-// protege un seul appel ; elle ne protege PAS le cumul d un ecrivain par
-// INCREMENT (quick-add, cron) — seule la contrainte CHECK Postgres, pas encore
-// deployee (S24-Q10), ferme ce cas.
+// MONTANT_MAX — S24 / P120-bis (S24-Q9-a). Source unique du plafond sur
+// budget_mensuel, reprise telle quelle de app/api/budget/route.ts (qui
+// l importe desormais d ici au lieu de la redeclarer localement).
+//
+// CE FICHIER NE BORNE PAS montantAnticipe/montantReel/lignes[].anticipe|reel
+// avec MONTANT_MAX. Une premiere version de ce tour le faisait ; revert apres
+// lecture de app/api/budget/route.ts (obtenue apres coup, fichier normalement
+// hors recollage). Sa fonction versEntier() gere deja tout le necessaire en
+// amont de BigInt() :
+//   - Number.isFinite(n) rejette NaN ET Infinity ('non_numerique') AVANT
+//     Math.trunc/BigInt — contrairement a toNum() de l import Excel, qui
+//     teste isNaN() (faux pour Infinity) et atteint BigInt(Infinity) =
+//     RangeError (P135, confirme, distinct de ce fichier) ;
+//   - negatif et hors-plafond sont deja refuses explicitement, avec une
+//     reponse 422 detaillee (plafond + motif par categorie/champ) que le
+//     front consomme vraisemblablement.
+// Ajouter une borne Zod ici interceptait ces cas plus tot mais sous un format
+// plus pauvre (celui, generique, de validateBody/Zod) — une regression de
+// contrat silencieuse plutot qu un gain. BudgetPostSchema garde donc son
+// plafond historique 9 999 999 999 (garde-fou de type large, comme ses
+// voisines BanqueUpdateSchema etc. — jamais la regle metier reelle, que la
+// route seule applique) ; BudgetPutSchema reste sans borne Zod sur les
+// montants, versEntier() etant deja l unique autorite sur ce champ.
 // ─────────────────────────────────────────────────────────────────────────────
 export const MONTANT_MAX = 1_000_000_000;
 
@@ -295,27 +310,6 @@ export const BudgetPutSchema = z.object({
   if (!v.anneeId && v.annee === undefined) {
     ctx.addIssue({ code: 'custom', path: ['anneeId'], message: 'anneeId ou annee requis' });
   }
-
-  // P120-bis / S24 — MontantSaisi acceptait string | number sans aucune autre
-  // garde : rien n empechait une valeur negative, NaN, Infinity ou hors
-  // plafond de traverser Zod. Meme classe de risque que P135 sur l import
-  // (Number('1e400') = Infinity -> BigInt(Infinity) = RangeError). Chaque
-  // cellule est verifiee independamment pour rapporter la categorie fautive
-  // plutot qu un rejet global illisible du payload.
-  for (const [categorieId, cellule] of Object.entries(v.lignes)) {
-    for (const champ of ['anticipe', 'reel'] as const) {
-      const brut = cellule[champ];
-      if (brut === undefined) continue;
-      const n = typeof brut === 'string' ? Number(brut.replace(',', '.')) : brut;
-      if (Number.isNaN(n) || !Number.isFinite(n)) {
-        ctx.addIssue({ code: 'custom', path: ['lignes', categorieId, champ], message: 'Valeur numerique invalide' });
-      } else if (n < 0) {
-        ctx.addIssue({ code: 'custom', path: ['lignes', categorieId, champ], message: 'Valeur negative refusee' });
-      } else if (n > MONTANT_MAX) {
-        ctx.addIssue({ code: 'custom', path: ['lignes', categorieId, champ], message: `Superieur au plafond de ${MONTANT_MAX} FCFA` });
-      }
-    }
-  }
 });
 
 export const BudgetPostSchema = z.object({
@@ -324,8 +318,8 @@ export const BudgetPostSchema = z.object({
   categorieId:     z.string().min(1),
   mois:            z.number().int().min(1).max(12),
   scope:           BudgetScope.optional().default('les_deux'),
-  montantAnticipe: z.number().min(0).max(MONTANT_MAX).optional(),
-  montantReel:     z.number().min(0).max(MONTANT_MAX).optional(),
+  montantAnticipe: z.number().min(0).max(9_999_999_999).optional(),
+  montantReel:     z.number().min(0).max(9_999_999_999).optional(),
   notes:           z.string().max(500).nullish(),
 }).superRefine((v, ctx) => {
   if (!v.anneeId && v.annee === undefined) {
