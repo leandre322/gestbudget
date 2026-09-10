@@ -25,46 +25,45 @@ const nextConfig = {
   experimental: { serverComponentsExternalPackages: ["@prisma/client", "bcryptjs"] },
 };
 
-module.exports = withPWA(nextConfig);
-
-
-// Injected content via Sentry wizard below
-
 const { withSentryConfig } = require("@sentry/nextjs");
 
-module.exports = withSentryConfig(module.exports, {
-  // For all available options, see:
-  // https://www.npmjs.com/package/@sentry/webpack-plugin#options
-
-  org: "lawdigitals",
+// ─────────────────────────────────────────────────────────────────────────────
+// S23 / P132 — trois corrections
+//
+//   1. FORME. Le wizard avait produit `module.exports = withPWA(nextConfig)`
+//      puis, plus bas, `module.exports = withSentryConfig(module.exports, ...)`.
+//      Fonctionnel en CommonJS (module.exports est evalue avant la
+//      reaffectation) mais illisible : la composition est desormais explicite.
+//
+//   2. sentryUrl — CAUSE DU 401 AU BUILD (S23 / Q19).
+//      Le DSN de sentry.client.config.ts pointe sur ingest.DE.sentry.io :
+//      l organisation `lawdigitals` est hebergee en region EUROPE. Sans
+//      sentryUrl, le plugin presente SENTRY_AUTH_TOKEN a l API US, qui le
+//      refuse en 401. Seul l upload des SOURCE MAPS echouait — l ingestion
+//      cliente, elle, fonctionne. Les traces etaient donc remontees mais
+//      MINIFIEES.
+//
+//   3. OPTIONS A LA RACINE. `automaticVercelMonitors` et `treeshake` etaient
+//      imbriques sous une cle `webpack`. Sur @sentry/nextjs v10 ces options
+//      sont attendues a la racine ; une cle inconnue est ignoree EN SILENCE,
+//      donc automaticVercelMonitors ne faisait vraisemblablement rien.
+// ─────────────────────────────────────────────────────────────────────────────
+module.exports = withSentryConfig(withPWA(nextConfig), {
+  org:     "lawdigitals",
   project: "javascript-nextjs",
 
-  // Only print logs for uploading source maps in CI
+  // Region EU — voir point 2 ci-dessus.
+  sentryUrl: "https://de.sentry.io/",
+
+  // Logs d upload uniquement en CI.
   silent: !process.env.CI,
 
-  // For all available options, see:
-  // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
-
-  // Upload a larger set of source maps for prettier stack traces (increases build time)
+  // Source maps plus completes, au prix d un build plus long.
   widenClientFileUpload: true,
 
-  // Uncomment to route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
-  // This can increase your server load as well as your hosting bill.
-  // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-
-  // side errors will fail.
-  // tunnelRoute: "/monitoring",
+  // Instrumentation automatique des Vercel Cron Monitors.
+  automaticVercelMonitors: true,
 
-  webpack: {
-    // Enables automatic instrumentation of Vercel Cron Monitors. (Does not yet work with App Router route handlers.)
-    // See the following for more information:
-    // https://docs.sentry.io/product/crons/
-    // https://vercel.com/docs/cron-jobs
-    automaticVercelMonitors: true,
-
-    // Tree-shaking options for reducing bundle size
-    treeshake: {
-      // Automatically tree-shake Sentry logger statements to reduce bundle size
-      removeDebugLogging: true,
-    },
-  },
+  // Retire les appels de log Sentry du bundle client.
+  disableLogger: true,
 });
