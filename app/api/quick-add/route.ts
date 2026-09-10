@@ -48,10 +48,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: 'Categorie introuvable' }, { status: 404 })
     }
 
-    // Mois réel courant (côté serveur)
+    // Mois réel courant (côté serveur). S24 / P120-bis : getUTCMonth /
+    // getUTCFullYear plutot que getMonth / getFullYear. Vercel execute deja
+    // en UTC, donc ceci ne change rien en production aujourd'hui — mais rend
+    // le comportement independant du fuseau du serveur d'execution, et
+    // aligne avec lib/periode.ts (I16), deja UTC-normalise pour le verrou.
+    // Sans cet alignement, un futur changement de region d'execution ferait
+    // deriver silencieusement le mois que quick-add ecrit par rapport au
+    // mois que le verrou evalue — les deux doivent lire la meme horloge.
     const now = new Date()
-    const mois = now.getMonth() + 1
-    const anneeNum = now.getFullYear()
+    const mois = now.getUTCMonth() + 1
+    const anneeNum = now.getUTCFullYear()
 
     const annee = await prisma.annee.findUnique({
       where: { userId_annee: { userId, annee: anneeNum } },
