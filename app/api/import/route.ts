@@ -188,6 +188,18 @@ export async function POST(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
 
+    // I56 (S24 / Q2-b) — desactive par defaut. Cette route ecrit des montants
+    // sans les protections des autres ecrivains : pas de verrou mensuel (P134),
+    // pas de bornes (P135), lots non atomiques (P155), alias de rapprochement
+    // fragiles (P154), ecrasement silencieux d'une cellule vide (P153). Le lot
+    // correctif est identifie mais differe : la decision S24 est de reduire la
+    // surface exposee plutot que d'exposer un correctif partiel. Aucune action
+    // Vercel requise pour rester desactive. IMPORT_EXCEL_ENABLED=true en
+    // Production reactive la route telle quelle, bugs inclus.
+    if (process.env.IMPORT_EXCEL_ENABLED !== 'true') {
+      return NextResponse.json({ error: 'Import temporairement desactive.' }, { status: 503 });
+    }
+
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
     if (!file) return NextResponse.json({ error: 'Fichier manquant' }, { status: 400 });
