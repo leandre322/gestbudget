@@ -6,9 +6,10 @@ import { z } from 'zod'
 import { logAudit } from '@/lib/audit'
 import { verifierSeuilsBudget } from '@/lib/alertes'
 import { revalidateTag } from 'next/cache' // S6 : même invalidation que /api/budget
+import { MONTANT_MAX } from '@/lib/validators' // S24 / P120-bis
 
 const QuickAddSchema = z.object({
-  montant: z.number().int().positive(),
+  montant: z.number().int().positive().max(MONTANT_MAX, `Montant superieur au plafond de ${MONTANT_MAX} FCFA`),
   categorieId: z.string().min(1),
   libelle: z.string().max(100).optional().nullable(),
 })
@@ -17,6 +18,11 @@ const QuickAddSchema = z.object({
 // Décision S6 : date serveur (alignée avec le layout qui initialise sur new Date()
 // et avec le cron des récurrentes) — jamais Parametres.moisCourant.
 // Le client ne peut PAS choisir le mois → aucune falsification possible.
+//
+// P120-bis (S24) — le plafond ci-dessus ne protege qu un seul appel. Une
+// succession d ajouts rapides peut toujours faire depasser MONTANT_MAX en
+// cumul sur montantReel : seule la contrainte CHECK Postgres (S24-Q10, pas
+// encore deployee) ferme ce cas, via l increment atomique ci-dessous.
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -90,9 +96,8 @@ export async function POST(req: NextRequest) {
     // sendPushToUser a son propre .catch. Mais elle peut etre LENTE : jusqu'a
     // deux appels reseau vers le service push en serie, apres la mutation
     // deja committee. Sans plafond, cette latence peut pousser la reponse HTTP
-    // au-dela du temps que l'utilisateur attend, avec un re-clic → double
-    // increment apparent (le serveur, lui, n'incremente qu'une fois par appel
-    // recu — c'est le NOMBRE D'APPELS qui doublerait).
+    // au-dela du temps que l'utilisateur attend, avec un re-clic → nouvel
+    // appel recu par le serveur, qui incremente une seconde fois.
     // Plafond de 3 s, sans nouvelle dependance. Limite connue : passe le
     // plafond, la promesse continue en arriere-plan sans garantie de
     // completion sur Vercel serverless — une alerte de seuil peut alors etre
