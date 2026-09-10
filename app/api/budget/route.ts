@@ -1,5 +1,5 @@
 // =============================================================================
-// app/api/budget/route.ts  --  etape 10b, version 4 (S21)
+// app/api/budget/route.ts  --  etape 10b, version 4 (S21) + S24 P120-bis
 // =============================================================================
 // Ferme : Q43 (scope), P41, P43, P45, P55  [v2, inchange]
 //       + P62 (verrou serveur), P66 (POST non garde), Q61 (coherence scope)
@@ -61,10 +61,14 @@
 //       une lecture, declenchable via ?annee=1999. Creation bornee a
 //       [anneeCourante-1, anneeCourante+1].
 //
+// S24 / P120-bis (S24-Q9-a) — MONTANT_MAX etait declaree localement ici.
+//       Deplacee vers lib/validators.ts comme source unique, importee
+//       ci-dessous. Valeur inchangee : aucune derive a reconcilier.
+//
 // ORDRE DES GARDES (PUT et POST), a preserver en cas de reprise :
 //   1. session         401
 //   2. csrf            403
-//   3. json            400
+//   3. json             400
 //   4. zod             400/422
 //   5. Q61 scope       422
 //   6. millesime       404          <- LECTURE SEULE
@@ -96,7 +100,7 @@ import { serial } from '@/lib/serial';
 import { reponsePrisma } from '@/lib/prisma-errors';
 import { logAudit } from '@/lib/audit';
 import { csrfCheck, validateBody } from '@/lib/api-helpers';
-import { BudgetPutSchema, BudgetPostSchema } from '@/lib/validators';
+import { BudgetPutSchema, BudgetPostSchema, MONTANT_MAX } from '@/lib/validators';
 import { revalidateTag } from 'next/cache';
 import { estMoisVerrouille, messageVerrou, MOTIF_DEROGATION } from '@/lib/periode';
 
@@ -109,8 +113,10 @@ export const maxDuration = 60;
 /** Fenetre dans laquelle un GET a le droit de creer la ligne Annee (P55). */
 const FENETRE_CREATION_ANNEE = 1;
 
-/** P120 / Q182 -- plafond d un montant unitaire, en FCFA. */
-const MONTANT_MAX = 1000000000;
+// P120 / Q182 -- MONTANT_MAX vivait ici en const locale. S24 / P120-bis
+// (S24-Q9-a) : deplacee vers lib/validators.ts comme source unique, valeur
+// inchangee (1 000 000 000), importee ci-dessus. Motif : quick-add n avait
+// aucun equivalent de versEntier() et devait pouvoir la reutiliser.
 
 const CATEGORIE_SELECT = {
   select: { id: true, nom: true, type: true, ordre: true },
