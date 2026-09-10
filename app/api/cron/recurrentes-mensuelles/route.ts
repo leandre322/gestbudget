@@ -134,6 +134,26 @@ async function fermerLog(
 // Idempotence garantie par la contrainte unique (recurrenteId, periode) :
 // un re-run produit des P2002 → comptes en "sautees", jamais de doublon.
 // Date REELLE serveur (alignee avec /api/quick-add et le layout).
+//
+// S24 / P120-bis — getUTCFullYear/getUTCMonth plutot que les variantes
+// locales. Vercel s'execute deja en UTC : identique en production
+// aujourd'hui. Alignement explicite avec /api/quick-add (meme correctif,
+// meme session) et lib/periode.ts (I16) : le mois que ce cron materialise et
+// celui que quick-add incremente ne doivent jamais pouvoir diverger si l'un
+// des deux environnements d'execution changeait un jour de fuseau par defaut.
+// periodeMoisPrecedent(now) n'est PAS verifiee ici : sa propre normalisation
+// UTC depend de lib/rapport-mensuel.ts, non relu cette session.
+//
+// S24 / P136 — sautees confondait deux causes sous un seul compteur :
+// categorie desactivee (etat intentionnel, non actionnable) et annee non
+// materialisee (etat recuperable, mais totalement silencieux jusqu'ici : au
+// 1er janvier sans ligne Annee, TOUTES les recurrentes sont sautees sans la
+// moindre alerte). sautees reste inchange (somme des trois causes, y compris
+// P2002/idempotence, pour ne rien casser cote consommateurs existants) ;
+// sauteesCategorieInactive et sauteesAnneeAbsente s'y ajoutent en sous-compte.
+// Un signal Sentry dedie part UNE FOIS par run (pas une fois par recurrente,
+// pour ne pas noyer Sentry) si sauteesAnneeAbsente > 0. status refleterat
+// desormais ce cas comme 'partial' au lieu de 'success'.
 export async function GET(req: NextRequest) {
   const started = Date.now()
 
@@ -151,8 +171,8 @@ export async function GET(req: NextRequest) {
   const logId = await ouvrirLog()
 
   const now = new Date()
-  const anneeNum = now.getFullYear()
-  const mois = now.getMonth() + 1
+  const anneeNum = now.getUTCFullYear()
+  const mois = now.getUTCMonth() + 1
   const periode = `${anneeNum}-${String(mois).padStart(2, '0')}`
 
   // Periode du RAPPORT = mois precedent (celui qui vient de se terminer).
@@ -161,6 +181,8 @@ export async function GET(req: NextRequest) {
 
   let generees = 0
   let sautees = 0
+  let sauteesCategorieInactive = 0   // P136 (S24) — sous-compte : categorie desactivee
+  let sauteesAnneeAbsente = 0        // P136 (S24) — sous-compte : annee non materialisee
   let erreurs = 0
   let degrade = false
 
@@ -199,10 +221,10 @@ export async function GET(req: NextRequest) {
     >()
 
     for (const rec of recurrentes) {
-      if (!rec.categorie?.isActive) { sautees++; continue }
+      if (!rec.categorie?.isActive) { sautees++; sauteesCategorieInactive++; continue }
 
       const anneeId = anneeParUser.get(rec.userId)
-      if (!anneeId) { sautees++; continue } // annee non creee → on ne force rien
+      if (!anneeId) { sautees++; sauteesAnneeAbsente++; continue } // annee non creee → on ne force rien
 
       try {
         await prisma.$transaction([
@@ -250,6 +272,20 @@ export async function GET(req: NextRequest) {
           erreurs++
           signaler(`recurrente ${rec.id}`, e)
         }
+      }
+    }
+
+    // P136 (S24) — signal dedie, une fois par run, si des recurrentes ont ete
+    // sautees faute d'annee materialisee. Cause distincte de "categorie
+    // desactivee" : celle-ci est recuperable (il suffit d'ouvrir l'annee) et
+    // n'avait jusqu'ici aucune trace hors du compteur agrege.
+    if (sauteesAnneeAbsente > 0) {
+      const msgAnnee = `annee non creee pour ${sauteesAnneeAbsente} recurrente(s) sur la periode ${periode}`
+      console.error(`[cron ${JOB_NAME}] ${msgAnnee}`)
+      try {
+        Sentry.captureMessage(`${JOB_NAME}: ${msgAnnee}`, 'warning')
+      } catch {
+        // Sentry indisponible : le console.error ci-dessus reste la trace.
       }
     }
 
@@ -346,13 +382,23 @@ export async function GET(req: NextRequest) {
       if (resPush.depasse) degrade = true
     }
 
+    // P136 (S24) — sauteesAnneeAbsente fait desormais basculer le statut en
+    // 'partial' : c'est le seul des deux sous-comptes qui soit actionnable,
+    // et il n'avait auparavant aucune influence sur status (seul erreurs et
+    // degrade y contribuaient), donc un run entierement bloque par ce cas
+    // pouvait remonter 'success'.
     const status =
-      erreurs > 0 ? (generees > 0 ? 'partial' : 'error') : degrade ? 'partial' : 'success'
+      erreurs > 0 ? (generees > 0 ? 'partial' : 'error')
+      : sauteesAnneeAbsente > 0 ? 'partial'
+      : degrade ? 'partial'
+      : 'success'
 
     await fermerLog(logId, status, started, {
       periode,
       generees,
       sautees,
+      sauteesCategorieInactive,
+      sauteesAnneeAbsente,
       erreurs,
       degrade,
       rapportPeriode: periodeRapportLabel,
@@ -366,6 +412,8 @@ export async function GET(req: NextRequest) {
       periode,
       generees,
       sautees,
+      sauteesCategorieInactive,
+      sauteesAnneeAbsente,
       erreurs,
       degrade,
       emailsEnvoyes: rapports.emailsEnvoyes,
@@ -377,6 +425,8 @@ export async function GET(req: NextRequest) {
       periode,
       generees,
       sautees,
+      sauteesCategorieInactive,
+      sauteesAnneeAbsente,
       erreurs,
       erreurGlobale: true,
     })
