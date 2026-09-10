@@ -15,7 +15,7 @@ model User {
   nom                  String?
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
-  active_session       String?
+  // active_session       String?
   annees               Annee[]
   banques              Banque[]
   budgetAlertes        BudgetAlerte[]
