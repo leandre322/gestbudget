@@ -16,6 +16,16 @@ import type { TypeCategorie } from '@prisma/client';
 //        Zod retire les cles inconnues, donc la valeur envoyee par
 //        parametres/page.tsx est jetee au lieu d etre ecrite. montantReference
 //        est derive : seul lib/reference.ts l ecrit.
+//
+// S24 — modifications de ce fichier
+//   P120-bis  MONTANT_MAX devient une constante EXPORTEE ici (valeur inchangee,
+//        deja 1e9 dans app/api/budget/route.ts:113 — S24-Q9-a, aucune derive).
+//        Consommee par BudgetPostSchema (deja borne, plafond aligne de
+//        9_999_999_999 a MONTANT_MAX) et par BudgetPutSchema (nouvellement
+//        borne : MontantSaisi ne portait aucune limite, ni min ni max).
+//        app/api/budget/route.ts importera cette constante au lieu de la
+//        redeclarer localement (edit distinct, en attente de lecture de son
+//        bloc d import). app/api/quick-add/route.ts l importe egalement.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Doit rester identique a TYPES_ALLOUABLES de lib/reference.ts.
@@ -248,7 +258,7 @@ export const ParametresSchema = z.object({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Budget — S14 / Q43
+// Budget — S14 / Q43, complete par S24 / P120-bis
 // `scope` decide quelles colonnes la route ecrit :
 //   'previsionnel' -> montantAnticipe seul  (ecran Budget)
 //   'suivi'        -> montantReel seul      (ecran Suivi, Quick Add, modale)
@@ -256,7 +266,18 @@ export const ParametresSchema = z.object({
 // `annee` est accepte en alternative a `anneeId` : il permet a la route de
 // creer la ligne Annee au moment de l ECRITURE, et donc au GET de cesser
 // d ecrire sur une lecture (P55).
+//
+// MONTANT_MAX — S24 / P120-bis / decision Q4+Q8 de S23. Source unique du
+// plafond sur budget_mensuel, montantAnticipe ET montantReel, inclusif.
+// Reprend la valeur deja en place dans app/api/budget/route.ts:113 (S24-Q9-a :
+// aucune derive a corriger, ce fichier en devient seulement la source
+// exportee). Consommee aussi par app/api/quick-add/route.ts. Cette borne Zod
+// protege un seul appel ; elle ne protege PAS le cumul d un ecrivain par
+// INCREMENT (quick-add, cron) — seule la contrainte CHECK Postgres, pas encore
+// deployee (S24-Q10), ferme ce cas.
 // ─────────────────────────────────────────────────────────────────────────────
+export const MONTANT_MAX = 1_000_000_000;
+
 export const BudgetScope = z.enum(['previsionnel', 'suivi', 'les_deux']);
 
 const MontantSaisi = z.union([z.string(), z.number()]);
@@ -274,6 +295,27 @@ export const BudgetPutSchema = z.object({
   if (!v.anneeId && v.annee === undefined) {
     ctx.addIssue({ code: 'custom', path: ['anneeId'], message: 'anneeId ou annee requis' });
   }
+
+  // P120-bis / S24 — MontantSaisi acceptait string | number sans aucune autre
+  // garde : rien n empechait une valeur negative, NaN, Infinity ou hors
+  // plafond de traverser Zod. Meme classe de risque que P135 sur l import
+  // (Number('1e400') = Infinity -> BigInt(Infinity) = RangeError). Chaque
+  // cellule est verifiee independamment pour rapporter la categorie fautive
+  // plutot qu un rejet global illisible du payload.
+  for (const [categorieId, cellule] of Object.entries(v.lignes)) {
+    for (const champ of ['anticipe', 'reel'] as const) {
+      const brut = cellule[champ];
+      if (brut === undefined) continue;
+      const n = typeof brut === 'string' ? Number(brut.replace(',', '.')) : brut;
+      if (Number.isNaN(n) || !Number.isFinite(n)) {
+        ctx.addIssue({ code: 'custom', path: ['lignes', categorieId, champ], message: 'Valeur numerique invalide' });
+      } else if (n < 0) {
+        ctx.addIssue({ code: 'custom', path: ['lignes', categorieId, champ], message: 'Valeur negative refusee' });
+      } else if (n > MONTANT_MAX) {
+        ctx.addIssue({ code: 'custom', path: ['lignes', categorieId, champ], message: `Superieur au plafond de ${MONTANT_MAX} FCFA` });
+      }
+    }
+  }
 });
 
 export const BudgetPostSchema = z.object({
@@ -282,8 +324,8 @@ export const BudgetPostSchema = z.object({
   categorieId:     z.string().min(1),
   mois:            z.number().int().min(1).max(12),
   scope:           BudgetScope.optional().default('les_deux'),
-  montantAnticipe: z.number().min(0).max(9_999_999_999).optional(),
-  montantReel:     z.number().min(0).max(9_999_999_999).optional(),
+  montantAnticipe: z.number().min(0).max(MONTANT_MAX).optional(),
+  montantReel:     z.number().min(0).max(MONTANT_MAX).optional(),
   notes:           z.string().max(500).nullish(),
 }).superRefine((v, ctx) => {
   if (!v.anneeId && v.annee === undefined) {
