@@ -85,8 +85,23 @@ export async function POST(req: NextRequest) {
     // S6 : invalide le cache analytiques (aligné sur PUT/POST /api/budget)
     revalidateTag(`analytiques-${userId}`)
 
-    // Alerte de seuil éventuelle (non bloquante — voir lib/alertes.ts)
-    await verifierSeuilsBudget({ userId, anneeId: annee.id, categorieId, mois })
+    // P138-bis (S24 / Q7-c) — verifierSeuilsBudget ne peut pas lever : elle
+    // encapsule tout son corps dans un try/catch (lib/alertes.ts) et chaque
+    // sendPushToUser a son propre .catch. Mais elle peut etre LENTE : jusqu'a
+    // deux appels reseau vers le service push en serie, apres la mutation
+    // deja committee. Sans plafond, cette latence peut pousser la reponse HTTP
+    // au-dela du temps que l'utilisateur attend, avec un re-clic → double
+    // increment apparent (le serveur, lui, n'incremente qu'une fois par appel
+    // recu — c'est le NOMBRE D'APPELS qui doublerait).
+    // Plafond de 3 s, sans nouvelle dependance. Limite connue : passe le
+    // plafond, la promesse continue en arriere-plan sans garantie de
+    // completion sur Vercel serverless — une alerte de seuil peut alors etre
+    // perdue en silence. Correctif definitif prevu : I52 (cle d'idempotence
+    // sur quick-add), pas encore fait.
+    await Promise.race([
+      verifierSeuilsBudget({ userId, anneeId: annee.id, categorieId, mois }),
+      new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+    ])
 
     return NextResponse.json({
       ok: true,
