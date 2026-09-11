@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useNbProjetsEnRetard } from '@/lib/hooks/useDashboard';
+import VersionBadge from '@/components/VersionBadge';
 
 // ─── S7 / F13 — Navigation groupée ────────────────────────────────────────────
 // « Comptes » regroupe les deux écrans qui mutent les soldes (fonds et banques).
@@ -297,7 +298,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
           <div className="flex items-center justify-between px-1">
             <span className="text-[10px] text-[var(--text-muted)]">Devise : F CFA</span>
-            <span className="text-[10px] text-[var(--text-muted)] opacity-50">v1.0</span>
+            <VersionBadge className="text-[10px] text-[var(--text-muted)]" />
           </div>
 
           <div className="mt-2 flex items-center gap-1.5 px-1">
