@@ -1,16 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { authOptions } from '@/lib/auth';
 import { serial } from '@/lib/serial';
 import { logAudit } from '@/lib/audit';
 import { csrfCheck, validateBody } from '@/lib/api-helpers';
-import { BanqueMouvementSchema } from '@/lib/validators';
-
-const fmt = (v: bigint) => Number(v).toLocaleString('fr-FR');
+import { BanqueMouvementSchema, MouvementListeSchema } from '@/lib/validators';
+import { appliquerMouvementBanque } from '@/lib/journal-banque';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/banques/mouvements?limit=100&offset=0&banqueId=xxx
+// S25 / F17 — modifications de ce fichier
+//   I66  Le POST ne lit plus le solde pour le reecrire : il delegue a
+//        lib/journal-banque.ts, seul ecrivain de banques.solde pour un
+//        mouvement. Verrou FOR UPDATE : deux requetes simultanees sur le meme
+//        compte ne peuvent plus se perdre l une l autre (double tap mobile).
+//   Q22-a  Le GET masque par defaut les lignes nees d un decaissement
+//        (decaissementId non nul) : l historique fusionne d Ajout / Retrait
+//        Fonds affiche deja le decaissement lui-meme, la ligne de journal y
+//        ferait doublon. ?inclureLies=1 les reaffiche (historique par compte).
+//   Q24-b  Le DELETE refuse (409) une ligne liee a un decaissement. La
+//        supprimer recrediterait la banque alors que le decaissement existe
+//        toujours, puis son annulation recrediterait une seconde fois.
+//        L annulation passe par DELETE /api/decaissements.
+//   P171  limit / offset / banqueId valides par Zod (?limit=abc donnait
+//        take: NaN, donc une erreur Prisma et un 500).
+//   Verrou au DELETE : le rollback par delta lisait lui aussi le solde sans
+//        verrou.
+//
+// Le DELETE reste une suppression reelle pour les mouvements SAISIS a la main
+// (aucun decaissement derriere) : c est le comportement existant, et la
+// compensation Q14-b ne concerne que les lignes liees, desormais protegees.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ZERO = BigInt(0);
+const fmt = (v: bigint) => Number(v).toLocaleString('fr-FR');
+
+function erreur(message: string, code: number, details?: string): Error {
+  return Object.assign(new Error(message), { code, details });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/banques/mouvements?limit=100&offset=0&banqueId=xxx&inclureLies=1
 // ─────────────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
@@ -18,14 +48,22 @@ export async function GET(req: NextRequest) {
     if (!session?.user?.id)
       return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
 
-    const { searchParams } = new URL(req.url);
-    const limit    = Math.min(parseInt(searchParams.get('limit')  ?? '100'), 200);
-    const offset   = parseInt(searchParams.get('offset') ?? '0');
-    const banqueId = searchParams.get('banqueId');
+    const userId = session.user.id;
+    const sp = new URL(req.url).searchParams;
+    const q = MouvementListeSchema.safeParse({
+      limit:       sp.get('limit')       ?? undefined,
+      offset:      sp.get('offset')      ?? undefined,
+      banqueId:    sp.get('banqueId')    ?? undefined,
+      inclureLies: sp.get('inclureLies') ?? undefined,
+    });
+    if (!q.success)
+      return NextResponse.json({ error: 'Parametres de liste invalides' }, { status: 400 });
+    const { limit, offset, banqueId, inclureLies } = q.data;
 
     const where = {
-      userId: session.user.id,
+      userId,
       ...(banqueId ? { banqueId } : {}),
+      ...(inclureLies === '1' ? {} : { decaissementId: null }),   // Q22-a
     };
 
     const [mouvements, total] = await Promise.all([
@@ -49,9 +87,8 @@ export async function GET(req: NextRequest) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/banques/mouvements
-// Impact exclusif : banques.solde
+// Impact : banques.solde + mouvements_banque, dans une seule transaction
 // Types supportes : ajout | retrait | set
-// S7 : validation Zod (le body etait parse brut), CSRF, audit, 500 sanitises
 // ─────────────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
@@ -61,6 +98,8 @@ export async function POST(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id)
       return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
+
+    const userId = session.user.id;
 
     let rawBody: unknown;
     try {
@@ -76,59 +115,25 @@ export async function POST(req: NextRequest) {
     const mt     = BigInt(Math.round(Math.max(0, Number(montant) || 0)));
     const opDate = dateOperation ? new Date(dateOperation) : new Date();
 
-    let mvt: any;
+    let res: { mouvementId: string; nomBanque: string };
 
     try {
-      mvt = await prisma.$transaction(async (tx) => {
-        const banque = await tx.banque.findFirst({
-          where:  { id: banqueId, userId: session.user.id },
-          select: { solde: true, nomBanque: true },
+      res = await prisma.$transaction(async (tx) => {
+        // I66 : verrou, ecriture du solde et journal, tout dans le helper.
+        // exigerActive absent : une correction sur un compte desactive reste
+        // possible, comportement historique de cette route.
+        const m = await appliquerMouvementBanque(tx, {
+          userId,
+          banqueId,
+          type:          typeMouvement,
+          montant:       mt,
+          motif:         motif?.trim() || null,
+          dateOperation: opDate,
         });
-        if (!banque)
-          throw Object.assign(new Error('BANQUE_INTROUVABLE'), { code: 404 });
-
-        const soldeAvant = BigInt(Number(banque.solde ?? 0));
-        let soldeApres: bigint;
-        let montantLog: bigint; // montant a stocker dans l'historique
-
-        if (typeMouvement === 'set') {
-          soldeApres = mt;
-          montantLog = mt > soldeAvant ? mt - soldeAvant : soldeAvant - mt;
-        } else if (typeMouvement === 'ajout') {
-          soldeApres = soldeAvant + mt;
-          montantLog = mt;
-        } else {
-          // retrait — un solde bancaire ne peut pas devenir negatif
-          if (soldeAvant < mt) {
-            throw Object.assign(new Error('SOLDE_INSUFFISANT'), {
-              code: 422,
-              details: `${banque.nomBanque} : disponible ${fmt(soldeAvant)} FCFA, demande ${fmt(mt)} FCFA. Le solde d'un compte bancaire ne peut pas etre negatif.`,
-            });
-          }
-          soldeApres = soldeAvant - mt;
-          montantLog = mt;
-        }
-
-        await tx.banque.update({
-          where: { id: banqueId },
-          data:  { solde: soldeApres, updatedAt: new Date() },
-        });
-
-        return await tx.mouvementBanque.create({
-          data: {
-            userId:        session.user.id,
-            banqueId,
-            typeMouvement,
-            montant:       montantLog,
-            soldeAvant,
-            soldeApres,
-            motif:         motif?.trim() || null,
-            dateOperation: opDate,
-          },
-        });
+        return { mouvementId: m.mouvementId, nomBanque: m.nomBanque };
       });
     } catch (txErr: any) {
-      if (txErr.message === 'SOLDE_INSUFFISANT')
+      if (txErr.message === 'SOLDE_BANQUE_INSUFFISANT' || txErr.message === 'MONTANT_INVALIDE')
         return NextResponse.json({ error: txErr.details }, { status: 422 });
       if (txErr.message === 'BANQUE_INTROUVABLE')
         return NextResponse.json({ error: 'Banque introuvable' }, { status: 404 });
@@ -137,15 +142,16 @@ export async function POST(req: NextRequest) {
 
     // S7 : cette route modifiait des soldes bancaires sans laisser de trace
     await logAudit({
-      userId:     session.user.id,
+      userId,
       action:     typeMouvement === 'set' ? 'update' : 'create',
       entityType: 'mouvement_banque',
-      entityId:   mvt.id,
+      entityId:   res.mouvementId,
       entityNom:  motif?.trim() || typeMouvement,
+      details:    { banqueId, nomBanque: res.nomBanque, typeMouvement, montant: Number(mt) },
       req,
     });
 
-    return NextResponse.json(serial({ success: true, id: mvt.id }), { status: 201 });
+    return NextResponse.json(serial({ success: true, id: res.mouvementId }), { status: 201 });
   } catch (e: any) {
     console.error('POST /api/banques/mouvements:', e?.message, e?.stack);
     return NextResponse.json({ error: 'Erreur interne' }, { status: 500 });
@@ -165,6 +171,8 @@ export async function POST(req: NextRequest) {
 // Le delta compose correctement quel que soit l'ordre, et couvre les trois
 // types (ajout / retrait / set) sans distinction de cas :
 //   nouveauSolde = soldeActuel - (soldeApres - soldeAvant)
+//
+// S25 / Q24-b : refus 409 si la ligne vient d'un decaissement.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
   try {
@@ -175,45 +183,52 @@ export async function DELETE(req: NextRequest) {
     if (!session?.user?.id)
       return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
 
+    const userId = session.user.id;
     const id = new URL(req.url).searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
 
-    await prisma.$transaction(async (tx) => {
-      const mvt = await tx.mouvementBanque.findFirst({
-        where: { id, userId: session.user.id },
-      });
-      if (!mvt) throw Object.assign(new Error('NOT_FOUND'), { code: 404 });
+    const nomBanque = await prisma.$transaction(async (tx) => {
+      const mvt = await tx.mouvementBanque.findFirst({ where: { id, userId } });
+      if (!mvt) throw erreur('NOT_FOUND', 404);
 
-      const banque = await tx.banque.findFirst({
-        where:  { id: mvt.banqueId, userId: session.user.id },
-        select: { solde: true, nomBanque: true },
-      });
-      if (!banque) throw Object.assign(new Error('BANQUE_INTROUVABLE'), { code: 404 });
+      if (mvt.decaissementId) {
+        throw erreur('LIGNE_LIEE', 409,
+          'Cette ligne provient d un decaissement. Annulez le decaissement depuis la page Decaissements : le compte sera recredite et la trace conservee.');
+      }
 
-      const soldeActuel = BigInt(Number(banque.solde ?? 0));
-      const delta       = BigInt(Number(mvt.soldeApres ?? 0)) - BigInt(Number(mvt.soldeAvant ?? 0));
+      // Verrou de ligne avant lecture du solde (I66).
+      const lignes = await tx.$queryRaw<{ solde: bigint; nomBanque: string }[]>`
+        SELECT solde, "nomBanque"
+          FROM banques
+         WHERE id = ${mvt.banqueId}
+           AND "userId" = ${userId}
+           FOR UPDATE`;
+      if (lignes.length === 0) throw erreur('BANQUE_INTROUVABLE', 404);
+
+      const soldeActuel = BigInt(lignes[0].solde);
+      const delta       = BigInt(mvt.soldeApres ?? ZERO) - BigInt(mvt.soldeAvant ?? ZERO);
       const rawApres    = soldeActuel - delta;
 
-      if (rawApres < BigInt(0)) {
-        throw Object.assign(new Error('ROLLBACK_NEGATIF'), {
-          code: 422,
-          details: `Annulation impossible : ${banque.nomBanque} tomberait a ${fmt(rawApres)} FCFA. Des operations posterieures ont deja consomme ce montant.`,
-        });
+      if (rawApres < ZERO) {
+        throw erreur('ROLLBACK_NEGATIF', 422,
+          `Annulation impossible : ${lignes[0].nomBanque} tomberait a ${fmt(rawApres)} FCFA. Des operations posterieures ont deja consomme ce montant.`);
       }
 
       await tx.banque.update({
-        where: { id: mvt.banqueId },
+        where: { id: mvt.banqueId, userId },
         data:  { solde: rawApres, updatedAt: new Date() },
       });
 
       await tx.mouvementBanque.delete({ where: { id } });
+      return lignes[0].nomBanque;
     });
 
     await logAudit({
-      userId:     session.user.id,
+      userId,
       action:     'delete',
       entityType: 'mouvement_banque',
       entityId:   id,
+      entityNom:  nomBanque,
       req,
     });
 
@@ -223,6 +238,8 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Mouvement introuvable' }, { status: 404 });
     if (e.message === 'BANQUE_INTROUVABLE')
       return NextResponse.json({ error: 'Banque introuvable' }, { status: 404 });
+    if (e.message === 'LIGNE_LIEE')
+      return NextResponse.json({ error: e.details }, { status: 409 });
     if (e.message === 'ROLLBACK_NEGATIF')
       return NextResponse.json({ error: e.details }, { status: 422 });
     console.error('DELETE /api/banques/mouvements:', e?.message, e?.stack);
