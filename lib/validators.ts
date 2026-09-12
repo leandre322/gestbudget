@@ -26,6 +26,16 @@ import type { TypeCategorie } from '@prisma/client';
 //        borne PAS BudgetPutSchema/BudgetPostSchema avec cette constante —
 //        une premiere version de ce tour le faisait, revert explique dans le
 //        bloc de commentaire au-dessus de ces deux schemas plus bas.
+//
+// S25 — modifications de ce fichier (F17)
+//   DecaissementSchema : mode 'banque' (S25-Q7, Q13). Depense payee depuis un
+//        compte bancaire, sans fonds : banqueId + montantBanque obligatoires,
+//        compteId / montantFond interdits, retrait uniquement.
+//   BanqueDefautSchema : PUT /api/parametres/banque-defaut (S25-Q9-b, Q25-b).
+//        banqueId null explicite = retirer le compte par defaut.
+//   PaginationSchema, DecaissementListeSchema, MouvementListeSchema (P171) :
+//        limit / offset / annee passaient par parseInt sans garde ;
+//        ?limit=abc donnait take: NaN, donc une erreur Prisma et un 500.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Doit rester identique a TYPES_ALLOUABLES de lib/reference.ts.
@@ -50,15 +60,40 @@ void _coherenceAllouables;
 void _coherenceTous;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Pagination des listes — S25 / P171
+// Les routes passent `searchParams.get(x) ?? undefined` : un parametre absent
+// doit arriver en undefined pour que .default() s applique (null serait
+// coerce en 0 et echouerait sur min(1)).
+// ─────────────────────────────────────────────────────────────────────────────
+export const PaginationSchema = z.object({
+  limit:  z.coerce.number().int().min(1).max(200).default(100),
+  offset: z.coerce.number().int().min(0).max(100_000).default(0),
+});
+
+export const DecaissementListeSchema = PaginationSchema.extend({
+  annee: z.coerce.number().int().min(2000).max(2100).optional(),
+});
+
+// inclureLies : les lignes de journal nees d un decaissement (decaissementId
+// renseigne) sont masquees par defaut — l historique fusionne d Ajout / Retrait
+// Fonds affiche deja le decaissement lui-meme (S25-Q22-a). '1' les inclut,
+// pour un historique propre a une banque.
+export const MouvementListeSchema = PaginationSchema.extend({
+  banqueId:    z.string().min(1).max(64).optional(),
+  inclureLies: z.enum(['0', '1']).optional(),
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Decaissement — S7 FIX
 //   1. banqueId / compteId / notes en .nullish() : le front envoie `null`
 //      explicitement, et .optional() n'accepte QUE `undefined` (bug Zod 4).
-//   2. `mode` explicite ('fond' | 'transfert') : le serveur ne DEDUIT plus
-//      l'intention a partir de la presence des champs.
+//   2. `mode` explicite ('fond' | 'transfert' | 'banque') : le serveur ne
+//      DEDUIT plus l'intention a partir de la presence des champs.
 //   3. superRefine : coherence mode / banqueId / montants.
+// S25 / F17 : mode 'banque' ajoute (voir en-tete).
 // ─────────────────────────────────────────────────────────────────────────────
 export const DecaissementSchema = z.object({
-  mode:           z.enum(['fond', 'transfert']).default('fond'),
+  mode:           z.enum(['fond', 'transfert', 'banque']).default('fond'),
   impacterBanque: z.boolean().nullish(),
   description:    z.string().min(1, 'Description requise').max(200).trim(),
   dateOperation:  z.string().refine(v => !isNaN(Date.parse(v)), 'Date invalide'),
@@ -70,7 +105,30 @@ export const DecaissementSchema = z.object({
   typeMouvement:  z.enum(['retrait', 'ajout']).default('retrait'),
   sourceVocale:   z.boolean().optional().default(false), // D1 — dictee vocale
 }).superRefine((v, ctx) => {
-  // Commun aux deux modes : un fond et un montant fond sont obligatoires
+  // S25 / F17 — mode « Banque seule » : depense payee depuis un compte
+  // bancaire, aucun fond touche. Retrait uniquement (S25-Q13) : les ajouts
+  // bancaires passent par /api/banques/mouvements.
+  if (v.mode === 'banque') {
+    if (!v.banqueId) {
+      ctx.addIssue({ code: 'custom', path: ['banqueId'], message: 'Selectionnez un compte bancaire' });
+    }
+    if (!v.montantBanque || v.montantBanque <= 0) {
+      ctx.addIssue({ code: 'custom', path: ['montantBanque'], message: 'Montant obligatoire' });
+    }
+    if (v.compteId) {
+      ctx.addIssue({ code: 'custom', path: ['compteId'], message: 'Aucun fond attendu en mode Banque' });
+    }
+    if (v.montantFond && v.montantFond > 0) {
+      ctx.addIssue({ code: 'custom', path: ['montantFond'], message: 'Aucun montant fond attendu en mode Banque' });
+    }
+    if (v.typeMouvement !== 'retrait') {
+      ctx.addIssue({ code: 'custom', path: ['typeMouvement'], message: 'Le mode Banque accepte uniquement un retrait' });
+    }
+    return;
+  }
+
+  // Modes « Fond seul » et « Fond + Banque » : un fond et un montant fond
+  // sont obligatoires (regles S7 inchangees)
   if (!v.compteId) {
     ctx.addIssue({ code: 'custom', path: ['compteId'], message: 'Selectionnez un fond' });
   }
@@ -117,6 +175,15 @@ export const BanqueMouvementSchema = z.object({
   if (v.typeMouvement === 'set' && !v.motif?.trim()) {
     ctx.addIssue({ code: 'custom', path: ['motif'], message: 'Le motif est obligatoire pour une correction de solde' });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compte bancaire par defaut — S25 / F17 (Q9-b, Q20-a, Q25-b)
+// null explicite = retirer le compte par defaut. La cle doit etre presente :
+// un body vide ne doit pas effacer la valeur en silence.
+// ─────────────────────────────────────────────────────────────────────────────
+export const BanqueDefautSchema = z.object({
+  banqueId: z.string().min(1).max(64).nullable(),
 });
 
 export const CompteFondsUpdateSchema = z.object({
