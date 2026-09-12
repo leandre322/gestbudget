@@ -5,6 +5,30 @@ import prisma from '@/lib/prisma';
 import { serial } from '@/lib/serial';
 import { estSortie } from '@/types';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// S25 / F17 — modifications de ce fichier (S25-Q28)
+//
+// Depuis F17, une jambe bancaire de decaissement (modes 'banque' et
+// 'transfert') ecrit une ligne mouvements_banque portant decaissementId
+// (Q19-a). Sans precaution, les KPI comptaient deux fois la meme sortie :
+// une fois via decaissements, une fois via le journal.
+//
+// Regle retenue : une ligne LIEE compte tant que son decaissement EXISTE.
+//   - Les KPI Banques restent alimentes par le journal seul, donc une depense
+//     payee depuis un compte bancaire y figure bien (elle y etait absente
+//     avant F17 : la jambe bancaire des transferts n etait pas journalisee).
+//   - A l annulation (Q14-b), la ligne d origine ET sa compensation pointent
+//     vers un decaissement supprime : les deux sont ecartees ensemble et le
+//     KPI revient exactement a son etat anterieur, sans traitement special.
+//
+// Les KPI Fonds excluent le mode 'banque' : sans ce filtre, `montantFond ||
+// montantTotal` ferait retomber une depense bancaire (montantFond = 0) sur
+// montantTotal et la compterait comme un retrait de fonds.
+//
+// Cout : une requete supplementaire, uniquement s il existe des lignes liees
+// sur la periode, et seulement sur leurs identifiants distincts.
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // P88
 
@@ -57,6 +81,7 @@ export async function GET(req: NextRequest) {
           : { userId, createdAt: { gte: dateDebut, lte: dateFin } },
         select: {
           typeMouvement: true,
+          mode:          true,
           montantFond:   true,
           montantBanque: true,
           montantTotal:  true,
@@ -69,12 +94,28 @@ export async function GET(req: NextRequest) {
           dateOperation: { gte: dateDebut, lte: dateFin },
         },
         select: {
-          typeMouvement: true,
-          montant:       true,
-          dateOperation: true,
+          typeMouvement:  true,
+          montant:        true,
+          dateOperation:  true,
+          decaissementId: true,
         },
       }),
     ]);
+
+    // 2-bis. S25-Q28 — quels decaissements lies existent encore ?
+    const idsLies = Array.from(new Set(
+      mouvements.map(m => m.decaissementId).filter((v): v is string => !!v),
+    ));
+    const decExistants = idsLies.length > 0
+      ? await prisma.decaissement.findMany({
+          where:  { userId, id: { in: idsLies } },
+          select: { id: true },
+        })
+      : [];
+    const setExistants = new Set(decExistants.map(d => d.id));
+    const mouvementsRetenus = mouvements.filter(
+      m => !m.decaissementId || setExistants.has(m.decaissementId),
+    );
 
     // 3. Cumul budget par categorie (12 mois -> 1 ligne par categorie)
     const budgetCumul: Record<string, any> = {};
@@ -109,10 +150,13 @@ export async function GET(req: NextRequest) {
     }
 
     // 5. Stats decaissements & mouvements banques (filtres par annee)
-    const fondAjouts     = decaissements.filter(d => d.typeMouvement === 'ajout').reduce((s, d) => s + Number(d.montantFond || d.montantTotal || 0), 0);
-    const fondRetraits   = decaissements.filter(d => d.typeMouvement === 'retrait').reduce((s, d) => s + Number(d.montantFond || d.montantTotal || 0), 0);
-    const banqueAjouts   = mouvements.filter(m => m.typeMouvement === 'ajout').reduce((s, m) => s + Number(m.montant || 0), 0);
-    const banqueRetraits = mouvements.filter(m => m.typeMouvement === 'retrait').reduce((s, m) => s + Number(m.montant || 0), 0);
+    //    Fonds  : mode 'banque' exclu (aucun fonds touche).
+    //    Banque : journal seul, lignes orphelines ecartees (Q28).
+    const decFonds       = decaissements.filter(d => d.mode !== 'banque');
+    const fondAjouts     = decFonds.filter(d => d.typeMouvement === 'ajout').reduce((s, d) => s + Number(d.montantFond || d.montantTotal || 0), 0);
+    const fondRetraits   = decFonds.filter(d => d.typeMouvement === 'retrait').reduce((s, d) => s + Number(d.montantFond || d.montantTotal || 0), 0);
+    const banqueAjouts   = mouvementsRetenus.filter(m => m.typeMouvement === 'ajout').reduce((s, m) => s + Number(m.montant || 0), 0);
+    const banqueRetraits = mouvementsRetenus.filter(m => m.typeMouvement === 'retrait').reduce((s, m) => s + Number(m.montant || 0), 0);
 
     return NextResponse.json(serial({
       budget:     Object.values(budgetCumul),
