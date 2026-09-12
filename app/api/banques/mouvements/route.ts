@@ -7,6 +7,8 @@ import { logAudit } from '@/lib/audit';
 import { csrfCheck, validateBody } from '@/lib/api-helpers';
 import { BanqueMouvementSchema, MouvementListeSchema } from '@/lib/validators';
 import { appliquerMouvementBanque } from '@/lib/journal-banque';
+import { verrouMois, derogationDemandee } from '@/lib/verrou-ecriture';
+import { estMoisVerrouille, messageVerrou, MOTIF_DEROGATION } from '@/lib/periode';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // S25 / F17 — modifications de ce fichier
@@ -26,6 +28,14 @@ import { appliquerMouvementBanque } from '@/lib/journal-banque';
 //        take: NaN, donc une erreur Prisma et un 500).
 //   Verrou au DELETE : le rollback par delta lisait lui aussi le solde sans
 //        verrou.
+//
+// S26 / I69-P177 — verrou de mois, en DEUX temps, meme regle et meme helper
+//   que /api/decaissements :
+//   POST : meme convention que /api/decaissements et /api/budget
+//        (lib/verrou-ecriture.ts, forcerMoisVerrouille:true sur le body brut).
+//   DELETE : verrou sur le mois de dateOperation du MOUVEMENT annule (pas la
+//        date du jour), derogation possible via forcerMoisVerrouille=1 en
+//        query param (pas de body sur ce DELETE).
 //
 // Le DELETE reste une suppression reelle pour les mouvements SAISIS a la main
 // (aucun decaissement derriere) : c est le comportement existant, et la
@@ -112,8 +122,14 @@ export async function POST(req: NextRequest) {
     if (parsed.error) return parsed.error;
     const { banqueId, typeMouvement, montant, motif, dateOperation } = parsed.data;
 
-    const mt     = BigInt(Math.round(Math.max(0, Number(montant) || 0)));
-    const opDate = dateOperation ? new Date(dateOperation) : new Date();
+    const mt      = BigInt(Math.round(Math.max(0, Number(montant) || 0)));
+    const opDate  = dateOperation ? new Date(dateOperation) : new Date();
+    const opAnnee = opDate.getUTCFullYear();
+    const opMois  = opDate.getUTCMonth() + 1;
+
+    // I69/P177 : meme regle et meme helper que /api/decaissements.
+    const verrou = verrouMois(opAnnee, opMois, derogationDemandee(rawBody));
+    if (verrou.reponse423) return verrou.reponse423;
 
     let res: { mouvementId: string; nomBanque: string };
 
@@ -147,7 +163,7 @@ export async function POST(req: NextRequest) {
       entityType: 'mouvement_banque',
       entityId:   res.mouvementId,
       entityNom:  motif?.trim() || typeMouvement,
-      details:    { banqueId, nomBanque: res.nomBanque, typeMouvement, montant: Number(mt) },
+      details:    { banqueId, nomBanque: res.nomBanque, typeMouvement, montant: Number(mt), ...verrou.derogationDetails },
       req,
     });
 
@@ -159,7 +175,7 @@ export async function POST(req: NextRequest) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DELETE /api/banques/mouvements?id=xxx
+// DELETE /api/banques/mouvements?id=xxx&forcerMoisVerrouille=1
 // S7 FIX CRITIQUE — rollback par DELTA.
 //
 // L'ancienne version restaurait `mvt.soldeAvant` en absolu. Ce snapshot n'est
@@ -173,6 +189,8 @@ export async function POST(req: NextRequest) {
 //   nouveauSolde = soldeActuel - (soldeApres - soldeAvant)
 //
 // S25 / Q24-b : refus 409 si la ligne vient d'un decaissement.
+// S26 / I69-P177 : verrou sur le mois de dateOperation du MOUVEMENT annule,
+//   derogation possible via forcerMoisVerrouille=1 en query param.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
   try {
@@ -184,16 +202,27 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
 
     const userId = session.user.id;
-    const id = new URL(req.url).searchParams.get('id');
+    const searchParams = new URL(req.url).searchParams;
+    const id = searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
+    const derogationQ = searchParams.get('forcerMoisVerrouille') === '1';
 
-    const nomBanque = await prisma.$transaction(async (tx) => {
+    const { nomBanque, derogationDetails } = await prisma.$transaction(async (tx) => {
       const mvt = await tx.mouvementBanque.findFirst({ where: { id, userId } });
       if (!mvt) throw erreur('NOT_FOUND', 404);
 
       if (mvt.decaissementId) {
         throw erreur('LIGNE_LIEE', 409,
           'Cette ligne provient d un decaissement. Annulez le decaissement depuis la page Decaissements : le compte sera recredite et la trace conservee.');
+      }
+
+      // I69/P177 : le mois du MOUVEMENT annule fait foi, pas la date du jour.
+      const mvtDate  = new Date(mvt.dateOperation);
+      const mvtAnnee = mvtDate.getUTCFullYear();
+      const mvtMois  = mvtDate.getUTCMonth() + 1;
+      const moisVerrouille = estMoisVerrouille(mvtAnnee, mvtMois);
+      if (moisVerrouille && !derogationQ) {
+        throw erreur('MOIS_VERROUILLE', 423, messageVerrou(mvtAnnee, mvtMois));
       }
 
       // Verrou de ligne avant lecture du solde (I66).
@@ -220,7 +249,11 @@ export async function DELETE(req: NextRequest) {
       });
 
       await tx.mouvementBanque.delete({ where: { id } });
-      return lignes[0].nomBanque;
+
+      return {
+        nomBanque: lignes[0].nomBanque,
+        derogationDetails: moisVerrouille ? { motif: MOTIF_DEROGATION, moisVerrouille: true } : {},
+      };
     });
 
     await logAudit({
@@ -229,6 +262,7 @@ export async function DELETE(req: NextRequest) {
       entityType: 'mouvement_banque',
       entityId:   id,
       entityNom:  nomBanque,
+      details:    derogationDetails,
       req,
     });
 
@@ -240,6 +274,8 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Banque introuvable' }, { status: 404 });
     if (e.message === 'LIGNE_LIEE')
       return NextResponse.json({ error: e.details }, { status: 409 });
+    if (e.message === 'MOIS_VERROUILLE')
+      return NextResponse.json({ error: e.details }, { status: 423 });
     if (e.message === 'ROLLBACK_NEGATIF')
       return NextResponse.json({ error: e.details }, { status: 422 });
     console.error('DELETE /api/banques/mouvements:', e?.message, e?.stack);

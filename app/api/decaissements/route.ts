@@ -9,6 +9,8 @@ import { logAudit } from '@/lib/audit';
 import { csrfCheck, validateBody } from '@/lib/api-helpers';
 import { DecaissementSchema, DecaissementListeSchema } from '@/lib/validators';
 import { appliquerMouvementBanque } from '@/lib/journal-banque';
+import { verrouMois, derogationDemandee } from '@/lib/verrou-ecriture';
+import { estMoisVerrouille, messageVerrou, MOTIF_DEROGATION } from '@/lib/periode';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // S25 / F17 — modifications de ce fichier
@@ -35,6 +37,18 @@ import { appliquerMouvementBanque } from '@/lib/journal-banque';
 //     Annee renvoie une liste vide (elle renvoyait toutes les annees).
 //   Date : annee de l operation en UTC (alignement quick-add S24).
 //
+// S26 / I69-P177 — verrou de mois, en DEUX temps :
+//   POST : le mois de dateOperation fait foi (jamais la date du jour). Meme
+//     regle que /api/budget (lib/periode.ts, via lib/verrou-ecriture.ts).
+//     forcerMoisVerrouille:true sur le body brut arme la derogation, tracee
+//     dans le logAudit de creation.
+//   DELETE : meme principe que POST (derogation possible, pas absolu comme
+//     /api/donnees — decision actee : une annulation de decaissement se
+//     rapproche d une correction, elle laisse une trace, elle ne detruit pas
+//     un exercice). Mois de REFERENCE = dateOperation du decaissement annule,
+//     pas la date du jour. forcerMoisVerrouille=1 en QUERY PARAM (pas de body
+//     sur ce DELETE, meme convention que portee/mois/annee sur /api/donnees).
+//
 // Regle absolue inchangee : cette route n ecrit JAMAIS dans budget_mensuel.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -54,7 +68,7 @@ async function getOrCreateAnnee(tx: any, userId: string, annee: number) {
   return rec;
 }
 
-// ── Verrou de ligne sur un fonds (I66) ───────────────────────────────────────
+// ── Verrou de ligne sur un fonds (I66) ─────────────────────────────────────
 type FondVerrouille = { soldeActuel: bigint; nom: string };
 
 async function verrouillerFond(
@@ -172,6 +186,12 @@ export async function POST(req: NextRequest) {
 
     const opDate  = new Date(dateOperation);
     const opAnnee = opDate.getUTCFullYear();
+    const opMois  = opDate.getUTCMonth() + 1;
+
+    // I69/P177 : le mois de l OPERATION fait foi, jamais la date du jour.
+    // Meme regle que /api/budget (lib/periode.ts, via lib/verrou-ecriture.ts).
+    const verrou = verrouMois(opAnnee, opMois, derogationDemandee(rawBody));
+    if (verrou.reponse423) return verrou.reponse423;
 
     // L intention vient du `mode` explicite (S7, Q8). Zod garantit deja la
     // coherence mode / identifiants / montants.
@@ -314,6 +334,7 @@ export async function POST(req: NextRequest) {
         montantBanque: Number(doBanque ? mtBanque : ZERO),
         banqueId:      doBanque ? banqueId : null,
         mouvementId:   result.mouvementId,
+        ...verrou.derogationDetails,
       },
       req,
     });
@@ -326,10 +347,14 @@ export async function POST(req: NextRequest) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DELETE /api/decaissements?id=xxx
+// DELETE /api/decaissements?id=xxx&forcerMoisVerrouille=1
 // Rollback atomique. Fonds : restauration directe (ecart signe pour 'set').
 // Banque : ligne compensatoire de type inverse (Q14-b), liee au decaissement.
 // Refus explicite plutot qu un solde negatif.
+//
+// I69/P177 : verrou sur le mois de dateOperation du decaissement ANNULE (pas
+// la date du jour). Derogation possible (forcerMoisVerrouille=1 en query
+// param, pas de body sur ce DELETE), tracee dans le logAudit existant.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
   try {
@@ -341,8 +366,10 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Non authentifie' }, { status: 401 });
 
     const userId = session.user.id;
-    const id = new URL(req.url).searchParams.get('id');
+    const searchParams = new URL(req.url).searchParams;
+    const id = searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'ID manquant' }, { status: 400 });
+    const derogationQ = searchParams.get('forcerMoisVerrouille') === '1';
 
     const resume = await prisma.$transaction(async (tx) => {
       const dec = await tx.decaissement.findFirst({
@@ -350,6 +377,16 @@ export async function DELETE(req: NextRequest) {
         include: { repartitions: true },
       });
       if (!dec) throw erreur('NOT_FOUND', 404);
+
+      // I69/P177 : le mois du decaissement ANNULE fait foi, pas la date du
+      // jour de l annulation.
+      const decDate  = new Date(dec.dateOperation);
+      const decAnnee = decDate.getUTCFullYear();
+      const decMois  = decDate.getUTCMonth() + 1;
+      const moisVerrouille = estMoisVerrouille(decAnnee, decMois);
+      if (moisVerrouille && !derogationQ) {
+        throw erreur('MOIS_VERROUILLE', 423, messageVerrou(decAnnee, decMois));
+      }
 
       const isAjout = dec.typeMouvement === 'ajout';
       const isSet   = dec.typeMouvement === 'set';
@@ -416,7 +453,10 @@ export async function DELETE(req: NextRequest) {
 
       await tx.decaissement.delete({ where: { id, userId } });
 
-      return { mode: dec.mode, typeMouvement: dec.typeMouvement, description: dec.description, compensationId };
+      return {
+        mode: dec.mode, typeMouvement: dec.typeMouvement, description: dec.description, compensationId,
+        derogationDetails: moisVerrouille ? { motif: MOTIF_DEROGATION, moisVerrouille: true } : {},
+      };
     });
 
     await logAudit({
@@ -425,7 +465,10 @@ export async function DELETE(req: NextRequest) {
       entityType: 'decaissement',
       entityId:   id,
       entityNom:  resume.description,
-      details:    { mode: resume.mode, typeMouvement: resume.typeMouvement, compensationId: resume.compensationId },
+      details:    {
+        mode: resume.mode, typeMouvement: resume.typeMouvement, compensationId: resume.compensationId,
+        ...resume.derogationDetails,
+      },
       req,
     });
 
@@ -433,6 +476,8 @@ export async function DELETE(req: NextRequest) {
   } catch (e: any) {
     if (e.message === 'NOT_FOUND')
       return NextResponse.json({ error: 'Decaissement introuvable' }, { status: 404 });
+    if (e.message === 'MOIS_VERROUILLE')
+      return NextResponse.json({ error: e.details }, { status: 423 });
     if (e.message === 'ROLLBACK_IMPOSSIBLE')
       return NextResponse.json({ error: e.details }, { status: 422 });
     if (e.message === 'BANQUE_INTROUVABLE')
