@@ -133,6 +133,20 @@ export function objectifFondsUrgence(revenu: number, nMoisUrgence: number): numb
 }
 
 /**
+ * S26 / F16 -- Objectif du fonds de precaution, meme principe que
+ * objectifFondsUrgence, borne CHECK differente (1-12 en base, contre 1-24
+ * pour l urgence : un tampon de precaution est par nature un horizon plus
+ * court). Fonction separee plutot qu un parametre de borne sur l existante :
+ * les deux CHECK sont deja fixes independamment en base, et un parametre de
+ * borne aurait permis d appeler objectifFondsUrgence avec une borne de 12 par
+ * erreur, sans qu aucun type ne l empeche.
+ */
+export function objectifFondsPrecaution(revenu: number, nMoisPrecaution: number): number {
+  const n = Math.min(12, Math.max(1, Math.trunc(nMoisPrecaution || 0)));
+  return Math.max(0, Math.round(revenu)) * n;
+}
+
+/**
  * Repartit `total` (entier >= 0) selon des poids, par la methode du plus grand
  * reste. Garantit SUM(resultat) === total exactement, sans derive d arrondi.
  * Poids nuls ou somme nulle -> repartition egale (repli Q41).
@@ -231,6 +245,11 @@ export interface Allocation {
   revenuMensuelReference: number;
   nMoisUrgence: number;
   objectifUrgence: number;
+  /** S26 / F16 : symetrique de nMoisUrgence/objectifUrgence pour le fonds de
+   *  precaution. Expose ici (source unique, R2) plutot que relu separement
+   *  par chaque appelant. */
+  nMoisPrecaution: number;
+  objectifPrecaution: number;
   parType: Record<TypeAllouable, AllocationType>;
   totalTaux: number;
   totalMontant: number;
@@ -249,7 +268,10 @@ export async function getAllocationParType(
   const [params, lignes] = await Promise.all([
     db.parametres.findUnique({
       where: { userId },
-      select: { revenuMensuelReference: true, nMoisUrgence: true, updatedAt: true },
+      select: {
+        revenuMensuelReference: true, nMoisUrgence: true, nMoisPrecaution: true,
+        updatedAt: true,
+      },
     }),
     db.parametresType.findMany({
       where: { userId },
@@ -259,6 +281,7 @@ export async function getAllocationParType(
 
   const revenu = toNum(params?.revenuMensuelReference ?? BigInt(0));
   const nMois = params?.nMoisUrgence ?? 6;
+  const nMoisPrecaution = params?.nMoisPrecaution ?? 3;
 
   const parType = {} as Record<TypeAllouable, AllocationType>;
   for (const t of TYPES_ALLOUABLES) {
@@ -291,6 +314,8 @@ export async function getAllocationParType(
     revenuMensuelReference: revenu,
     nMoisUrgence: nMois,
     objectifUrgence: objectifFondsUrgence(revenu, nMois),
+    nMoisPrecaution,
+    objectifPrecaution: objectifFondsPrecaution(revenu, nMoisPrecaution),
     parType,
     totalTaux: Math.round(totalTaux * 100) / 100,
     totalMontant,

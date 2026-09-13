@@ -219,7 +219,7 @@ export const BanqueUpdateSchema = z.object({
   seuilAlerte:   z.number().int().min(0).max(9_999_999_999).optional(),
   isActive:      z.boolean().optional(),
   ordre:         z.number().int().min(0).max(100).optional(),
-  compteUrgence: z.boolean().optional(),
+  roleEpargne:   z.enum(['aucun', 'urgence', 'precaution']).optional(),
   action:        z.enum(['set','increment','decrement']).optional(),
   montant:       z.number().int().min(0).max(9_999_999_999).optional(),
   solde:         z.number().int().min(0).max(9_999_999_999).optional(),
@@ -247,7 +247,7 @@ export const BanqueUpdateSchema = z.object({
 
   const champs = [
     v.nomBanque, v.typeCompte, v.seuilAlerte, v.isActive,
-    v.ordre, v.compteUrgence, v.action, v.solde,
+    v.ordre, v.roleEpargne, v.action, v.solde,
   ];
   if (champs.every(c => c === undefined)) {
     ctx.addIssue({ code: 'custom', path: [], message: 'Aucun champ a modifier' });
@@ -278,7 +278,7 @@ export const BanqueCreateSchema = z.object({
   soldeInitial:  z.number().int().min(0).max(9_999_999_999).optional().default(0),
   ordre:         z.number().int().min(0).max(100).optional().default(0),
   seuilAlerte:   z.number().int().min(0).max(9_999_999_999).optional().default(0),
-  compteUrgence: z.boolean().optional().default(true),
+  roleEpargne:   z.enum(['aucun', 'urgence', 'precaution']).optional().default('aucun'),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -292,6 +292,7 @@ export const BanqueCreateSchema = z.object({
 export const ParametresSchema = z.object({
   revenuMensuelReference: z.number().min(0).max(9_999_999_999).optional(),
   nMoisUrgence:           z.number().int().min(1).max(24).optional(),
+  nMoisPrecaution:        z.number().int().min(1).max(12).optional(),
   tauxReference:          z.record(z.string(), z.number().min(0).max(100)).optional(),
   rapportEmailActif:      z.boolean().optional(),
   rapportEmailJour:       z.number().int().min(1).max(28).optional(),

@@ -90,6 +90,10 @@ export const maxDuration = 60; // P88
 // garde le rattrape en 400 lisible.
 const N_MOIS_URGENCE_MIN = 1;
 const N_MOIS_URGENCE_MAX = 24;
+// S26 / F16 : borne plus courte que l'urgence -- un tampon de precaution est
+// par nature un horizon plus court (CHECK 1-12 en base).
+const N_MOIS_PRECAUTION_MIN = 1;
+const N_MOIS_PRECAUTION_MAX = 12;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/parametres
@@ -129,6 +133,8 @@ export async function GET(req: NextRequest) {
       revenuMensuelReference: allocation.revenuMensuelReference,
       nMoisUrgence: allocation.nMoisUrgence,
       objectifUrgence: allocation.objectifUrgence,
+      nMoisPrecaution: allocation.nMoisPrecaution,
+      objectifPrecaution: allocation.objectifPrecaution,
 
       rapportEmailActif: params?.rapportEmailActif ?? true,
       rapportEmailJour: params?.rapportEmailJour ?? 1,
@@ -211,6 +217,7 @@ export async function PUT(req: NextRequest) {
       revenuMensuelReference,
       tauxReference,
       nMoisUrgence,
+      nMoisPrecaution,
       rapportEmailActif,
       rapportEmailJour,
       rapportEmailHeure,
@@ -223,6 +230,14 @@ export async function PUT(req: NextRequest) {
         (nMoisUrgence < N_MOIS_URGENCE_MIN || nMoisUrgence > N_MOIS_URGENCE_MAX)) {
       return NextResponse.json(
         { error: 'nMoisUrgence doit etre compris entre ' + N_MOIS_URGENCE_MIN + ' et ' + N_MOIS_URGENCE_MAX },
+        { status: 400 },
+      );
+    }
+
+    if (nMoisPrecaution !== undefined &&
+        (nMoisPrecaution < N_MOIS_PRECAUTION_MIN || nMoisPrecaution > N_MOIS_PRECAUTION_MAX)) {
+      return NextResponse.json(
+        { error: 'nMoisPrecaution doit etre compris entre ' + N_MOIS_PRECAUTION_MIN + ' et ' + N_MOIS_PRECAUTION_MAX },
         { status: 400 },
       );
     }
@@ -257,6 +272,7 @@ export async function PUT(req: NextRequest) {
       if (revenuMensuelReference !== undefined)
         updateData.revenuMensuelReference = BigInt(Math.round(revenuMensuelReference));
       if (nMoisUrgence !== undefined) updateData.nMoisUrgence = nMoisUrgence;
+      if (nMoisPrecaution !== undefined) updateData.nMoisPrecaution = nMoisPrecaution;
       if (rapportEmailActif !== undefined) updateData.rapportEmailActif = rapportEmailActif;
       if (rapportEmailJour !== undefined) updateData.rapportEmailJour = rapportEmailJour;
       if (rapportEmailHeure !== undefined) updateData.rapportEmailHeure = rapportEmailHeure;
@@ -269,6 +285,7 @@ export async function PUT(req: NextRequest) {
           userId,
           revenuMensuelReference: BigInt(Math.round(revenuMensuelReference ?? 0)),
           nMoisUrgence: nMoisUrgence ?? 6,
+          nMoisPrecaution: nMoisPrecaution ?? 3,
           ...(rapportEmailActif !== undefined ? { rapportEmailActif } : {}),
           ...(rapportEmailJour !== undefined ? { rapportEmailJour } : {}),
           ...(rapportEmailHeure !== undefined ? { rapportEmailHeure } : {}),
