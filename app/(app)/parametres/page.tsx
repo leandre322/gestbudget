@@ -43,6 +43,8 @@ const LS_MODE_KEY = 'gb_cat_input_mode';
 
 const N_MOIS_URGENCE_MIN = 1;
 const N_MOIS_URGENCE_MAX = 24; // CHECK en base (S13)
+const N_MOIS_PRECAUTION_MIN = 1;
+const N_MOIS_PRECAUTION_MAX = 12; // CHECK en base (S26/F16) -- horizon plus court que l'urgence
 
 const LIBELLE_MODE: Record<string, string> = {
   prorata:    'Prorata 12 mois',
@@ -84,6 +86,8 @@ export default function ParametresPage() {
   const [revenuRef,  setRevenuRef]  = useState<number>(0);
   const [nMoisUrgence,    setNMoisUrgence]    = useState<number>(6);
   const [objectifUrgence, setObjectifUrgence] = useState<number>(0);
+  const [nMoisPrecaution,    setNMoisPrecaution]    = useState<number>(3);
+  const [objectifPrecaution, setObjectifPrecaution] = useState<number>(0);
   const [version,    setVersion]    = useState<string|null>(null);
   const [incoherents, setIncoherents] = useState<string[]>([]);
   const [savingTaux, setSavingTaux] = useState(false);
@@ -168,6 +172,8 @@ export default function ParametresPage() {
           setRevenuRef(d.revenuMensuelReference ?? 0);
           setNMoisUrgence(d.nMoisUrgence ?? 6);
           setObjectifUrgence(d.objectifUrgence ?? 0);
+          setNMoisPrecaution(d.nMoisPrecaution ?? 3);
+          setObjectifPrecaution(d.objectifPrecaution ?? 0);
           setVersion(d.version ?? null);
 
           // Q40 — source unique : d.parType, plus de MAX sur d.categories.
@@ -272,6 +278,7 @@ export default function ParametresPage() {
         body:    JSON.stringify({
           revenuMensuelReference: revenuRef,
           nMoisUrgence,
+          nMoisPrecaution,
           tauxReference: tauxRef,
           ...(version ? { version } : {}),
         }),
@@ -531,11 +538,32 @@ export default function ParametresPage() {
                         :'border-blue-300 dark:border-blue-700 bg-white dark:bg-dark-card text-[var(--text)] focus:border-primary')}/>
                   <p className="text-[10px] text-blue-500 mt-1">Entre {N_MOIS_URGENCE_MIN} et {N_MOIS_URGENCE_MAX}</p>
                 </div>
+                <div className="w-40">
+                  <label className="text-xs font-semibold text-blue-700 dark:text-blue-400 mb-1 block">
+                    Mois d&apos;epargne precaution
+                  </label>
+                  <input type="number" min={N_MOIS_PRECAUTION_MIN} max={N_MOIS_PRECAUTION_MAX} step="1"
+                    value={nMoisPrecaution} disabled={isLocked}
+                    onChange={e=>{
+                      if(isLocked)return;
+                      isDirty.current = true; setTauxError(null); setRepartitionInfo(null);
+                      const v = parseInt(e.target.value) || N_MOIS_PRECAUTION_MIN;
+                      setNMoisPrecaution(Math.min(N_MOIS_PRECAUTION_MAX, Math.max(N_MOIS_PRECAUTION_MIN, v)));
+                    }}
+                    className={clsx('w-full border rounded-xl px-3 py-2 text-sm outline-none text-right',
+                      isLocked
+                        ?'border-blue-200 dark:border-blue-800 bg-slate-50 dark:bg-dark-card text-[var(--text-muted)] cursor-not-allowed'
+                        :'border-blue-300 dark:border-blue-700 bg-white dark:bg-dark-card text-[var(--text)] focus:border-primary')}/>
+                  <p className="text-[10px] text-blue-500 mt-1">Entre {N_MOIS_PRECAUTION_MIN} et {N_MOIS_PRECAUTION_MAX}</p>
+                </div>
                 <div className="text-right">
                   <p className="text-xs text-blue-600 dark:text-blue-400">100%</p>
                   <p className="text-lg font-bold text-blue-700 dark:text-blue-400">{formatFCFA(revenuRef)}</p>
                   <p className="text-xs text-blue-500">
                     Fonds urgence x{nMoisUrgence} : {formatFCFA(objectifUrgence || revenuRef * nMoisUrgence)}
+                  </p>
+                  <p className="text-xs text-blue-500">
+                    Epargne precaution x{nMoisPrecaution} : {formatFCFA(objectifPrecaution || revenuRef * nMoisPrecaution)}
                   </p>
                 </div>
               </div>

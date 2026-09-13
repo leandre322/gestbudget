@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { calculerScore, estSortie, estEpargne } from '@/types';
+import { objectifFondsUrgence, objectifFondsPrecaution } from '@/lib/reference';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // S20 — P110 / Q168 : le score global etait recalcule ICI, a la main, avec une
@@ -52,12 +53,21 @@ import { calculerScore, estSortie, estEpargne } from '@/types';
 //
 // M5/M6/M7 — perimetre du fonds d'urgence
 //   Le denominateur du 4e critere de score etait la somme de TOUTES les
-//   banques. Il est desormais borne aux comptes compteUrgence = true.
+//   banques. Il est desormais borne aux comptes marques urgence (roleEpargne,
+//   ex-compteUrgence — voir S26/F16 plus bas).
 //
 // Q25 — non double comptage (regle posee dans schema.prisma / M8)
 //   Un fonds adosse a une banque (banqueId non nul) voit son argent compte
 //   par la banque. totalFonds reste inchange pour ne pas deplacer l'affichage
 //   existant sans arbitrage ; totalFondsAutonome expose la valeur correcte.
+//
+// S26 / F16 — compteUrgence remplace par roleEpargne (enum aucun/urgence/
+//   precaution). fondsUrgence filtre desormais sur roleEpargne === 'urgence'.
+//   Nouveau : fondsPrecaution (roleEpargne === 'precaution'), symetrique.
+//   objectifFondsUrgence/objectifFondsPrecaution viennent de lib/reference.ts
+//   (source unique, R2) au lieu d'une formule recopiee inline ici — la
+//   version inline n'appliquait pas le clamp de bornes (1-24 / 1-12) que la
+//   fonction partagee applique deja pour /api/parametres.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const dynamic = 'force-dynamic';
@@ -86,6 +96,8 @@ export async function GET(req: NextRequest) {
         annees: [], banques: [],
         revenuReference: 0, nMoisUrgence: 6,
         fondsUrgence: 0, fondsUrgenceObjectif: 0, urgenceConfigure: false,
+        nMoisPrecaution: 3,
+        fondsPrecaution: 0, fondsPrecautionObjectif: 0, precautionConfigure: false,
         totalBanques: 0,
         scoreGlobal: null, nbMoisScore: 0,
         totalAjouts: 0, totalDecaissements: 0, soldeNetDecaissements: 0,
@@ -94,7 +106,7 @@ export async function GET(req: NextRequest) {
 
     const anneeIds = annees.map(a => a.id);
 
-    // ── P19 / P22 : tout en parallele, colonnes ciblees ───────────────────
+    // ── P19 / P22 : tout en parallele, colonnes ciblees ────────────────────
     const [budgets, categories, comptes, banques, decaissements, parametres] =
       await Promise.all([
         prisma.budgetMensuel.findMany({
@@ -115,12 +127,13 @@ export async function GET(req: NextRequest) {
         }),
         // P12 : plus de dedup par nom. P23 : tri stable.
         // Q15 : les banques desactivees sortent du patrimoine.
+        // F16 : roleEpargne remplace compteUrgence.
         prisma.banque.findMany({
           where:   { userId, isActive: true },
           orderBy: [{ ordre: 'asc' }, { id: 'asc' }],
           select:  {
             id: true, nomBanque: true, typeCompte: true, solde: true,
-            seuilAlerte: true, compteUrgence: true,
+            seuilAlerte: true, roleEpargne: true,
           },
         }),
         prisma.decaissement.findMany({
@@ -249,22 +262,30 @@ export async function GET(req: NextRequest) {
       typeCompte:    b.typeCompte,
       solde:         n(b.solde),
       seuilAlerte:   n(b.seuilAlerte),
-      compteUrgence: b.compteUrgence,
+      roleEpargne:   b.roleEpargne,
     }));
 
     const totalBanques = banquesOut.reduce((s, b) => s + b.solde, 0);
-    // M7 : perimetre resserre aux seuls comptes marques.
+    // M7 / F16 : perimetres resserres, mutuellement exclusifs par construction
+    // (roleEpargne est un enum, pas deux booleens a valider a la main).
     const fondsUrgence = banquesOut
-      .filter(b => b.compteUrgence)
+      .filter(b => b.roleEpargne === 'urgence')
+      .reduce((s, b) => s + b.solde, 0);
+    const fondsPrecaution = banquesOut
+      .filter(b => b.roleEpargne === 'precaution')
       .reduce((s, b) => s + b.solde, 0);
 
     // ── Parametres ───────────────────────────────────────────────────────
     const revenuReference = n(parametres?.revenuMensuelReference ?? 0);
-    const nMoisUrgence    = parametres?.nMoisUrgence ?? 6;
+    const nMoisUrgence     = parametres?.nMoisUrgence ?? 6;
+    const nMoisPrecaution  = parametres?.nMoisPrecaution ?? 3;
 
     // P7 : plus de fallback en dur. Objectif nul = objectif non configure.
-    const fondsUrgenceObjectif = revenuReference > 0 ? revenuReference * nMoisUrgence : 0;
-    const urgenceConfigure     = fondsUrgenceObjectif > 0;
+    // F16 : formule partagee (lib/reference.ts), plus de duplication inline.
+    const fondsUrgenceObjectif    = objectifFondsUrgence(revenuReference, nMoisUrgence);
+    const urgenceConfigure        = fondsUrgenceObjectif > 0;
+    const fondsPrecautionObjectif = objectifFondsPrecaution(revenuReference, nMoisPrecaution);
+    const precautionConfigure     = fondsPrecautionObjectif > 0;
 
     // ── Score global ─────────────────────────────────────────────────────
     // Q19 : sans objectif d'urgence, le 4e critere n'a pas de denominateur.
@@ -311,6 +332,10 @@ export async function GET(req: NextRequest) {
       fondsUrgence,
       fondsUrgenceObjectif,
       urgenceConfigure,
+      nMoisPrecaution,
+      fondsPrecaution,
+      fondsPrecautionObjectif,
+      precautionConfigure,
       totalBanques,
       scoreGlobal,
       nbMoisScore,

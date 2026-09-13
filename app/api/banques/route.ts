@@ -38,6 +38,14 @@ import { BanqueCreateSchema, BanqueUpdateSchema } from '@/lib/validators';
 // Q24 decrement : rejet 422 si le solde deviendrait negatif, au lieu de
 //   l'ancien clamp silencieux a 0. Un clamp aurait journalise un montant
 //   different de celui demande — precisement l'ecart qu'on cherche a fermer.
+//
+// S26 / F16 — compteUrgence remplace par roleEpargne (enum aucun/urgence/
+//   precaution). L'exclusivite urgence/precaution devient structurelle : un
+//   compte ne peut plus porter les deux perimetres a la fois, contrairement a
+//   deux booleens independants qu'il aurait fallu valider a la main a chaque
+//   point d'ecriture. compteUrgence est retire du code (Loi Q du 13/09) : la
+//   colonne reste en base le temps de la migration (expand/contract), plus
+//   lue ni ecrite ici.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MOTIF_DEFAUT = 'Ajustement direct - PUT /api/banques';
@@ -97,7 +105,7 @@ export async function POST(req: NextRequest) {
 
     const parsed = validateBody(BanqueCreateSchema, rawBody);
     if (parsed.error) return parsed.error;
-    const { nomBanque, typeCompte, soldeInitial, ordre, seuilAlerte, compteUrgence } = parsed.data;
+    const { nomBanque, typeCompte, soldeInitial, ordre, seuilAlerte, roleEpargne } = parsed.data;
 
     const banque = await prisma.banque.create({
       data: {
@@ -107,7 +115,7 @@ export async function POST(req: NextRequest) {
         solde:         BigInt(soldeInitial),
         ordre,
         seuilAlerte:   BigInt(seuilAlerte),
-        compteUrgence,
+        roleEpargne,
       },
     });
 
@@ -117,7 +125,7 @@ export async function POST(req: NextRequest) {
       entityType: 'banque',
       entityId:   banque.id,
       entityNom:  banque.nomBanque,
-      details:    { soldeInitial, seuilAlerte, compteUrgence, typeCompte: typeCompte ?? null },
+      details:    { soldeInitial, seuilAlerte, roleEpargne, typeCompte: typeCompte ?? null },
       req,
     });
 
@@ -132,7 +140,7 @@ export async function POST(req: NextRequest) {
 // PUT /api/banques?id=xxx
 // Body :
 //   { nomBanque, typeCompte, ordre, isActive, seuilAlerte }  metadonnees
-//   { compteUrgence: boolean }                               perimetre F12
+//   { roleEpargne: 'aucun'|'urgence'|'precaution' }          perimetre F16
 //   { action:'set'|'increment'|'decrement', montant }        solde + mouvement
 //   { solde: number }                                        alias de set
 //   { motif?: string }                                       reporte au mouvement
@@ -161,7 +169,7 @@ export async function PUT(req: NextRequest) {
     if (parsed.error) return parsed.error;
     const {
       nomBanque, typeCompte, seuilAlerte, isActive, ordre,
-      compteUrgence, action, montant, solde: soldeDirect, motif,
+      roleEpargne, action, montant, solde: soldeDirect, motif,
     } = parsed.data;
 
     let resultat: any;
@@ -170,7 +178,7 @@ export async function PUT(req: NextRequest) {
       resultat = await prisma.$transaction(async (tx) => {
         const existing = await tx.banque.findFirst({
           where:  { id, userId: session.user.id },
-          select: { id: true, solde: true, nomBanque: true, compteUrgence: true },
+          select: { id: true, solde: true, nomBanque: true, roleEpargne: true },
         });
         if (!existing)
           throw Object.assign(new Error('NOT_FOUND'), { code: 404 });
@@ -184,12 +192,13 @@ export async function PUT(req: NextRequest) {
         if (isActive      !== undefined) { updateData.isActive      = isActive;               champsModifies.isActive      = isActive; }
         if (seuilAlerte   !== undefined) { updateData.seuilAlerte   = BigInt(seuilAlerte);    champsModifies.seuilAlerte   = seuilAlerte; }
 
-        // Q16 : le flag est editable depuis le Dashboard. Il deplace un compte
-        // dans ou hors du perimetre du fonds d'urgence, donc hors du
-        // denominateur du score. On journalise l'ancienne valeur.
-        if (compteUrgence !== undefined) {
-          updateData.compteUrgence = compteUrgence;
-          champsModifies.compteUrgence = { avant: existing.compteUrgence, apres: compteUrgence };
+        // F16 : le perimetre (aucun/urgence/precaution) est editable depuis le
+        // Dashboard. L'exclusivite est structurelle (enum), plus une regle a
+        // retenir d'appliquer a chaque ecriture. On journalise l'ancienne
+        // valeur pour la reconciliation.
+        if (roleEpargne !== undefined) {
+          updateData.roleEpargne = roleEpargne;
+          champsModifies.roleEpargne = { avant: existing.roleEpargne, apres: roleEpargne };
         }
 
         // ── Solde ────────────────────────────────────────────────────────
