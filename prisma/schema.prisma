@@ -188,7 +188,6 @@ model Banque {
   isActive      Boolean           @default(true)
   ordre         Int               @default(0)
   seuilAlerte   BigInt?           @default(0)
-  compteUrgence Boolean           @default(true)
   user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   categories    Categorie[]       @relation("CategorieBanque")
   compteFonds   CompteFonds[]     @relation("CompteFondsBanque")
