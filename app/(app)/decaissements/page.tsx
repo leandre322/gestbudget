@@ -1,7 +1,7 @@
 'use client'
 
 // =============================================================================
-// app/(app)/decaissements/page.tsx  --  S25 / F17
+// app/(app)/decaissements/page.tsx  --  S25 / F17 + S26 / I69-P177
 // =============================================================================
 // Reecriture complete. La version issue de D1 (dictee vocale) avait perdu
 // deux choses en route :
@@ -31,14 +31,28 @@
 //   divergence volontaire).
 //   Solde affiche dans chaque option de select : aide a eviter un rejet 422
 //   pour solde insuffisant avant meme d'essayer.
+//
+// Nouveau (S26 / I69-P177) :
+//   Verrou de mois par DATE DE L'OPERATION, pas par un "mois affiche" comme
+//   sur budget/suivi : cette page n'a pas de navigation mois/annee, chaque
+//   decaissement porte sa propre date. moisVerrouille est donc recalcule a
+//   chaque changement du champ Date, pas une seule fois au montage.
+//   Contrairement a isLocked (verrou global de session), moisVerrouille ne
+//   desactive QUE le bouton d'envoi (soumissionBloquee) : les champs restent
+//   modifiables pour que l'utilisateur puisse justement changer la date sans
+//   se retrouver bloque par le verrou qu'il cherche a contourner.
+//   Meme regime que budget.tsx : la derogation est ARMEE (case a cocher),
+//   envoyee au serveur via forcerMoisVerrouille:true, jamais un deverrouillage
+//   local silencieux. Confirmation explicite avant tout envoi en derogation.
 // =============================================================================
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
 import useSWR from 'swr'
 import { toast } from 'react-hot-toast'
-import { Star } from 'lucide-react'
+import { Star, Lock, LockOpen, AlertTriangle } from 'lucide-react'
 import { useLock } from '../contexts'
+import { estMoisVerrouille, messageVerrou, joursAvantVerrou } from '@/lib/periode'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Mode = 'fond' | 'transfert' | 'banque'
@@ -130,7 +144,7 @@ function WaveAnimation() {
   )
 }
 
-// ── Icone micro ───────────────────────────────────────────────────────────────
+// ── Icone micro ──────────────────────────────────────────────────────────────
 function MicIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -164,6 +178,11 @@ export default function DecaissementsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [banqueDefautId, setBanqueDefautId] = useState<string | null>(null)
 
+  // I69/P177 : derogation ARMEE par l'utilisateur, envoyee au serveur et
+  // tracee. Jamais un deverrouillage local silencieux (meme regime que
+  // budget.tsx).
+  const [derogation, setDerogation] = useState(false)
+
   // ── Vocal state
   const [speechSupported, setSpeechSupported] = useState<boolean | null>(null)
   const [isRecording, setIsRecording] = useState(false)
@@ -190,6 +209,20 @@ export default function DecaissementsPage() {
   const needFond   = mode !== 'banque'
   const needBanque = mode !== 'fond'
   const champsDesactives = isLocked || isSubmitting
+
+  // I69/P177 — verrou par date de l'operation (pas de "mois affiche" ici).
+  const dateObj        = date ? new Date(date) : new Date()
+  const dateAnnee      = dateObj.getUTCFullYear()
+  const dateMois       = dateObj.getUTCMonth() + 1
+  const moisVerrouille = estMoisVerrouille(dateAnnee, dateMois)
+  const joursRestants  = joursAvantVerrou(dateAnnee, dateMois)
+  // N'affecte QUE l'envoi, jamais les champs : sinon impossible de changer
+  // la date pour sortir du mois clos une fois bloque.
+  const soumissionBloquee = champsDesactives || (moisVerrouille && !derogation)
+
+  // La derogation ne survit pas a un changement de date (meme regle que
+  // budget.tsx sur mois/annee).
+  useEffect(() => { setDerogation(false) }, [date])
 
   // ── Synchroniser le compte par defaut recu du serveur (Q9-b)
   useEffect(() => {
@@ -359,10 +392,24 @@ export default function DecaissementsPage() {
     if (isLocked) { openUnlockModal(); return }
     if (isSubmitting) return
 
+    // I69/P177 : defense en profondeur, le bouton est deja disabled dans ce cas.
+    if (moisVerrouille && !derogation) {
+      toast.error('Ce mois est cloture. Utilisez « Deroger » pour forcer l\'enregistrement.')
+      return
+    }
+
     const errValidation = erreurValidation()
     if (errValidation) {
       toast.error(errValidation)
       return
+    }
+
+    if (moisVerrouille && derogation) {
+      const ok = window.confirm(
+        `La date saisie tombe sur un mois cloture (${messageVerrou(dateAnnee, dateMois)}).\n\n`
+        + `Cet enregistrement sera fait en DEROGATION et trace dans le journal d'audit. Confirmer ?`
+      )
+      if (!ok) return
     }
 
     setIsSubmitting(true)
@@ -379,21 +426,31 @@ export default function DecaissementsPage() {
           compteId:      needFond   ? (compteId || undefined) : undefined,
           banqueId:      needBanque ? (banqueId || undefined) : undefined,
           sourceVocale,
+          ...(derogation ? { forcerMoisVerrouille: true } : {}),      // I69/P177
         }),
       })
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        toast.error(err.error || 'Erreur lors de l\'ajout')          // P169 : {error}, pas {message}
+        const message = err.error || 'Erreur lors de l\'ajout'          // P169 : {error}, pas {message}
+        if (res.status === 423) {
+          // I69/P177 : le serveur a refuse malgre tout (horloge divergente,
+          // derogation non transmise...) — jamais deverrouiller localement.
+          setDerogation(false)
+          toast.error(message + ' Utilisez « Deroger » pour forcer l\'enregistrement.')
+        } else {
+          toast.error(message)
+        }
         return
       }
 
-      toast.success('Decaissement enregistre')
+      toast.success(derogation ? 'Decaissement enregistre en derogation' : 'Decaissement enregistre')
       setDescription('')
       setMontantFond('')
       setMontantBanque('')
       setMontantBanqueTouche(false)
       setSourceVocale(false)
+      setDerogation(false)
       await mutate()
     } catch {
       toast.error('Erreur reseau')
@@ -409,13 +466,13 @@ export default function DecaissementsPage() {
       {/* ── Header — plus de bouton verrou local (P168) : la bannière globale
              au-dessus de la page pilote deja l'edition */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Décaissements</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Écaissements</h1>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
           Enregistrez vos sorties d'argent
         </p>
       </div>
 
-      {/* ── Banniere verrou (lecture seule pilotee par le contexte global) */}
+      {/* ── Banniere verrou global (lecture seule pilotee par le contexte global) */}
       {isLocked && (
         <div className="flex items-center gap-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
           <div className="flex-shrink-0 w-8 h-8 bg-red-100 dark:bg-red-900/40 rounded-full flex items-center justify-center">
@@ -427,6 +484,51 @@ export default function DecaissementsPage() {
             <p className="text-sm font-medium text-red-700 dark:text-red-400">Édition verrouillée</p>
             <p className="text-xs text-red-600 dark:text-red-500">Utilisez le bandeau en haut de la page pour déverrouiller.</p>
           </div>
+        </div>
+      )}
+
+      {/* ── I69/P177 : banniere mois clos pour la DATE saisie (independante
+             du verrou global ci-dessus) ─────────────────────────────────── */}
+      {!isLocked && moisVerrouille && (
+        <div className={`flex items-center justify-between gap-3 rounded-xl px-4 py-3 border ${
+          derogation
+            ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+            : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'
+        }`}>
+          <div className="flex items-center gap-2.5">
+            {derogation
+              ? <LockOpen size={15} className="text-red-500 flex-shrink-0" />
+              : <Lock size={15} className="text-amber-600 dark:text-amber-400 flex-shrink-0" />}
+            <div>
+              <p className={`text-sm font-semibold ${derogation ? 'text-red-700 dark:text-red-300' : 'text-amber-800 dark:text-amber-300'}`}>
+                {derogation ? 'Dérogation armée' : 'Date sur un mois clôturé'}
+              </p>
+              <p className={`text-xs ${derogation ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                {derogation
+                  ? "L'enregistrement sera tracé dans le journal d'audit."
+                  : messageVerrou(dateAnnee, dateMois)}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setDerogation(v => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all flex-shrink-0 ${
+              derogation
+                ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 hover:bg-red-200'
+                : 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 hover:bg-amber-200'
+            }`}
+          >
+            {derogation ? <Lock size={12} /> : <LockOpen size={12} />}
+            {derogation ? 'Annuler la dérogation' : 'Déroger'}
+          </button>
+        </div>
+      )}
+
+      {!isLocked && !moisVerrouille && joursRestants !== null && joursRestants <= 3 && (
+        <div className="flex items-center gap-2.5 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-4 py-2.5 text-xs text-amber-700 dark:text-amber-300">
+          <AlertTriangle size={14} className="flex-shrink-0" />
+          <span>Cette date sera clôturée dans {joursRestants} jour(s) — au-delà, l'enregistrement passera en dérogation.</span>
         </div>
       )}
 
@@ -681,8 +783,12 @@ export default function DecaissementsPage() {
           {/* Bouton submit */}
           <button
             type="submit"
-            disabled={champsDesactives}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white rounded-lg px-4 py-2.5 text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-sm hover:shadow-md"
+            disabled={soumissionBloquee}
+            className={`w-full disabled:cursor-not-allowed text-white rounded-lg px-4 py-2.5 text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-sm hover:shadow-md ${
+              derogation
+                ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-400'
+                : 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400'
+            }`}
           >
             {isSubmitting ? (
               <>
@@ -691,6 +797,10 @@ export default function DecaissementsPage() {
               </>
             ) : isLocked ? (
               'Édition verrouillée'
+            ) : moisVerrouille && !derogation ? (
+              'Mois clôturé'
+            ) : derogation ? (
+              'Enregistrer (dérogation)'
             ) : (
               'Enregistrer le décaissement'
             )}
@@ -704,7 +814,7 @@ export default function DecaissementsPage() {
           <h2 className="text-base font-semibold text-gray-800 dark:text-gray-200">Historique</h2>
           {decaissements.length > 0 && (
             <span className="text-xs text-gray-400 dark:text-gray-500">
-              {decaissements.length} entrée{decaissements.length > 1 ? 's' : ''}
+              {decaissements.length} entré{decaissements.length > 1 ? 's' : ''}
             </span>
           )}
         </div>
