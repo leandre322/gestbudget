@@ -167,7 +167,18 @@ model DecaissementCompte {
   @@map("decaissement_comptes")
 }
 
+// S26 / F16 : roleEpargne remplace progressivement compteUrgence.
+// Exclusivite urgence/precaution structurelle : l etat "les deux" n est
+// pas representable. compteUrgence reste le temps de la migration
+// (expand/contract), a supprimer une fois le Lot 1b deploye.
+enum RoleEpargne {
+  aucun
+  urgence
+  precaution
+}
+
 model Banque {
+  roleEpargne   RoleEpargne       @default(aucun)
   id            String            @id @default(cuid())
   userId        String
   nomBanque     String
@@ -221,6 +232,7 @@ model CorrectifKpi {
 }
 
 model Parametres {
+  nMoisPrecaution               Int?     @default(3)
   id                            String   @id @default(cuid())
   userId                        String   @unique
   devise                        String   @default("FCFA")
