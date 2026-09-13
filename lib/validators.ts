@@ -66,7 +66,7 @@ void _coherenceTous;
 // coerce en 0 et echouerait sur min(1)).
 // ─────────────────────────────────────────────────────────────────────────────
 export const PaginationSchema = z.object({
-  limit:  z.coerce.number().int().min(1).max(200).default(100),
+  limit:  z.coerce.number().int().min(1).max(10_000).default(100),
   offset: z.coerce.number().int().min(0).max(100_000).default(0),
 });
 
