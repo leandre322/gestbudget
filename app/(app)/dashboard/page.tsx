@@ -16,6 +16,8 @@ import useSWR from 'swr';
 import { clsx } from 'clsx';
 import PilotageCards from '@/components/PilotageCards';
 
+export const dynamic = 'force-dynamic';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // S20 — P95 / I36. Trois filtres de cet ecran excluaient remboursement_dette
 // via startsWith('depense') alors que le KPI « Depenses » juste au-dessus
