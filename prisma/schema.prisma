@@ -230,13 +230,6 @@ model Parametres {
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
   revenuMensuelReference        BigInt   @default(0)
-  objectif_epargne_annuel       BigInt?  @default(0)
-  objectif_revenus_annuel       BigInt?  @default(0)
-  objectif_remboursement_annuel BigInt?  @default(0)
-  n_mois_urgence                Int?     @default(6)
-  objectifEpargneAnnuel         BigInt?  @default(0)
-  objectifRevenusAnnuel         BigInt?  @default(0)
-  objectifRemboursementAnnuel   BigInt?  @default(0)
   nMoisUrgence                  Int?     @default(6)
   rapportEmailActif             Boolean? @default(true)
   rapportEmailJour              Int?     @default(1)
