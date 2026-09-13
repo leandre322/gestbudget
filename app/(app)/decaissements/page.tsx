@@ -48,9 +48,9 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
-import useSWR from 'swr'
+import useSWR, { mutate as globalMutate } from 'swr'
 import { toast } from 'react-hot-toast'
-import { Star, Lock, LockOpen, AlertTriangle } from 'lucide-react'
+import { Star, Lock, LockOpen, AlertTriangle, Trash2 } from 'lucide-react'
 import { useLock } from '../contexts'
 import { estMoisVerrouille, messageVerrou, joursAvantVerrou } from '@/lib/periode'
 
@@ -144,7 +144,7 @@ function WaveAnimation() {
   )
 }
 
-// ── Icone micro ──────────────────────────────────────────────────────────────
+// ── Icone micro ───────────────────────────────────────────────────────────────
 function MicIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -177,6 +177,9 @@ export default function DecaissementsPage() {
   const [sourceVocale, setSourceVocale] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [banqueDefautId, setBanqueDefautId] = useState<string | null>(null)
+  // I69/P177 : id du decaissement en cours d'annulation, pour ne desactiver
+  // que sa propre ligne d'historique (pas tout l'historique).
+  const [suppressionEnCours, setSuppressionEnCours] = useState<string | null>(null)
 
   // I69/P177 : derogation ARMEE par l'utilisateur, envoyee au serveur et
   // tracee. Jamais un deverrouillage local silencieux (meme regime que
@@ -384,6 +387,59 @@ export default function DecaissementsPage() {
     if (needBanque && (!banqueId || !montantBanque || Number(montantBanque) <= 0))
       return 'Selectionnez une banque et un montant'
     return null
+  }
+
+  // ── Annulation d'un decaissement depuis l'historique (I69/P177) ─────────────
+  // Le verrou porte sur le mois du decaissement ANNULE, pas la date du jour -
+  // meme principe que la creation. Query param (pas de body sur ce DELETE,
+  // meme convention que /api/donnees).
+  const supprimerDecaissement = async (d: Decaissement) => {
+    if (isLocked) { openUnlockModal(); return }
+    if (suppressionEnCours) return
+
+    const dDate  = new Date(d.dateOperation)
+    const dAnnee = dDate.getUTCFullYear()
+    const dMois  = dDate.getUTCMonth() + 1
+    const dVerrouille = estMoisVerrouille(dAnnee, dMois)
+
+    const libelle = d.description.trim() || 'ce décaissement'
+    if (!window.confirm(
+      `Annuler ${libelle} du ${formatDate(d.dateOperation)} (${formatMontant(d.montantTotal)}) ?\n\n`
+      + `Les comptes concernés seront recrédités et l'opération tracée dans l'audit.`
+    )) return
+
+    let derogation = false
+    if (dVerrouille) {
+      const ok = window.confirm(
+        `Ce décaissement date d'un mois clôturé (${messageVerrou(dAnnee, dMois)}).\n\n`
+        + `L'annulation sera faite en DÉROGATION et tracée. Confirmer ?`
+      )
+      if (!ok) return
+      derogation = true
+    }
+
+    setSuppressionEnCours(d.id)
+    try {
+      const url = '/api/decaissements?id=' + encodeURIComponent(d.id)
+        + (derogation ? '&forcerMoisVerrouille=1' : '')
+      const res = await fetch(url, { method: 'DELETE' })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        toast.error(err.error || 'Erreur lors de l\'annulation')
+        return
+      }
+      toast.success('Décaissement annulé')
+      await mutate()
+      // I69/P177 : les soldes affiches dans les selects Fond/Banque de CE
+      // formulaire viennent de /api/comptes et /api/banques - sans ce
+      // rafraichissement ils resteraient perimes apres l'annulation.
+      globalMutate('/api/comptes')
+      globalMutate('/api/banques')
+    } catch {
+      toast.error('Erreur réseau')
+    } finally {
+      setSuppressionEnCours(null)
+    }
   }
 
   // ── Soumission du formulaire
@@ -870,10 +926,23 @@ export default function DecaissementsPage() {
                     </div>
                   </div>
 
-                  <div className="flex-shrink-0 ml-4">
+                  <div className="flex-shrink-0 ml-4 flex items-center gap-2">
                     <span className="text-sm font-semibold text-red-600 dark:text-red-400">
                       -{formatMontant(d.montantTotal)}
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => supprimerDecaissement(d)}
+                      disabled={isLocked || suppressionEnCours === d.id}
+                      title="Annuler ce décaissement"
+                      className="p-1 rounded-lg text-gray-300 dark:text-gray-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {suppressionEnCours === d.id ? (
+                        <div className="w-3.5 h-3.5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Trash2 size={14} />
+                      )}
+                    </button>
                   </div>
                 </div>
               )
