@@ -9,6 +9,11 @@ datasource db {
 }
 
 model User {
+  totpSecret           String?
+  totpActive           Boolean              @default(false)
+  totpActivatedAt      DateTime?            @db.Timestamptz(6)
+  backupCodes          BackupCode[]
+  trustedDevices       TrustedDevice[]
   id                   String               @id @default(cuid())
   email                String               @unique
   password             String
@@ -463,4 +468,36 @@ enum TypeCategorie {
   depense_variable
   depense_occasionnelle
   remboursement_dette
+}
+
+// 2FA TOTP (S26) — codes de secours a usage unique, haches en base.
+// usedAt plutot que DELETE : conserve la trace d'un code consomme.
+model BackupCode {
+  id        String    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  userId    String
+  codeHash  String
+  usedAt    DateTime? @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade, map: "backup_codes_user_fk")
+
+  @@index([userId], map: "idx_backup_codes_user")
+  @@map("backup_codes")
+}
+
+// Appareils de confiance (30 jours). tokenHash = SHA-256 d'un jeton
+// aleatoire 256 bits : bcrypt inutile ici (entropie haute, pas un mot de
+// passe). Une ligne par appareil = revocation individuelle possible.
+model TrustedDevice {
+  id         String    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  userId     String
+  tokenHash  String    @unique
+  label      String?
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+  lastUsedAt DateTime? @db.Timestamptz(6)
+  expiresAt  DateTime  @db.Timestamptz(6)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade, map: "trusted_devices_user_fk")
+
+  @@index([userId], map: "idx_trusted_devices_user")
+  @@index([expiresAt], map: "idx_trusted_devices_expires")
+  @@map("trusted_devices")
 }
