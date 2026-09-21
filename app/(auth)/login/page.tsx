@@ -159,7 +159,7 @@ export default function LoginPage() {
     const result = await signIn('credentials', {
       email: email.trim(),
       password,
-      code: showCode ? code.trim() : undefined,
+      code: showCode ? code.trim() : '',
       redirect: false,
     });
 
