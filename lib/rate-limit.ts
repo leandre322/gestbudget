@@ -1,13 +1,19 @@
 // =============================================================================
 // lib/rate-limit.ts  --  Limiteur de debit generique (S26)
 // =============================================================================
-// DECOUVERTE (2FA, lot 3) : la table rate_limits existe en base depuis
-// longtemps et deux crons la PURGENT (cron/bilan-hebdo, cron/patrimoine),
-// mais AUCUN code n'ecrivait ni ne lisait cette table pour appliquer une
-// limite reelle. La connexion elle-meme n'avait donc aucune protection
-// brute-force. Ce module construit le mecanisme manquant ; il est generique,
-// pas specifique au 2FA, pour pouvoir couvrir la connexion elle-meme si
-// Law le decide.
+// CORRECTION (S26, apres coup) : une premiere version de ce commentaire
+// affirmait qu'aucun code n'utilisait rate_limits. C'etait FAUX : le grep de
+// l'epoque ne couvrait que lib/ et app/ et avait rate middleware.ts (racine),
+// qui limite deja PAR IP /api/auth/callback, register, forgot-password et
+// reset-password (Edge runtime, client Neon direct).
+//
+// Ce module est donc COMPLEMENTAIRE, pas redondant :
+//   - middleware.ts : par IP. Arrete un attaquant qui vise plusieurs comptes
+//     depuis une seule adresse.
+//   - ce module (runtime Node, Prisma) : par email et par utilisateur TOTP.
+//     Arrete une attaque distribuee sur un seul compte, et couvre le code 2FA,
+//     que le middleware ne peut pas distinguer d'un mot de passe.
+// Deux implementations coexistent parce que Prisma ne tourne pas en Edge.
 //
 // ATOMICITE : un SELECT puis un UPDATE separes permettraient a deux requetes
 // concurrentes de lire toutes deux "0 tentative" avant que l'une des deux

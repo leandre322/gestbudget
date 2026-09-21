@@ -80,6 +80,14 @@ const AUTH_RATE_RULES = [
   { path: '/api/export/pdf',   limit: 10, window: 60_000 },
   { path: '/api/export/excel', limit: 10, window: 60_000 },
   { path: '/api/quick-add',    limit: 30, window: 60_000 },
+  // S26 : ces trois routes font un bcrypt.compare du mot de passe. Il faut deja
+  // une session valide pour les atteindre, mais une session volee pouvait y
+  // tester des mots de passe sans limite. 5 essais / 15 min et par route.
+  // /api/2fa/devices (lecture) et /api/2fa/activate (compteur propre dans la
+  // route) sont volontairement hors de ces regles.
+  { path: '/api/2fa/enroll',       limit: 5, window: 900_000 },
+  { path: '/api/2fa/trust-device', limit: 5, window: 900_000 },
+  { path: '/api/2fa/disable',      limit: 5, window: 900_000 },
 ];
 
 const PROTECTED_PAGES = [
@@ -167,18 +175,24 @@ export async function middleware(req: NextRequest) {
   return withSecurityHeaders(NextResponse.next());
 }
 
+// S26 : l'ancienne liste explicite oubliait /login, /register,
+// /forgot-password, /reset-password, / et /offline. Le middleware ne
+// s'executait pas sur ces pages : aucun en-tete de securite (ni CSP, ni
+// Permissions-Policy, ni Referrer-Policy) sur la page ou l'on saisit son mot
+// de passe. Verifie en production le 21/09/2026.
+//
+// Nouveau principe : tout passe par le middleware SAUF les fichiers statiques.
+// Une page ajoutee demain sera couverte d'office au lieu d'etre oubliee.
+// Exclusions :
+//   - _next/static, _next/image : assets du build, aucun en-tete utile ;
+//   - *.js : surtout sw.js, workbox-*.js, worker-*.js. Une CSP posee sur le
+//     script d'un Service Worker gouverne les requetes du worker lui-meme :
+//     risque de casser le cache PWA et les notifications push ;
+//   - images, polices, manifest, sourcemaps.
+// Cout : une execution Edge de plus sur les pages publiques, sans acces base
+// (aucune regle de debit ne vise une page) : negligeable.
 export const config = {
   matcher: [
-    '/dashboard/:path*',
-    '/suivi/:path*',
-    '/recapitulatif/:path*',
-    '/budget/:path*',
-    '/decaissements/:path*',
-    '/parametres/:path*',
-    '/ajout-retrait-fonds/:path*',
-    '/projets/:path*',
-    '/analytiques/:path*',
-    '/recurrentes/:path*',
-    '/api/:path*',
+    '/((?!_next/static|_next/image|.*\\.(?:js|mjs|json|map|png|jpg|jpeg|gif|svg|ico|webp|avif|woff|woff2|ttf|txt|xml|webmanifest)$).*)',
   ],
 };

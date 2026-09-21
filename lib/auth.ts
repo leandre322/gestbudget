@@ -19,9 +19,9 @@ import { CODE_2FA_REQUIS, CODE_2FA_INVALIDE, CODE_LOGIN_LIMITE, CODE_2FA_LIMITE 
 // debit atteinte — sans jamais confirmer ni infirmer l'existence d'un compte
 // avant d'avoir verifie le mot de passe.
 //
-// LIMITEUR DE DEBIT (lib/rate-limit.ts) — decouverte en cours de route : la
-// table rate_limits existait et etait purgee par deux crons, mais rien ne
-// l'utilisait pour appliquer une limite reelle. Deux compteurs distincts :
+// LIMITEUR DE DEBIT (lib/rate-limit.ts) — complete le limiteur PAR IP de
+// middleware.ts (voir l'en-tete de lib/rate-limit.ts). Deux compteurs
+// distincts, par compte :
 //   login:<email>   10 tentatives / 15 min — couvre le mot de passe
 //   totp:<userId>    5 tentatives / 5 min  — couvre le code 2FA, plus strict
 //                                            car le mot de passe est deja
