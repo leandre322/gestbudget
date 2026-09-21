@@ -27,7 +27,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Plus, Pencil, Trash2, Check, X, Upload, Save, Link, Link2Off,
          ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Lock, AlertTriangle,
-         Info } from 'lucide-react';
+         Info, Shield, ShieldCheck, Smartphone } from 'lucide-react';
 import { TYPE_LABELS, ORDRE_TYPES, formatFCFA } from '@/types';
 import { clsx } from 'clsx';
 import { PushSubscribeButton } from '@/components/notifications/PushSubscribeButton';
@@ -78,7 +78,7 @@ export default function ParametresPage() {
   const [suppOk,           setSuppOk]           = useState(true);
   const [suppLoading,      setSuppLoading]      = useState(false);
   const [suppResult,       setSuppResult]       = useState<string>('');
-  const [activeTab,        setActiveTab]        = useState<'categories'|'comptes'|'banques'|'import'|'donnees'|'alertes'>('categories');
+  const [activeTab,        setActiveTab]        = useState<'categories'|'comptes'|'banques'|'import'|'donnees'|'alertes'|'securite'>('categories');
 
   // ── Taux & Revenus ────────────────────────────────────────────────────────
   const [tauxRef,    setTauxRef]    = useState<Record<GrandeCategorie, number>>({} as Record<GrandeCategorie, number>);
@@ -120,6 +120,22 @@ export default function ParametresPage() {
   const [langueVocale,      setLangueVocale]      = useState('fr-FR');
   const [savingAlertes,     setSavingAlertes]     = useState(false);
   const [savedAlertes,      setSavedAlertes]      = useState(false);
+
+  // ── S26 : 2FA ─────────────────────────────────────────────────────────────
+  const [totpActive,        setTotpActive]        = useState(false);
+  const [appareils,         setAppareils]         = useState<any[]>([]);
+  const [loadingSecurite,   setLoadingSecurite]   = useState(true);
+  const [etapeEnrolement,   setEtapeEnrolement]   = useState<'inactif'|'mdp'|'qr'|'codes'>('inactif');
+  const [mdpEnrolement,     setMdpEnrolement]     = useState('');
+  const [qrCode,            setQrCode]            = useState('');
+  const [secretManuel,      setSecretManuel]      = useState('');
+  const [codeActivation,    setCodeActivation]    = useState('');
+  const [codesSecours,      setCodesSecours]      = useState<string[]>([]);
+  const [erreurSecurite,    setErreurSecurite]    = useState<string|null>(null);
+  const [savingSecurite,    setSavingSecurite]    = useState(false);
+  const [showDesactivation, setShowDesactivation] = useState(false);
+  const [mdpDesactivation,  setMdpDesactivation]  = useState('');
+  const [codeDesactivation, setCodeDesactivation] = useState('');
 
   const toggleCatGroup = (type: string) => setCatGroupsOpen(p => ({ ...p, [type]: !p[type] }));
   const ouvrirTousCats = () => { const n: Record<string,boolean> = {}; ORDRE_TYPES.forEach(t => { n[t]=true; }); setCatGroupsOpen(n); };
@@ -203,6 +219,100 @@ export default function ParametresPage() {
   },[]);
 
   useEffect(() => { charger(); },[charger]);
+
+  // ── S26 : 2FA ─────────────────────────────────────────────────────────────
+  const chargerSecurite = useCallback(async () => {
+    setLoadingSecurite(true);
+    try {
+      const r = await fetch('/api/2fa/devices');
+      if (r.ok) {
+        const d = await r.json();
+        setTotpActive(d.totpActive ?? false);
+        setAppareils(d.appareils ?? []);
+      }
+    } catch (e) { console.error('chargerSecurite:', e); }
+    setLoadingSecurite(false);
+  },[]);
+
+  useEffect(() => {
+    if (activeTab === 'securite') chargerSecurite();
+  },[activeTab, chargerSecurite]);
+
+  const demarrerEnrolement = () => {
+    if (isLocked) { openUnlockModal(); return; }
+    setEtapeEnrolement('mdp');
+    setMdpEnrolement('');
+    setErreurSecurite(null);
+  };
+
+  const soumettreMdpEnrolement = async () => {
+    if (!mdpEnrolement) { setErreurSecurite('Mot de passe requis'); return; }
+    setSavingSecurite(true);
+    setErreurSecurite(null);
+    try {
+      const res = await fetch('/api/2fa/enroll', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ password: mdpEnrolement }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setErreurSecurite(d.error ?? 'Erreur'); setSavingSecurite(false); return; }
+      setQrCode(d.qrCode);
+      setSecretManuel(d.secret);
+      setEtapeEnrolement('qr');
+    } catch { setErreurSecurite('Erreur réseau'); }
+    setSavingSecurite(false);
+  };
+
+  const confirmerActivation = async () => {
+    if (!codeActivation) { setErreurSecurite('Code requis'); return; }
+    setSavingSecurite(true);
+    setErreurSecurite(null);
+    try {
+      const res = await fetch('/api/2fa/activate', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ code: codeActivation.trim() }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setErreurSecurite(d.error ?? 'Erreur'); setSavingSecurite(false); return; }
+      setCodesSecours(d.backupCodes ?? []);
+      setEtapeEnrolement('codes');
+      setCodeActivation('');
+    } catch { setErreurSecurite('Erreur réseau'); }
+    setSavingSecurite(false);
+  };
+
+  const terminerEnrolement = () => {
+    setEtapeEnrolement('inactif');
+    setMdpEnrolement(''); setQrCode(''); setSecretManuel(''); setCodesSecours([]);
+    chargerSecurite();
+  };
+
+  const soumettreDesactivation = async () => {
+    if (!mdpDesactivation || !codeDesactivation) { setErreurSecurite('Mot de passe et code requis'); return; }
+    setSavingSecurite(true);
+    setErreurSecurite(null);
+    try {
+      const res = await fetch('/api/2fa/disable', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ password: mdpDesactivation, code: codeDesactivation.trim() }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setErreurSecurite(d.error ?? 'Erreur'); setSavingSecurite(false); return; }
+      setShowDesactivation(false);
+      setMdpDesactivation(''); setCodeDesactivation('');
+      chargerSecurite();
+    } catch { setErreurSecurite('Erreur réseau'); }
+    setSavingSecurite(false);
+  };
+
+  const revoquerAppareil = async (id: string) => {
+    if (isLocked) { openUnlockModal(); return; }
+    if (!confirm('Révoquer cet appareil ? Il redemandera un code 2FA à sa prochaine connexion.')) return;
+    try {
+      await fetch(`/api/2fa/devices?id=${id}`, { method: 'DELETE' });
+      chargerSecurite();
+    } catch (e) { console.error(e); }
+  };
 
   const handleRevenuChange = (newRevenu: number) => {
     if (isLocked) return;
@@ -458,11 +568,11 @@ export default function ParametresPage() {
       </div>
 
       <div className="flex gap-1 bg-slate-100 dark:bg-dark-card rounded-xl p-1 w-fit border border-[var(--border)] flex-wrap">
-        {(['categories','comptes','banques','import','donnees','alertes'] as const).map(tab=>(
+        {(['categories','comptes','banques','import','donnees','alertes','securite'] as const).map(tab=>(
           <button key={tab} onClick={()=>setActiveTab(tab)}
             className={clsx('px-4 py-2 rounded-lg text-sm font-medium transition-all',
               activeTab===tab?'bg-[var(--surface)] text-primary shadow-sm':'text-[var(--text-muted)] hover:text-[var(--text)]')}>
-            {tab==='categories'?'Categories':tab==='comptes'?'Fonds':tab==='banques'?'Banques':tab==='donnees'?'Donnees':tab==='alertes'?'Alertes':'Import Excel'}
+            {tab==='categories'?'Categories':tab==='comptes'?'Fonds':tab==='banques'?'Banques':tab==='donnees'?'Donnees':tab==='alertes'?'Alertes':tab==='securite'?'Sécurité':'Import Excel'}
           </button>
         ))}
       </div>
@@ -1023,6 +1133,155 @@ export default function ParametresPage() {
               {savingAlertes?'Sauvegarde...':savedAlertes?'OK':isLocked?'Verrouille':'Sauvegarder'}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ── SECURITE ─────────────────────────────────────────────────────────── */}
+      {activeTab==='securite'&&(
+        <div className="space-y-5">
+          {loadingSecurite ? (
+            <div className="flex items-center justify-center h-32"><div className="spinner scale-150"/></div>
+          ) : (
+            <>
+              <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    {totpActive ? <ShieldCheck size={18} className="text-green-500"/> : <Shield size={18} className="text-[var(--text-muted)]"/>}
+                    <h3 className="font-semibold text-[var(--text)]">Authentification à deux facteurs</h3>
+                  </div>
+                  <span className={clsx('text-xs font-semibold px-2.5 py-1 rounded-lg',
+                    totpActive ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
+                               : 'bg-slate-100 dark:bg-dark-card text-[var(--text-muted)]')}>
+                    {totpActive ? 'Actif' : 'Inactif'}
+                  </span>
+                </div>
+                <p className="text-xs text-[var(--text-muted)] mb-4">
+                  Code à 6 chiffres via une application d&apos;authentification (Google Authenticator, Authy...), en plus du mot de passe.
+                </p>
+
+                {etapeEnrolement === 'inactif' && !totpActive && (
+                  <button onClick={demarrerEnrolement} disabled={isLocked} title={isLocked?'Verrouillez pour modifier':undefined} className={actionBtn(isLocked)}>
+                    <Shield size={14}/>Activer le 2FA
+                  </button>
+                )}
+
+                {etapeEnrolement === 'inactif' && totpActive && (
+                  <button onClick={()=>{if(isLocked){openUnlockModal();return;}setShowDesactivation(true);setErreurSecurite(null);}} disabled={isLocked}
+                    className="flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-all disabled:opacity-50">
+                    Désactiver le 2FA
+                  </button>
+                )}
+
+                {etapeEnrolement === 'mdp' && (
+                  <div className="mt-3 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-800 space-y-3">
+                    <p className="text-xs text-blue-700 dark:text-blue-400">Confirmez votre mot de passe pour commencer.</p>
+                    <input type="password" value={mdpEnrolement} onChange={e=>setMdpEnrolement(e.target.value)}
+                      placeholder="Mot de passe actuel" className={inputCls}
+                      onKeyDown={e=>{if(e.key==='Enter')soumettreMdpEnrolement();}}/>
+                    {erreurSecurite && <p className="text-xs text-red-500">{erreurSecurite}</p>}
+                    <div className="flex gap-2">
+                      <button onClick={soumettreMdpEnrolement} disabled={savingSecurite}
+                        className="flex-1 bg-primary text-white rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-60">
+                        {savingSecurite ? 'Vérification...' : 'Continuer'}
+                      </button>
+                      <button onClick={()=>setEtapeEnrolement('inactif')} className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm">Annuler</button>
+                    </div>
+                  </div>
+                )}
+
+                {etapeEnrolement === 'qr' && (
+                  <div className="mt-3 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-800 space-y-3">
+                    <p className="text-xs text-blue-700 dark:text-blue-400">
+                      Scannez ce QR code avec votre application d&apos;authentification, puis saisissez le code affiché.
+                    </p>
+                    <div className="flex justify-center bg-white p-3 rounded-xl">
+                      {qrCode && <img src={qrCode} alt="QR code 2FA" width={200} height={200}/>}
+                    </div>
+                    <details className="text-xs text-[var(--text-muted)]">
+                      <summary className="cursor-pointer">Impossible de scanner ? Saisie manuelle</summary>
+                      <p className="mt-1.5 font-mono break-all bg-[var(--card)] p-2 rounded-lg">{secretManuel}</p>
+                    </details>
+                    <input type="text" value={codeActivation} onChange={e=>setCodeActivation(e.target.value)}
+                      placeholder="Code à 6 chiffres" className={inputCls} autoFocus
+                      onKeyDown={e=>{if(e.key==='Enter')confirmerActivation();}}/>
+                    {erreurSecurite && <p className="text-xs text-red-500">{erreurSecurite}</p>}
+                    <div className="flex gap-2">
+                      <button onClick={confirmerActivation} disabled={savingSecurite}
+                        className="flex-1 bg-primary text-white rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-60">
+                        {savingSecurite ? 'Vérification...' : 'Activer'}
+                      </button>
+                      <button onClick={()=>setEtapeEnrolement('inactif')} className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm">Annuler</button>
+                    </div>
+                  </div>
+                )}
+
+                {etapeEnrolement === 'codes' && (
+                  <div className="mt-3 p-4 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-200 dark:border-amber-800 space-y-3">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle size={16} className="text-amber-600 flex-shrink-0 mt-0.5"/>
+                      <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                        Notez ces codes maintenant — ils ne seront plus jamais affichés. Chacun n&apos;est utilisable qu&apos;une seule fois, en remplacement du code de votre application si vous perdez l&apos;accès.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 font-mono text-sm bg-[var(--card)] p-3 rounded-xl">
+                      {codesSecours.map((c,i)=>(<span key={i} className="text-[var(--text)]">{c}</span>))}
+                    </div>
+                    <button onClick={terminerEnrolement}
+                      className="w-full bg-primary text-white rounded-xl px-4 py-2 text-sm font-medium">
+                      J&apos;ai noté mes codes, terminer
+                    </button>
+                  </div>
+                )}
+
+                {showDesactivation && (
+                  <div className="mt-3 p-4 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-200 dark:border-red-800 space-y-3">
+                    <p className="text-xs text-red-700 dark:text-red-400">Mot de passe et code requis pour désactiver le 2FA.</p>
+                    <input type="password" value={mdpDesactivation} onChange={e=>setMdpDesactivation(e.target.value)}
+                      placeholder="Mot de passe actuel" className={inputCls}/>
+                    <input type="text" value={codeDesactivation} onChange={e=>setCodeDesactivation(e.target.value)}
+                      placeholder="Code 2FA ou code de secours" className={inputCls}/>
+                    {erreurSecurite && <p className="text-xs text-red-500">{erreurSecurite}</p>}
+                    <div className="flex gap-2">
+                      <button onClick={soumettreDesactivation} disabled={savingSecurite}
+                        className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-60">
+                        {savingSecurite ? 'Désactivation...' : 'Confirmer la désactivation'}
+                      </button>
+                      <button onClick={()=>{setShowDesactivation(false);setErreurSecurite(null);}} className="border border-[var(--border)] text-[var(--text-muted)] rounded-xl px-4 py-2 text-sm">Annuler</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {totpActive && (
+                <div className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-5 transition-colors">
+                  <h3 className="font-semibold text-[var(--text)] mb-1">Appareils de confiance</h3>
+                  <p className="text-xs text-[var(--text-muted)] mb-4">Ces appareils ne redemandent pas de code pendant 30 jours après la dernière connexion.</p>
+                  {appareils.length === 0 ? (
+                    <p className="text-sm text-[var(--text-muted)] py-2">Aucun appareil enregistré.</p>
+                  ) : (
+                    <div className="divide-y divide-[var(--border)]">
+                      {appareils.map((a:any)=>(
+                        <div key={a.id} className="py-3 flex items-center gap-3">
+                          <Smartphone size={16} className="text-[var(--text-muted)] flex-shrink-0"/>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-[var(--text)] truncate">{a.label || 'Appareil sans nom'}</p>
+                            <p className="text-xs text-[var(--text-muted)]">
+                              Expire le {new Date(a.expiresAt).toLocaleDateString('fr-FR')}
+                              {a.lastUsedAt && ` · Dernière utilisation le ${new Date(a.lastUsedAt).toLocaleDateString('fr-FR')}`}
+                            </p>
+                          </div>
+                          <button onClick={()=>revoquerAppareil(a.id)} disabled={isLocked}
+                            title={isLocked?'Verrouillez pour modifier':undefined} className={iconBtnDanger(isLocked)}>
+                            <Trash2 size={14}/>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 

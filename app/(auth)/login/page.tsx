@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Eye, EyeOff, Mail, Lock, TrendingUp, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, TrendingUp, AlertCircle, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { clsx } from 'clsx';
+import { CODE_2FA_REQUIS, CODE_2FA_INVALIDE, CODE_LOGIN_LIMITE, CODE_2FA_LIMITE } from '@/lib/auth-constants';
 
 // ── P7 : Indicateur de force de mot de passe ─────────────────────
 function PasswordStrength({ password }: { password: string }) {
@@ -122,32 +123,80 @@ export default function LoginPage() {
   const [error,       setError]       = useState('');
   const [mounted,     setMounted]     = useState(false);
 
+  // ── S26 : 2FA ─────────────────────────────────────────────────────────
+  const [code,           setCode]           = useState('');
+  const [showCode,       setShowCode]       = useState(false);
+  const [rememberDevice, setRememberDevice] = useState(false);
+  const [info,           setInfo]           = useState('');
+
   useEffect(() => {
     // Petite animation d'entrée
     const t = setTimeout(() => setMounted(true), 80);
     return () => clearTimeout(t);
   }, []);
 
+  // Best-effort : un echec ici ne doit jamais bloquer l'acces au dashboard,
+  // l'utilisateur vient de s'authentifier avec succes.
+  const confierAppareil = async () => {
+    try {
+      await fetch('/api/2fa/trust-device', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ password, label: 'Navigateur web' }),
+      });
+    } catch {
+      // silencieux
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) { setError('Veuillez remplir tous les champs.'); return; }
     setLoading(true);
     setError('');
+    setInfo('');
 
     const result = await signIn('credentials', {
       email: email.trim(),
       password,
+      code: showCode ? code.trim() : undefined,
       redirect: false,
     });
 
     if (result?.ok) {
+      if (showCode && rememberDevice) {
+        await confierAppareil();
+      }
       router.push('/dashboard');
-    } else {
-      setError(result?.error === 'CredentialsSignin'
-        ? 'Email ou mot de passe incorrect.'
-        : 'Erreur de connexion. Réessayez.');
-      setLoading(false);
+      return;
     }
+
+    // S26 — distinction des codes d'erreur : lib/auth.ts leve une Error dont
+    // le message est transmis tel quel par NextAuth v4 (result.error), sauf
+    // pour un mot de passe incorrect qui reste 'CredentialsSignin' generique
+    // (authorize() retourne null, jamais throw, dans ce cas precis).
+    switch (result?.error) {
+      case CODE_2FA_REQUIS:
+        setShowCode(true);
+        setInfo('Entrez le code de votre application d\u2019authentification.');
+        setCode('');
+        break;
+      case CODE_2FA_INVALIDE:
+        setError('Code invalide.');
+        setCode('');
+        break;
+      case CODE_LOGIN_LIMITE:
+        setError('Trop de tentatives. Réessayez dans quelques minutes.');
+        break;
+      case CODE_2FA_LIMITE:
+        setError('Trop de tentatives de code. Réessayez dans quelques minutes.');
+        break;
+      default:
+        setError(result?.error === 'CredentialsSignin'
+          ? 'Email ou mot de passe incorrect.'
+          : 'Erreur de connexion. Réessayez.');
+    }
+    setLoading(false);
   };
 
   const inputCls = clsx(
@@ -249,7 +298,8 @@ export default function LoginPage() {
                     placeholder="vous@example.com"
                     autoComplete="email"
                     required
-                    className={inputCls}
+                    disabled={showCode}
+                    className={clsx(inputCls, showCode && 'opacity-50 cursor-not-allowed')}
                   />
                 </div>
               </div>
@@ -274,7 +324,8 @@ export default function LoginPage() {
                     placeholder="••••••••"
                     autoComplete="current-password"
                     required
-                    className={clsx(inputCls, 'pr-10')}
+                    disabled={showCode}
+                    className={clsx(inputCls, 'pr-10', showCode && 'opacity-50 cursor-not-allowed')}
                   />
                   <button type="button" onClick={() => setShowPwd(!showPwd)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors">
@@ -282,8 +333,51 @@ export default function LoginPage() {
                   </button>
                 </div>
                 {/* P7 : Force du mot de passe */}
-                <PasswordStrength password={password} />
+                {!showCode && <PasswordStrength password={password} />}
               </div>
+
+              {/* S26 : champ code 2FA — revele uniquement apres CODE_2FA_REQUIS */}
+              {showCode && (
+                <div>
+                  <label className="block text-xs font-medium text-white/50 mb-1.5 uppercase tracking-wide">
+                    Code d&apos;authentification
+                  </label>
+                  <div className="relative">
+                    <ShieldCheck size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30" />
+                    <input
+                      type="text"
+                      value={code}
+                      onChange={e => setCode(e.target.value)}
+                      placeholder="123456 ou XXXX-XXXX"
+                      autoComplete="one-time-code"
+                      autoFocus
+                      required
+                      className={inputCls}
+                    />
+                  </div>
+                  <p className="text-[11px] text-white/30 mt-1.5">
+                    Code à 6 chiffres de votre application, ou un code de secours.
+                  </p>
+                  <label className="flex items-center gap-2 mt-3 text-xs text-white/50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={rememberDevice}
+                      onChange={e => setRememberDevice(e.target.checked)}
+                      className="rounded border-white/20 bg-white/5"
+                    />
+                    Se souvenir de cet appareil pendant 30 jours
+                  </label>
+                </div>
+              )}
+
+              {/* Info (2FA requis) */}
+              {info && (
+                <div className="flex items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-sm
+                  bg-blue-500/10 border border-blue-500/20 text-blue-300">
+                  <ShieldCheck size={15} className="flex-shrink-0" />
+                  {info}
+                </div>
+              )}
 
               {/* Erreur */}
               {error && (
@@ -313,11 +407,23 @@ export default function LoginPage() {
                 )}
               >
                 {loading ? (
-                  <><div className="spinner w-4 h-4" />Connexion...</>
+                  <><div className="spinner w-4 h-4" />{showCode ? 'Vérification...' : 'Connexion...'}</>
+                ) : showCode ? (
+                  <>Vérifier le code</>
                 ) : (
                   <>Se connecter</>
                 )}
               </button>
+
+              {showCode && (
+                <button
+                  type="button"
+                  onClick={() => { setShowCode(false); setCode(''); setError(''); setInfo(''); }}
+                  className="w-full text-center text-xs text-white/40 hover:text-white/60 transition-colors"
+                >
+                  ← Retour
+                </button>
+              )}
             </form>
 
             {/* Séparateur */}
