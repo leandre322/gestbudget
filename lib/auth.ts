@@ -35,6 +35,16 @@ import { CODE_2FA_REQUIS, CODE_2FA_INVALIDE, CODE_LOGIN_LIMITE, CODE_2FA_LIMITE 
 // d'acces a l'objet reponse dans NextAuth v4), seulement en LIRE un. L'ecriture
 // se fait dans une route a part, POST /api/2fa/trust-device, appelee par le
 // client juste apres un signIn() reussi si la case "se souvenir" est cochee.
+//
+// TOKENVERSION (S26, B2b) — un reset de mot de passe (app/api/reset-password)
+// incremente users.tokenVersion. Le callback jwt() ci-dessous compare a
+// chaque acces (poll client, getServerSession cote serveur) la valeur portee
+// par le token avec la valeur courante en base ; une erreur levee ici est le
+// mecanisme NextAuth v4 documente pour signaler une session invalide — 
+// getServerSession() et /api/auth/session renvoient "non connecte" sans
+// jamais faire planter l'appelant. middleware.ts fait une verification
+// equivalente pour les pages protegees (getToken() ne repasse jamais par ce
+// callback, voir l'en-tete de middleware.ts).
 // =============================================================================
 
 const NOM_COOKIE_APPAREIL = 'gb_trusted_device';
@@ -155,9 +165,10 @@ export const authOptions: NextAuthOptions = {
         }
 
         return {
-          id:    user.id,
-          email: user.email,
-          name:  user.nom ?? user.email,
+          id:           user.id,
+          email:        user.email,
+          name:         user.nom ?? user.email,
+          tokenVersion: user.tokenVersion,
         };
       },
     }),
@@ -167,9 +178,26 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
+        token.tokenVersion = user.tokenVersion;
         // Horodatage de connexion initiale (pour audit futur et verification serveur)
         token.loginAt = Math.floor(Date.now() / 1000);
+        return token;
       }
+
+      // S26 (B2b) — reverifie a chaque acces (poll client, getServerSession
+      // cote serveur) que le compteur n'a pas ete incremente entre-temps par
+      // un reset-password. A verifier manuellement une fois deploye (test
+      // decrit dans le recap de session) avant de considerer B2 clos.
+      if (token?.id) {
+        const dbUser = await prisma.user.findUnique({
+          where:  { id: token.id as string },
+          select: { tokenVersion: true },
+        });
+        if (!dbUser || dbUser.tokenVersion !== token.tokenVersion) {
+          throw new Error('SessionRevoquee');
+        }
+      }
+
       return token;
     },
     async session({ session, token }) {
@@ -216,11 +244,15 @@ declare module 'next-auth' {
       loginAt?: number;
     };
   }
+  interface User {
+    tokenVersion?: number;
+  }
 }
 
 declare module 'next-auth/jwt' {
   interface JWT {
-    id:       string;
-    loginAt?: number;
+    id:            string;
+    loginAt?:      number;
+    tokenVersion?: number;
   }
 }

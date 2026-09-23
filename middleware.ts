@@ -58,6 +58,19 @@ async function checkRL(key: string, limit: number, windowMs: number): Promise<bo
   }
 }
 
+// S26 (B2b-ii) : lecture directe de users.tokenVersion, hors Prisma (Edge).
+// Le retour null couvre a la fois "pas de client SQL" et "l'utilisateur a
+// disparu" — les deux doivent produire un fail-closed identique cote appelant.
+async function getTokenVersion(userId: string): Promise<number | null> {
+  if (!sqlClient) return null;
+  try {
+    const rows = await sqlClient`SELECT "tokenVersion" FROM users WHERE id = ${userId} LIMIT 1`;
+    return typeof rows[0]?.tokenVersion === 'number' ? rows[0].tokenVersion : null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Regles IP-based (routes publiques sensibles) ─────────────────────────────
 const RATE_RULES = [
   { path: '/api/auth/signin',   limit: 10, window: 60_000 },
@@ -152,6 +165,22 @@ export async function middleware(req: NextRequest) {
       url.pathname = '/login';
       url.searchParams.set('callbackUrl', pathname);
       return withSecurityHeaders(NextResponse.redirect(url)); // N3
+    }
+
+    // S26 (B2b-ii) : un reset de mot de passe incremente users.tokenVersion.
+    // Le JWT emis avant ce reset porte l'ancienne valeur -> comparaison en
+    // base a chaque page protegee. Fail-closed deliberement : si la lecture
+    // Neon echoue (panne, latence), on renvoie vers /login plutot que de
+    // laisser passer un token qu'on n'a pas pu revalider. Cout : un aller-
+    // retour Neon de plus par navigation sur une page protegee.
+    if (isProtected && token?.sub) {
+      const versionActuelle = await getTokenVersion(token.sub);
+      if (versionActuelle === null || versionActuelle !== token.tokenVersion) {
+        const url = req.nextUrl.clone();
+        url.pathname = '/login';
+        url.searchParams.set('callbackUrl', pathname);
+        return withSecurityHeaders(NextResponse.redirect(url));
+      }
     }
 
     if (isAuthRL && token?.sub) {
