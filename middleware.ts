@@ -59,13 +59,20 @@ async function checkRL(key: string, limit: number, windowMs: number): Promise<bo
 }
 
 // S26 (B2b-ii) : lecture directe de users.tokenVersion, hors Prisma (Edge).
-// Le retour null couvre a la fois "pas de client SQL" et "l'utilisateur a
-// disparu" — les deux doivent produire un fail-closed identique cote appelant.
+// CORRIGE (incident post-deploiement 0bfa9f6) : le driver Neon en SQL brut
+// renvoie cette colonne en chaine, pas en number -- un typeof stricte la
+// rejetait a chaque fois et verrouillait TOUTE connexion, pas seulement une
+// session revoquee. Number(...) accepte string et number indifferemment ;
+// Number.isFinite ecarte les vraies valeurs invalides (undefined, null,
+// chaine non numerique) sans dependre du type renvoye par le driver.
 async function getTokenVersion(userId: string): Promise<number | null> {
   if (!sqlClient) return null;
   try {
     const rows = await sqlClient`SELECT "tokenVersion" FROM users WHERE id = ${userId} LIMIT 1`;
-    return typeof rows[0]?.tokenVersion === 'number' ? rows[0].tokenVersion : null;
+    const brut = rows[0]?.tokenVersion;
+    if (brut === undefined || brut === null) return null;
+    const valeur = Number(brut);
+    return Number.isFinite(valeur) ? valeur : null;
   } catch {
     return null;
   }
