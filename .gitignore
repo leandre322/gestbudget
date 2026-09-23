@@ -32,3 +32,7 @@ smoke-csrf-v2.ps1
 smoke-csrf-resultats.csv
 .env
 .env
+public/sw.js
+public/workbox-*.js
+public/worker-*.js
+public/*.js.map
