@@ -31,3 +31,4 @@ smoke-csrf-resultats.csv
 smoke-csrf-v2.ps1
 smoke-csrf-resultats.csv
 .env
+.env
