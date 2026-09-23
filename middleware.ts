@@ -59,22 +59,23 @@ async function checkRL(key: string, limit: number, windowMs: number): Promise<bo
 }
 
 // S26 (B2b-ii) : lecture directe de users.tokenVersion, hors Prisma (Edge).
-// CORRIGE (incident post-deploiement 0bfa9f6) : le driver Neon en SQL brut
-// renvoie cette colonne en chaine, pas en number -- un typeof stricte la
-// rejetait a chaque fois et verrouillait TOUTE connexion, pas seulement une
-// session revoquee. Number(...) accepte string et number indifferemment ;
-// Number.isFinite ecarte les vraies valeurs invalides (undefined, null,
-// chaine non numerique) sans dependre du type renvoye par le driver.
-async function getTokenVersion(userId: string): Promise<number | null> {
-  if (!sqlClient) return null;
+// DEBUG TEMPORAIRE (incident post-0bfa9f6/edb8dca) : erreur exposee au lieu
+// d'etre avalee silencieusement par le catch, pour voir la vraie cause au
+// prochain test plutot que de continuer a deviner.
+async function getTokenVersion(userId: string): Promise<{ valeur: number | null; erreur: string | null }> {
+  if (!sqlClient) return { valeur: null, erreur: 'sqlClient absent' };
   try {
     const rows = await sqlClient`SELECT "tokenVersion" FROM users WHERE id = ${userId} LIMIT 1`;
     const brut = rows[0]?.tokenVersion;
-    if (brut === undefined || brut === null) return null;
+    if (brut === undefined || brut === null) {
+      return { valeur: null, erreur: `aucune ligne ou colonne null (rows=${rows.length})` };
+    }
     const valeur = Number(brut);
-    return Number.isFinite(valeur) ? valeur : null;
-  } catch {
-    return null;
+    return Number.isFinite(valeur)
+      ? { valeur, erreur: null }
+      : { valeur: null, erreur: `valeur non numerique: ${JSON.stringify(brut)}` };
+  } catch (err) {
+    return { valeur: null, erreur: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -123,9 +124,6 @@ export async function middleware(req: NextRequest) {
   const ip = getClientIp(req); // N2
 
   // ── 1. N5 : routes cron authentifiees par CRON_SECRET ──────────────────────
-  // Ces routes restent exemptees de CSRF (aucun Origin depuis Vercel Cron),
-  // mais l'exemption devient un ECHANGE : pas d'Origin, mais un secret valide.
-  // Fail-closed : secret absent en production => 401.
   if (matchAnyPath(pathname, CRON_PREFIXES)) {
     if (!verifyCronSecret(req)) {
       return secureJson({ error: 'Non autorise' }, 401);
@@ -174,19 +172,18 @@ export async function middleware(req: NextRequest) {
       return withSecurityHeaders(NextResponse.redirect(url)); // N3
     }
 
-    // S26 (B2b-ii) : un reset de mot de passe incremente users.tokenVersion.
-    // Le JWT emis avant ce reset porte l'ancienne valeur -> comparaison en
-    // base a chaque page protegee. Fail-closed deliberement : si la lecture
-    // Neon echoue (panne, latence), on renvoie vers /login plutot que de
-    // laisser passer un token qu'on n'a pas pu revalider. Cout : un aller-
-    // retour Neon de plus par navigation sur une page protegee.
     if (isProtected && token?.sub) {
-      const versionActuelle = await getTokenVersion(token.sub);
+      const { valeur: versionActuelle, erreur } = await getTokenVersion(token.sub);
       if (versionActuelle === null || versionActuelle !== token.tokenVersion) {
         const url = req.nextUrl.clone();
         url.pathname = '/login';
         url.searchParams.set('callbackUrl', pathname);
-        return withSecurityHeaders(NextResponse.redirect(url));
+        const resp = withSecurityHeaders(NextResponse.redirect(url));
+        // DEBUG TEMPORAIRE — a retirer une fois la cause confirmee
+        resp.headers.set('x-debug-tv-db', versionActuelle === null ? 'null' : String(versionActuelle));
+        resp.headers.set('x-debug-tv-token', String(token.tokenVersion));
+        if (erreur) resp.headers.set('x-debug-tv-erreur', erreur.slice(0, 200));
+        return resp;
       }
     }
 
@@ -211,22 +208,6 @@ export async function middleware(req: NextRequest) {
   return withSecurityHeaders(NextResponse.next());
 }
 
-// S26 : l'ancienne liste explicite oubliait /login, /register,
-// /forgot-password, /reset-password, / et /offline. Le middleware ne
-// s'executait pas sur ces pages : aucun en-tete de securite (ni CSP, ni
-// Permissions-Policy, ni Referrer-Policy) sur la page ou l'on saisit son mot
-// de passe. Verifie en production le 21/09/2026.
-//
-// Nouveau principe : tout passe par le middleware SAUF les fichiers statiques.
-// Une page ajoutee demain sera couverte d'office au lieu d'etre oubliee.
-// Exclusions :
-//   - _next/static, _next/image : assets du build, aucun en-tete utile ;
-//   - *.js : surtout sw.js, workbox-*.js, worker-*.js. Une CSP posee sur le
-//     script d'un Service Worker gouverne les requetes du worker lui-meme :
-//     risque de casser le cache PWA et les notifications push ;
-//   - images, polices, manifest, sourcemaps.
-// Cout : une execution Edge de plus sur les pages publiques, sans acces base
-// (aucune regle de debit ne vise une page) : negligeable.
 export const config = {
   matcher: [
     '/((?!_next/static|_next/image|.*\\.(?:js|mjs|json|map|png|jpg|jpeg|gif|svg|ico|webp|avif|woff|woff2|ttf|txt|xml|webmanifest)$).*)',
