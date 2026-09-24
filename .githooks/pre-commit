@@ -1,0 +1,7 @@
+#!/bin/sh
+# D2 (S26) : controles avant commit. Source unique : scripts/check-staged.ps1
+# Active par : git config core.hooksPath .githooks
+# RemoteSigned : un script local debloque (Unblock-File) s'execute ; un script
+# encore marque comme telecharge est refuse, donc le commit aussi (echec ferme).
+# Contournement d'urgence, a eviter : git commit --no-verify
+exec powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File scripts/check-staged.ps1
