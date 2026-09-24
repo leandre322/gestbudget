@@ -8,10 +8,13 @@
       "path": "/api/cron/recurrentes-mensuelles",
       "schedule": "0 6 1 * *"
     },
-    { 
+    {
       "path": "/api/cron/patrimoine",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/maintenance",
+      "schedule": "0 3 * * *"
     }
   ]
-
 }
