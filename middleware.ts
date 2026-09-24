@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, type NextFetchEvent } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 import { neon } from '@neondatabase/serverless';
+import * as Sentry from '@sentry/nextjs';
 import {
   matchPath,
   matchAnyPath,
@@ -16,11 +17,36 @@ import {
 // ── P1 : client Neon hoiste au niveau module ─────────────────────────────────
 // Avant : neon(...) etait instancie A CHAQUE appel de checkRL.
 // Un client par isolate, reutilise sur toute sa duree de vie.
-const sqlClient = process.env.DATABASE_URL_UNPOOLED
-  ? neon(process.env.DATABASE_URL_UNPOOLED)
+//
+// S26 (J) : variable dediee EDGE_DATABASE_URL, a la place de
+// DATABASE_URL_UNPOOLED. Sur Vercel, DATABASE_URL_UNPOOLED (creee par
+// l'integration Neon) ciblait la base neondb et non gestbudget : le rate
+// limiting de production ecrivait dans neondb, et la verification B2b-ii y
+// lisait une ancienne table users sans tokenVersion (incident de connexion).
+// Une variable qui nous appartient ne peut pas etre resynchronisee par
+// l'integration. Absente => repli memoire, signale a Sentry (F).
+const sqlClient = process.env.EDGE_DATABASE_URL
+  ? neon(process.env.EDGE_DATABASE_URL)
   : null;
 
 const rlFallback = new Map<string, { count: number; resetAt: number }>();
+
+// ── F (S26) : signalement Sentry des echecs du rate limiting ─────────────────
+// Le repli memoire etait silencieux : c'est ce silence qui a masque
+// l'ecriture dans la mauvaise base. Desormais un echec remonte a Sentry, au
+// plus une fois toutes les 10 minutes par isolate, pour ne pas epuiser le
+// quota si la base tombe. Aucune donnee de la cle (IP, userId) n'est jointe
+// a l'evenement. La cause n'est construite que si l'envoi a lieu.
+const RL_SIGNAL_INTERVALLE_MS = 600_000;
+let rlDernierSignal = 0;
+
+function signalerEchecRL(ev: NextFetchEvent, cause: () => unknown): void {
+  const now = Date.now();
+  if (now - rlDernierSignal < RL_SIGNAL_INTERVALLE_MS) return;
+  rlDernierSignal = now;
+  Sentry.captureException(cause(), { tags: { zone: 'rate-limit' }, level: 'warning' });
+  ev.waitUntil(Sentry.flush(2000));
+}
 
 function checkRLMemory(key: string, limit: number, windowMs: number): boolean {
   const now = Date.now();
@@ -34,8 +60,16 @@ function checkRLMemory(key: string, limit: number, windowMs: number): boolean {
   return true;
 }
 
-async function checkRL(key: string, limit: number, windowMs: number): Promise<boolean> {
-  if (!sqlClient) return checkRLMemory(key, limit, windowMs);
+async function checkRL(
+  key: string,
+  limit: number,
+  windowMs: number,
+  ev: NextFetchEvent
+): Promise<boolean> {
+  if (!sqlClient) {
+    signalerEchecRL(ev, () => new Error('EDGE_DATABASE_URL absente : rate limiting replie en memoire'));
+    return checkRLMemory(key, limit, windowMs);
+  }
   try {
     const resetAt = new Date(Date.now() + windowMs).toISOString();
     const rows = await sqlClient`
@@ -53,7 +87,8 @@ async function checkRL(key: string, limit: number, windowMs: number): Promise<bo
       RETURNING count
     `;
     return (rows[0]?.count ?? 1) <= limit;
-  } catch {
+  } catch (err) {
+    signalerEchecRL(ev, () => err);
     return checkRLMemory(key, limit, windowMs);
   }
 }
@@ -98,7 +133,7 @@ const PROTECTED_PAGES = [
   '/recurrentes',
 ];
 
-export async function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest, event: NextFetchEvent) {
   const pathname = req.nextUrl.pathname;
   const ip = getClientIp(req); // N2
 
@@ -116,7 +151,7 @@ export async function middleware(req: NextRequest) {
   // ── 2. Rate limiting IP (routes publiques sensibles) ───────────────────────
   for (const rule of RATE_RULES) {
     if (matchPath(pathname, rule.path)) { // N1
-      const allowed = await checkRL(`${ip}:${rule.path}`, rule.limit, rule.window);
+      const allowed = await checkRL(`${ip}:${rule.path}`, rule.limit, rule.window, event);
       if (!allowed) {
         const retryAfter = Math.ceil(rule.window / 1000);
         return secureJson(
@@ -143,12 +178,11 @@ export async function middleware(req: NextRequest) {
   // ── 4. Auth (pages protegees) + rate limiting userId ───────────────────────
   // S26 (B2, replie en B2b-i) : la revocation de session au reset de mot de
   // passe (tokenVersion) est verifiee dans le callback jwt() de lib/auth.ts
-  // (via Prisma, confirme fonctionnel) — PAS ici. Une verification identique
-  // avait ete tentee ici via une connexion Neon separee
-  // (DATABASE_URL_UNPOOLED) qui s'est averee pointer vers une base/branche
-  // differente de celle que Prisma utilise (colonne tokenVersion absente cote
-  // middleware alors que Prisma la lit sans probleme) — cause non elucidee,
-  // a reprendre une prochaine session avant de reintroduire ce bloc.
+  // (via Prisma, confirme fonctionnel) — PAS ici. La verification B2b-ii
+  // tentee ici echouait parce que DATABASE_URL_UNPOOLED ciblait neondb sur
+  // Vercel (cause elucidee en S26, corrigee par EDGE_DATABASE_URL). Sa
+  // reintroduction reste une decision a part : elle couterait une requete
+  // base a chaque navigation sur une page protegee.
   const isProtected = matchAnyPath(pathname, PROTECTED_PAGES);
   const isAuthRL    = AUTH_RATE_RULES.some(r => matchPath(pathname, r.path));
 
@@ -165,7 +199,7 @@ export async function middleware(req: NextRequest) {
     if (isAuthRL && token?.sub) {
       for (const rule of AUTH_RATE_RULES) {
         if (matchPath(pathname, rule.path)) {
-          const allowed = await checkRL(`uid:${token.sub}:${rule.path}`, rule.limit, rule.window);
+          const allowed = await checkRL(`uid:${token.sub}:${rule.path}`, rule.limit, rule.window, event);
           if (!allowed) {
             const retryAfter = Math.ceil(rule.window / 1000);
             return secureJson(
