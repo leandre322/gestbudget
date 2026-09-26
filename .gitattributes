@@ -1,3 +1,7 @@
+# Z (S26) : LF dans le depot ET dans les copies de travail, quel que soit
+# core.autocrlf. Git detecte seul les binaires (text=auto) et n'y touche pas.
+* text=auto eol=lf
+
+# Toujours texte, meme si l'heuristique de Git hesitait.
 .githooks/* text eol=lf
 *.ps1 text eol=lf
-.gitattributes text eol=lf

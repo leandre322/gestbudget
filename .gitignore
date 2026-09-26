@@ -1,3 +1,4 @@
+# Dependances et builds
 /node_modules
 /.pnp
 .pnp.js
@@ -5,34 +6,33 @@
 /.next/
 /out/
 /build
+*.tsbuildinfo
+next-env.d.ts
+.vercel
+
+# Systeme et journaux
 .DS_Store
-*.pem
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.vercel
-*.tsbuildinfo
-next-env.d.ts
 
-.env
-_utf8-backup-*
+# Secrets : tout fichier .env* sauf le modele versionne (S26).
+# Couvre aussi .env.production, .env.development, .env.sentry-build-plugin.
+.env*
+!.env.example
+*.pem
 
-# Sentry Config File
-.env.sentry-build-plugin
-export-*.txt
-
-smoke-csrf-v2.ps1
-smoke-csrf-resultats.csv
-
-smoke-csrf-v2.ps1
-smoke-csrf-resultats.csv
-.env
-.env
+# PWA generee au build
 public/sw.js
 public/workbox-*.js
 public/worker-*.js
 public/*.js.map
+
+# Fichiers de travail locaux
+_utf8-backup-*
+export-*.txt
+smoke-csrf-v2.ps1
+smoke-csrf-resultats.csv
+
+# X (S26) : aucun script a la racine ; les scripts versionnes vivent dans scripts/
+/*.ps1
