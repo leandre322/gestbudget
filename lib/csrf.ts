@@ -7,12 +7,14 @@ import { NextRequest, NextResponse } from 'next/server';
  *
  * Aucune dependance Node (pas de crypto, pas de Buffer) : compatible Edge Runtime.
  * Aucun accent dans les chaines : discipline encodage UTF-8 du projet.
+ * S26 (E) : fichier 100 % ASCII, commentaires compris (les filets en
+ * caracteres de dessin de boite s'affichaient en mojibake sous PowerShell 5).
  */
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
 
-// ── N1 : match de chemin strict ──────────────────────────────────────────────
+// -- N1 : match de chemin strict ---------------------------------------------
 // pathname.startsWith('/budget') matchait '/budget-admin'.
 // pathname.startsWith('/api/auth') matchait '/api/auth-tokens' (= exemption CSRF
 // accordee par accident a une route future mal nommee).
@@ -28,7 +30,7 @@ export function matchAnyPath(pathname: string, prefixes: string[]): boolean {
   return false;
 }
 
-// ── Comparaison a temps constant (fuite de longueur acceptee) ────────────────
+// -- Comparaison a temps constant (fuite de longueur acceptee) ---------------
 function safeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
@@ -36,7 +38,7 @@ function safeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-// ── S2b : normalisation d'origine qui ne throw JAMAIS ────────────────────────
+// -- S2b : normalisation d'origine qui ne throw JAMAIS -----------------------
 // new URL('gestbudget.lawdigitals.com') levait une exception dans le middleware
 // => 500 sur TOUTE l'application, pages incluses.
 function normalizeOrigin(value: string): string | null {
@@ -50,7 +52,7 @@ function normalizeOrigin(value: string): string | null {
   }
 }
 
-// ── S2 : resolution fail-closed des origines autorisees ──────────────────────
+// -- S2 : resolution fail-closed des origines autorisees ---------------------
 // Chaine : ALLOWED_ORIGINS (CSV) > NEXT_PUBLIC_APP_URL > URL prod Vercel.
 // VERCEL_URL (previews) volontairement EXCLU : deploiement production uniquement.
 export function resolveAllowedOrigins(): string[] {
@@ -79,7 +81,7 @@ export function resolveAllowedOrigins(): string[] {
 
 export type CsrfVerdict = { ok: true; reason: null } | { ok: false; reason: string };
 
-// ── S1 : verification CSRF stricte ───────────────────────────────────────────
+// -- S1 : verification CSRF stricte -----------------------------------------
 // Avant : origin.startsWith(allowed) || referer.startsWith(allowed)
 //   => "https://gestbudget.lawdigitals.com.evil.com".startsWith(...) === true
 // Apres : egalite stricte d'origines normalisees, Origin PRIORITAIRE.
@@ -114,7 +116,7 @@ export function verifyCsrf(req: NextRequest): CsrfVerdict {
   return { ok: false, reason: 'origin et referer absents' };
 }
 
-// ── N5 : authentification des routes cron ────────────────────────────────────
+// -- N5 : authentification des routes cron -----------------------------------
 // Vercel Cron envoie automatiquement "Authorization: Bearer $CRON_SECRET"
 // des que la variable existe dans le projet.
 // Fail-closed en production : secret absent => 401, jamais 200.
@@ -133,10 +135,10 @@ export const CRON_PREFIXES = ['/api/cron'];
 // endpoints. On conserve donc l'exemption : la doubler casserait les callbacks.
 export const CSRF_EXEMPT_PREFIXES = ['/api/auth'];
 
-// ── N3 + N4 : headers de securite appliques a TOUTES les reponses ────────────
+// -- N3 + N4 : headers de securite appliques a TOUTES les reponses -----------
 // Avant, seul NextResponse.next() les recevait : les 429, 403 et la redirection
 // login partaient sans nosniff, sans HSTS, sans X-Frame-Options.
-// ── CSP (S26 - durcissement) ─────────────────────────────────────────────────
+// -- CSP (S26 - durcissement) ------------------------------------------------
 // Option B retenue (S26) : 'unsafe-inline' conserve sur script-src et
 // style-src. Une CSP a nonce imposerait un nonce par requete, donc le rendu
 // dynamique de TOUTES les pages aujourd'hui statiques : cout de performance
@@ -156,24 +158,52 @@ export const CSRF_EXEMPT_PREFIXES = ['/api/auth'];
 //    domaines SaaS partages). Epingle sur l'hote exact de l'organisation,
 //    deduit de CSP_REPORT_URI (meme hote que l'ingestion) ; a defaut, repli
 //    sur la seule region DE, celle de l'organisation lawdigitals.
-//  - report-uri : sans lui, le mode Report-Only n'ecrivait que dans la
-//    console de chaque navigateur, personne ne collectait les violations.
-//    CSP_REPORT_URI = URL fournie par Sentry (Project Settings > Security
-//    Headers). Absente => pas de report-uri, comportement anterieur conserve.
+//
+// E (S26) : collecte des violations.
+//  - CSP_REPORT_URI n'est retenue QUE si c'est une URL https d'ingestion
+//    Sentry region DE (oNNN.ingest.de.sentry.io), chemin /security/, sans
+//    identifiants ni caractere capable de casser un en-tete (; , " \ espace).
+//    Toute autre valeur est ignoree : pas de rapport, connect-src sur le
+//    repli. Avant, la valeur "1" produisait "report-uri 1", lue par le
+//    navigateur comme l'URL relative /1 : les rapports partaient vers le site.
+//    La validation protege aussi connect-src, dont l'hote est deduit de
+//    cette variable : une valeur erronee ne peut plus y ouvrir un hote tiers.
+//  - report-to (API Reporting, Chromium) + en-tete Reporting-Endpoints ;
+//    report-uri conserve pour les navigateurs qui ignorent report-to.
+//    Un navigateur qui comprend report-to ignore report-uri : pas de doublon.
+//  - Aucun parametre sentry_release : l'en-tete est public, le SHA du
+//    deploiement ne doit pas y figurer (/api/version reste authentifie).
 //
 // Evalue une seule fois par isolate : les variables d'environnement ne
 // changent qu'avec un redeploiement.
-function origineDe(url: string | undefined): string | null {
-  if (!url) return null;
+const RE_HOTE_SENTRY = /^o\d+\.ingest\.de\.sentry\.io$/;
+const RE_CARACTERES_INTERDITS = /[;,"\\\s]/;
+
+function urlRapportCsp(raw: string | undefined): URL | null {
+  if (!raw) return null;
   try {
-    return new URL(url).origin;
+    const u = new URL(raw.trim());
+    if (u.protocol !== 'https:') return null;
+    if (!RE_HOTE_SENTRY.test(u.hostname)) return null;
+    if (u.port !== '') return null;
+    if (u.username !== '' || u.password !== '') return null;
+    if (u.pathname.indexOf('/security/') === -1) return null;
+    if (RE_CARACTERES_INTERDITS.test(u.href)) return null;
+    return u;
   } catch {
     return null;
   }
 }
 
-const CSP_REPORT_URI = process.env.CSP_REPORT_URI;
-const HOTE_SENTRY    = origineDe(CSP_REPORT_URI) ?? 'https://*.ingest.de.sentry.io';
+const URL_RAPPORT = urlRapportCsp(process.env.CSP_REPORT_URI);
+if (process.env.CSP_REPORT_URI && !URL_RAPPORT) {
+  // Jamais la valeur elle-meme dans les logs : seulement le fait qu'elle est rejetee.
+  console.warn('[csp] CSP_REPORT_URI ignoree : attendu https://oNNN.ingest.de.sentry.io/api/<projet>/security/?sentry_key=...');
+}
+
+const HOTE_SENTRY = URL_RAPPORT ? URL_RAPPORT.origin : 'https://*.ingest.de.sentry.io';
+const GROUPE_RAPPORT = 'csp-endpoint';
+const REPORTING_ENDPOINTS = URL_RAPPORT ? GROUPE_RAPPORT + '="' + URL_RAPPORT.href + '"' : null;
 
 const CSP_DIRECTIVES = [
   "default-src 'self'",
@@ -190,7 +220,7 @@ const CSP_DIRECTIVES = [
   "connect-src 'self' " + HOTE_SENTRY,
   "worker-src 'self' blob:",
   "manifest-src 'self'",
-  ...(CSP_REPORT_URI ? ['report-uri ' + CSP_REPORT_URI] : []),
+  ...(URL_RAPPORT ? ['report-uri ' + URL_RAPPORT.href, 'report-to ' + GROUPE_RAPPORT] : []),
 ].join('; ');
 
 export function withSecurityHeaders(res: NextResponse): NextResponse {
@@ -218,10 +248,13 @@ export function withSecurityHeaders(res: NextResponse): NextResponse {
     : 'Content-Security-Policy-Report-Only';
   res.headers.set(cspHeader, CSP_DIRECTIVES);
 
+  // E (S26) : point de collecte nomme, reference par la directive report-to.
+  if (REPORTING_ENDPOINTS) res.headers.set('Reporting-Endpoints', REPORTING_ENDPOINTS);
+
   return res;
 }
 
-// ── N2 : IP client, source plateforme prioritaire ────────────────────────────
+// -- N2 : IP client, source plateforme prioritaire ---------------------------
 export function getClientIp(req: NextRequest): string {
   const vercelIp = req.headers.get('x-vercel-forwarded-for');
   if (vercelIp) return vercelIp.split(',')[0].trim();
@@ -235,7 +268,7 @@ export function getClientIp(req: NextRequest): string {
   return '0.0.0.0';
 }
 
-// ── Reponse JSON qui embarque toujours les headers de securite ───────────────
+// -- Reponse JSON qui embarque toujours les headers de securite --------------
 export function secureJson(
   body: unknown,
   status: number,
