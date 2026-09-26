@@ -15,7 +15,7 @@
 
 $problemes = New-Object System.Collections.Generic.List[string]
 
-$fichiers = @(git diff --cached --name-only --diff-filter=ACMR)
+$fichiers = @(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR)
 if ($fichiers.Count -eq 0) { Write-Output 'check-staged : rien a controler'; exit 0 }
 
 # ---- 1. Regles sur les noms de fichiers -------------------------------------
@@ -30,13 +30,25 @@ foreach ($f in $fichiers) {
 }
 
 # ---- 2. Fichiers texte vus comme binaires par Git (UTF-16, octets NUL) ------
-# git diff --numstat affiche "-  -" pour un fichier binaire : un .md ou un .ts
-# dans ce cas a presque toujours ete ecrit en UTF-16 par PowerShell 5.
+# V (S26) : on juge le CONTENU INDEXE, pas le diff. git diff --numstat declare
+# un diff binaire des que l'un des deux cotes l'est : l'ancienne regle
+# bloquait donc la reparation d'un fichier devenu binaire (README.md, S26).
+# git grep --cached -I ignore les blobs binaires (octet NUL dans les 8000
+# premiers octets, heuristique de Git) : un fichier a extension texte absent
+# de sa sortie est binaire.
+#  - --literal-pathspecs : les routes Next.js ([id], [...slug]) ne doivent pas
+#    etre lues comme des motifs glob (sinon faux positif systematique).
+#  - fichier vide : aucune ligne, donc absent de la sortie ; exclu par taille.
+#  - si git grep echoue, la liste est vide et tout est refuse (echec ferme).
 $extTexte = '\.(md|txt|ts|tsx|js|mjs|cjs|json|css|ps1|sql|yml|yaml|prisma|html|sh)$'
-foreach ($l in @(git diff --cached --numstat --diff-filter=ACMR)) {
-  $p = $l -split "`t"
-  if ($p.Count -ge 3 -and $p[0] -eq '-' -and $p[2] -match $extTexte) {
-    $problemes.Add($p[2] + ' : fichier texte vu comme binaire (UTF-16 ou octets NUL ?)')
+$aTester = @($fichiers | Where-Object { $_ -match $extTexte })
+if ($aTester.Count -gt 0) {
+  $textes = @(git --literal-pathspecs -c core.quotePath=false grep --cached -I -l -e '^' -- $aTester)
+  foreach ($f in $aTester) {
+    if ($textes -contains $f) { continue }
+    $taille = git --literal-pathspecs cat-file -s (':' + $f)
+    if ("$taille".Trim() -eq '0') { continue }
+    $problemes.Add($f + ' : fichier texte vu comme binaire (UTF-16 ou octets NUL ?)')
   }
 }
 
