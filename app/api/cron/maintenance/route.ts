@@ -2,12 +2,12 @@ import { NextRequest } from 'next/server';
 import { neon } from '@neondatabase/serverless';
 import * as Sentry from '@sentry/nextjs';
 import prisma from '@/lib/prisma';
-import { runCron, type CronDetails } from '@/lib/cron';
+import { runCron, CRON_VEILLE, MONITEUR_MAINTENANCE, type CronDetails } from '@/lib/cron';
 
 // =============================================================================
 //  S26 / G + Q + T - Maintenance quotidienne
 //  GET /api/cron/maintenance  (Vercel Cron, 03:00 UTC, authentifie par
-//  CRON_SECRET via runCron)
+//  CRON_SECRET via runCron, surveille par le moniteur Sentry unique)
 //
 //  Etape 1 - rate_limits (G + Q)
 //  La purge utilise EXACTEMENT la meme connexion que les ecritures du
@@ -32,14 +32,27 @@ import { runCron, type CronDetails } from '@/lib/cron';
 //  pour les 4 crons, donc un parcours complet est instantane (pas d'index
 //  dedie). La purge precede l'ecriture de la ligne du jour par runCron.
 //
-//  Les deux etapes sont independantes : l'echec de l'une n'empeche pas
-//  l'autre. Statut : success (0 echec), partial (1), error (2).
+//  Etape 3 - veille des autres crons (M)
+//  Pour chaque job de CRON_VEILLE (lib/cron.ts) : age du dernier passage
+//  success|partial. Les statuts refused, error et running (ligne laissee par
+//  une fonction interrompue) ne comptent pas. Une lecture par job, en
+//  parallele, servie par l'index (jobName, startedAt).
+//  Job en retard ou jamais execute : une alerte Sentry DISTINCTE par job et
+//  par etat (empreinte dediee), donc un e-mail par probleme, en production
+//  uniquement. Aucune ligne fictive n'est jamais ecrite pour combler un trou.
+//  Un retard ne change PAS le statut de maintenance, qui ne reflete que son
+//  propre travail : il figure dans details.veille.enRetard.
+//
+//  Les trois etapes sont independantes : l'echec de l'une n'empeche pas
+//  les autres. Statut : success (0 echec), error (3), partial sinon.
 // =============================================================================
 
 export const dynamic = 'force-dynamic';
 
 const RETENTION_CRON_LOGS_JOURS = 90;
 const JOUR_MS                   = 86_400_000;
+const HEURE_MS                  = 3_600_000;
+const NB_ETAPES                 = 3;
 
 type LigneRateLimits = {
   base:      string | null;
@@ -108,7 +121,56 @@ export async function GET(req: NextRequest) {
       Sentry.captureException(e, { tags: { zone: 'cron-maintenance', etape: 'cron_logs' } });
     }
 
-    const statut = echecs === 0 ? 'success' : echecs === 2 ? 'error' : 'partial';
+    // -- Etape 3 : veille des autres crons ----------------------------------
+    try {
+      const maintenant = Date.now();
+      const derniers = await Promise.all(
+        CRON_VEILLE.map(v =>
+          prisma.cronLog.findFirst({
+            where:   { jobName: v.job, status: { in: ['success', 'partial'] } },
+            orderBy: { startedAt: 'desc' },
+            select:  { startedAt: true },
+          }),
+        ),
+      );
+
+      const agesHeures: Record<string, number | null> = {};
+      const enRetard: string[] = [];
+
+      CRON_VEILLE.forEach((v, i) => {
+        const dernier = derniers[i];
+        const age = dernier
+          ? Math.round(((maintenant - dernier.startedAt.getTime()) / HEURE_MS) * 10) / 10
+          : null;
+        agesHeures[v.job] = age;
+
+        const etat = age === null ? 'jamais' : age > v.seuilHeures ? 'retard' : null;
+        if (etat === null) return;
+        enRetard.push(v.job);
+
+        if (process.env.VERCEL_ENV === 'production') {
+          Sentry.captureMessage(
+            etat === 'jamais'
+              ? `[cron/veille] ${v.job} : aucun passage success|partial dans cron_logs`
+              : `[cron/veille] ${v.job} : dernier passage il y a ${age} h (seuil ${v.seuilHeures} h)`,
+            {
+              level:       etat === 'jamais' ? 'warning' : 'error',
+              tags:        { zone: 'cron-veille', job: v.job, etat },
+              fingerprint: ['cron-veille', v.job, etat],
+            },
+          );
+        }
+      });
+
+      details.veille = { agesHeures, enRetard };
+    } catch (e) {
+      echecs++;
+      details.veille = { erreur: 'exception' };
+      console.error('[cron/maintenance] veille:', e);
+      Sentry.captureException(e, { tags: { zone: 'cron-maintenance', etape: 'veille' } });
+    }
+
+    const statut = echecs === 0 ? 'success' : echecs === NB_ETAPES ? 'error' : 'partial';
     return { statut, details, body: { ok: statut === 'success', statut, details } };
-  });
+  }, { moniteur: MONITEUR_MAINTENANCE });
 }

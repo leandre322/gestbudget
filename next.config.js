@@ -61,8 +61,8 @@ module.exports = withSentryConfig(withPWA(nextConfig), {
   // Source maps plus completes, au prix d un build plus long.
   widenClientFileUpload: true,
 
-  // Instrumentation automatique des Vercel Cron Monitors.
-  automaticVercelMonitors: true,
+  // S26 / M : automaticVercelMonitors retire. Inerte pour les route handlers de l App Router
+  // (doc Sentry) ; le moniteur de cron est gere par runCron dans lib/cron.ts.
 
   // Retire les appels de log Sentry du bundle client.
   disableLogger: true,
