@@ -2,6 +2,9 @@
   "name": "gestbudget",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -12,7 +15,7 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate",
-    "prebuild": "node scripts/check-env.mjs"
+    "prebuild": "node scripts/check-env.mjs && node scripts/check-integrity.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

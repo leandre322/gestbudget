@@ -1,0 +1,63 @@
+name: CI
+
+# S26 / P - Verification independante a chaque push vers main.
+# IMPORTANT : ceci ne bloque PAS le build Vercel (verifie le 27/09 - Vercel ne
+# consulte aucun statut GitHub avant de construire, sur aucune offre ; c'est
+# une demande de fonctionnalite ouverte depuis des annees). Ce workflow est
+# une alerte rapide et une trace d'audit a chaque push. Le seul verrou reel
+# avant deploiement est le prebuild Vercel (scripts/check-env.mjs,
+# scripts/check-integrity.mjs), qui echoue le build lui-meme.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (historique complet)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Node.js 24 (aligne sur Vercel - Settings > Build and Deployment)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Installer les dependances
+        run: npm ci
+
+      # S26 / P - check-staged.ps1 en mode plage : voit tous les commits de ce
+      # push, pas seulement le dernier. C'est le seul controle fiable pour un
+      # secret ajoute puis retire dans le meme push (le prebuild Vercel ne le
+      # peut pas : clone limite aux 10 derniers commits, git clone --depth=10).
+      - name: check-staged sur toute la plage poussee
+        shell: pwsh
+        run: ./scripts/check-staged.ps1 -Base '${{ github.event.before }}' -Head '${{ github.event.after }}'
+
+      - name: Verification des types (tsc)
+        run: npx tsc --noEmit
+
+      - name: Integrite des fichiers (encodage, snapshot final)
+        run: node scripts/check-integrity.mjs
+
+      # S26 / P+W - Tests de non-regression de check-staged.ps1, uniquement
+      # quand ce fichier change dans le push. hashFiles renvoie '' si le
+      # script n'existe pas encore : cette etape restera inactive jusqu'a la
+      # livraison de test-check-staged.ps1, sans qu'il faille toucher a ce
+      # workflow le jour ou il arrive.
+      - name: Determiner si check-staged.ps1 a change dans ce push
+        id: staged-changed
+        run: |
+          if git diff --name-only "${{ github.event.before }}" "${{ github.event.after }}" | grep -qx 'scripts/check-staged.ps1'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tests de non-regression de check-staged (W)
+        if: steps.staged-changed.outputs.changed == 'true' && hashFiles('scripts/test-check-staged.ps1') != ''
+        shell: pwsh
+        run: ./scripts/test-check-staged.ps1
