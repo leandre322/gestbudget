@@ -37,6 +37,9 @@ if ($UsePlage -and (-not $Base -or -not $Head)) {
 if ($UsePlage -and $Base -match '^0{40}$') {
   $Base = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 }
+# La plage est construite dans une variable : en PowerShell, .. est aussi
+# l'operateur de plage, on evite toute ambiguite dans les arguments de git.
+$plage = $Base + '..' + $Head
 
 $problemes = New-Object System.Collections.Generic.List[string]
 
@@ -48,7 +51,7 @@ if ($UsePlage) {
   # utilise donc l'historique commit par commit (git log), qui voit chaque
   # commit individuellement - exactement ce que ferait le hook local s'il
   # avait tourne sur chacun d'eux.
-  $fichiers = @(git -c core.quotePath=false log --name-only --diff-filter=ACMR --pretty=format: $Base..$Head |
+  $fichiers = @(git -c core.quotePath=false log --name-only --diff-filter=ACMR --pretty=format: $plage |
     Where-Object { $_ -ne '' } | Sort-Object -Unique)
 } else {
   $fichiers = @(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR)
@@ -72,13 +75,22 @@ $aTester = @($fichiers | Where-Object { $_ -match $extTexte })
 if ($aTester.Count -gt 0) {
   if ($UsePlage) {
     # Mode CI : on juge l'arbre final (Head), pas un index qui n'existe pas ici.
-    $textes = @(git --literal-pathspecs -c core.quotePath=false grep -I -l -e '^' $Head -- $aTester)
+    # git grep <revision> prefixe chaque chemin par "<revision>:" (verifie le
+    # 27/09) : sans ce retrait, aucun fichier ne serait jamais reconnu comme
+    # texte et tout serait signale comme binaire.
+    $prefixe = $Head + ':'
+    $textes = @(git --literal-pathspecs -c core.quotePath=false grep -I -l -e '^' $Head -- $aTester |
+      Where-Object { $_.StartsWith($prefixe) } | ForEach-Object { $_.Substring($prefixe.Length) })
   } else {
     $textes = @(git --literal-pathspecs -c core.quotePath=false grep --cached -I -l -e '^' -- $aTester)
   }
   foreach ($f in $aTester) {
     if ($textes -contains $f) { continue }
     if ($UsePlage) {
+      # Fichier supprime ou renomme apres son ajout dans la plage : absent de
+      # l'arbre final, il n'y a rien a juger ici (la regle 3 le couvre deja).
+      git --literal-pathspecs cat-file -e ($Head + ':' + $f) 2>$null
+      if ($LASTEXITCODE -ne 0) { continue }
       $taille = git --literal-pathspecs cat-file -s ($Head + ':' + $f)
     } else {
       $taille = git --literal-pathspecs cat-file -s (':' + $f)
@@ -108,7 +120,7 @@ if ($UsePlage) {
   # auteur, date, message) : seuls les blocs diff --git/+++/+  subsistent, donc
   # aucun risque qu'un message de commit commencant par '+' soit lu comme une
   # ligne ajoutee.
-  $lignesDiff = @(git log -p --pretty=format: -U0 --no-color --diff-filter=ACMR $Base..$Head)
+  $lignesDiff = @(git log -p --pretty=format: -U0 --no-color --diff-filter=ACMR $plage)
 } else {
   $lignesDiff = @(git diff --cached -U0 --no-color --diff-filter=ACMR)
 }

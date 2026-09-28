@@ -22,6 +22,15 @@
 //      Regle 29 du projet : ce fichier reste 100 % ASCII, donc les sequences
 //      elles-memes sont ecrites en \uXXXX ci-dessous, jamais en clair ici.
 //
+//  Perimetre : les fichiers suivis par Git, plus les fichiers non suivis mais
+//  non ignores (git ls-files --cached --others --exclude-standard). Les
+//  fichiers de travail ignores par .gitignore (exports, copies) ne bloquent
+//  donc pas un build local, et ne sont de toute facon jamais deployes. Si git
+//  est indisponible (ou renvoie une liste vide), repli sur le parcours complet
+//  de l'arbre : dans ce cas tout ce qui est present est verifie. La ligne de
+//  verdict indique la source utilisee (git ou parcours), utile pour savoir ce
+//  que voit reellement l'environnement de build Vercel.
+//
 //  Comme check-env.mjs : aucune valeur de fichier n'est jamais affichee,
 //  seulement son chemin. Bloque dans TOUS les environnements (dev, preview,
 //  production) : un probleme d'encodage n'est jamais specifique a un
@@ -29,8 +38,9 @@
 //  Fichier 100 % ASCII.
 // =============================================================================
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, extname } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const racine = process.cwd();
 
@@ -47,21 +57,36 @@ const problemesBinaire  = [];
 const problemesMojibake = [];
 let fichiersTestes = 0;
 
-function lister(dossier) {
+function parcourir(dossier, acc) {
   for (const e of readdirSync(dossier, { withFileTypes: true })) {
     if (e.isDirectory()) {
-      if (!ignores.has(e.name)) lister(join(dossier, e.name));
+      if (!ignores.has(e.name)) parcourir(join(dossier, e.name), acc);
       continue;
     }
-    if (!extTexte.has(extname(e.name))) continue;
-    tester(join(dossier, e.name));
+    acc.push(join(dossier, e.name).slice(racine.length + 1).split('\\').join('/'));
   }
+  return acc;
+}
+
+function listerFichiers() {
+  try {
+    const sortie = execFileSync(
+      'git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+      { cwd: racine, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 },
+    );
+    const liste = sortie.split('\0').filter(Boolean);
+    if (liste.length > 0) return { source: 'git', fichiers: liste };
+  } catch {
+    // git absent, depot introuvable ou erreur : repli ci-dessous
+  }
+  return { source: 'parcours', fichiers: parcourir(racine, []) };
 }
 
 const TAILLE_SONDE_NUL = 8000; // meme fenetre que l'heuristique binaire de Git
 
-function tester(chemin) {
-  const relatif = chemin.slice(racine.length + 1).split('\\').join('/');
+function tester(relatif) {
+  const chemin = join(racine, relatif);
+  if (!existsSync(chemin)) return; // suivi par git mais absent du disque : rien a juger
   const octets = readFileSync(chemin);
   if (octets.length === 0) return; // fichier vide : exclu, comme dans check-staged.ps1
 
@@ -98,7 +123,12 @@ function tester(chemin) {
   }
 }
 
-lister(racine);
+const { source, fichiers } = listerFichiers();
+for (const relatif of fichiers) {
+  if (relatif.split('/').some((segment) => ignores.has(segment))) continue;
+  if (!extTexte.has(extname(relatif))) continue;
+  tester(relatif);
+}
 
 // ---- Verdict ------------------------------------------------------------------
 if (problemesBinaire.length > 0) {
@@ -111,4 +141,4 @@ if (problemesBinaire.length > 0 || problemesMojibake.length > 0) {
   console.error('check-integrity : BUILD BLOQUE');
   process.exit(1);
 }
-console.log('check-integrity : OK (' + fichiersTestes + ' fichier(s) texte verifie(s))');
+console.log('check-integrity : OK (' + fichiersTestes + ' fichier(s) texte verifie(s), source : ' + source + ')');
